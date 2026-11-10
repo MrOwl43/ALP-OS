@@ -257,11 +257,14 @@ pub fn ensure(addresses: &[String]) -> Result<(), NotServed> {
         return Ok(()); // nothing a phone could connect to yet
     }
     if !systemctl(&["is-active", "--quiet", "nginx.service"]) {
-        // nginx runs only with Immich; nothing to check before it starts.
-        return Err(NotServed {
-            message: "The connection for phones is not running yet. Wait until the photo service has started.".into(),
-            served: Vec::new(),
-        });
+        // nginx runs only with Immich. While it is stopped nothing stale can
+        // be served: the file now names every address, and nginx reads that
+        // file when it starts. The phone screen says that the photo service
+        // is not ready (its own reason), so a QR made now is not a broken
+        // promise; pairing itself does not need nginx (T-PAIR-01, CI run
+        // 42780229103: pair/open was refused in a VM without Immich).
+        // Not cached as verified: the first call after nginx starts checks.
+        return Ok(());
     }
     let mut served = served_all(&addresses);
     // A reload takes a moment to reach new connections.
