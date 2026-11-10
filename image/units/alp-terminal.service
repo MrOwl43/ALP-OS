@@ -1,0 +1,104 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The Terminal (Live UI stage F, feature `terminal`): one text session on
+# this computer's screen, as the unprivileged user alp-term
+# (docs/plans/live-terminal.md, revision 2; security review T1-T6).
+#
+# Only alpd starts it (`terminal/start`, after the ALP password), never at
+# boot (no [Install]). alpd stops it when the console locks or the screen
+# leaves; ttyd --once ends it when the frame closes; bash ends after 10
+# minutes without input; RuntimeMaxSec= ends it after an hour. Stopping
+# the unit ends every process in it (KillMode=control-group).
+[Unit]
+Description=ALPArchive Terminal (one session, started by alpd)
+# The firewall carries the rule that cuts alp-term off from local services
+# (T1); alp-term-check below refuses to start without it.
+Requires=nftables.service
+After=nftables.service alpd.service
+# A new alpd has no signed-in console: the session ends with the old one.
+PartOf=alpd.service
+
+[Service]
+Type=simple
+# ALP_TERM_PATH: the session's random path, the only secret (review round
+# 2, note 3). Root-only file, written by alpd and removed by it once this
+# unit has started. ttyd needs it in its arguments; its own logging is off
+# (it prints the path and every request) and its output goes nowhere.
+EnvironmentFile=/run/alp/terminal.env
+ExecStartPre=+/usr/lib/alp/alp-term-check
+# --writable: ttyd is read-only without it. --once and --max-clients 1:
+# one browser, and the session ends when it leaves. --check-origin: only a
+# page on ttyd's own origin may open the WebSocket (the frame is that page).
+# --interface lo: loopback only (also refused from the network by
+# nftables). --debug 1: errors only.
+ExecStart=/usr/bin/ttyd --interface lo --port 8413 --base-path /${ALP_TERM_PATH} --writable --once --max-clients 1 --check-origin --debug 1 --terminal-type xterm-256color /usr/lib/alp/alp-term-shell
+StandardOutput=null
+StandardError=null
+Restart=no
+TimeoutStopSec=5s
+RuntimeMaxSec=3600
+
+# Rule 1: the unprivileged user, in no group but its own.
+User=alp-term
+Group=alp-term
+SupplementaryGroups=
+WorkingDirectory=/tmp
+
+# T3: the sandbox.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateIPC=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+KeyringMode=private
+UMask=0077
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+# Outside network for diagnostics (ping, ip); AF_UNIX only for logger
+# (/dev/log). New loopback connections are refused by nftables (T1).
+# AF_NETLINK: ttyd's libwebsockets 4.3.3 finds the address of
+# `--interface lo` with getifaddrs(), which reads rtnetlink; when that
+# fails it binds to every address (0.0.0.0, T-TERM-01 on CI run
+# 41861890580). Reading links and addresses needs no rights; changing
+# them needs CAP_NET_ADMIN, which the unit has not got.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# Only ttyd's port may be bound: the shell cannot listen on a port of
+# its own choosing (security review 2026-11-04). systemd never filters
+# port 0, so a random free port stays possible; the firewall drops it from
+# the network. Needs systemd's BPF framework: T-TERM-01 checks that a bind
+# to another port fails.
+SocketBindAllow=tcp:8413
+SocketBindDeny=any
+# No IPAddressDeny=: it filters incoming traffic too and would cut the
+# kiosk's connection to ttyd (build note 2). T1 rests on the nftables
+# rule, which T-TERM-01 proves.
+#
+# /run holds alpd's state, the opened disks (/run/alp/media), podman,
+# D-Bus and the users' runtime folders: the session gets an empty,
+# read-only one with only the journal's socket (logger) and the log page.
+TemporaryFileSystem=/run:ro
+BindPaths=/run/systemd/journal/dev-log
+# T6: the log page, written as root by alpd before the session (the same
+# text as the boot log on the stick); nothing typed in the session reaches
+# journalctl. Read-only here.
+BindReadOnlyPaths=-/run/alp-terminal-logs:/run/alp-terminal
+# The stick's state, the index (TLS keys, secrets), the archive, Immich,
+# containers, other logs and homes, and mount points.
+InaccessiblePaths=-/var/lib -/var/log -/var/cache -/var/spool -/var/mail -/var/home -/srv -/mnt -/media -/boot -/efi
+
+MemoryMax=256M
+TasksMax=64

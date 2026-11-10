@@ -2,7 +2,8 @@
 # Kiosk lockdown requirements (for the lead)
 
 The server's screen shows only the console UI (`http://127.0.0.1:8411`) and,
-if added, the gallery (`http://localhost:8412`). Nothing else: no address
+if added, the gallery (`http://localhost:8412`), and the Terminal in a frame
+(`http://127.0.0.1:8413`, feature `terminal`, `docs/plans/live-terminal.md`). Nothing else: no address
 bar, no other sites, no files, no developer tools, no shell.
 
 ## Compositor

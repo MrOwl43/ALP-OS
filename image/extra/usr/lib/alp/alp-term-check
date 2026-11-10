@@ -1,0 +1,13 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Run as root before every Terminal session (alp-terminal.service): the
+# session starts only when the firewall rule that cuts alp-term (uid
+# 58413) off from local services is loaded (security review T1). nft
+# prints the uid as a number unless asked for names; both are accepted.
+if nft list chain inet alp output 2>/dev/null |
+    grep -Eq 'oifname "lo" meta skuid (58413|"?alp-term"?) ct state new .*reject'; then
+    exit 0
+fi
+echo "alp-terminal: the firewall rule for alp-term is not loaded; no session" >&2
+nft list chain inet alp output >&2 2>&1 || echo "alp-terminal: no chain inet alp output" >&2
+exit 1

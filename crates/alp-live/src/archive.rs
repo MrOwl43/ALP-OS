@@ -1001,9 +1001,14 @@ pub fn pattern(seed: u64, n: u64, buf: &mut [u8]) {
 /// Is a write of `bytes` in `secs` (until the last fsync) fast enough?
 /// Under [`MIN_SPEED`], or longer than [`MAX_WRITE_SECS`], is too slow. A
 /// write that took under a second is fast enough (256 MiB in a second is
-/// far above the limit; tiny writes cannot be timed reliably).
+/// far above the limit). A write smaller than one second at [`MIN_SPEED`]
+/// is not judged by its average either: its time is mostly fsync latency,
+/// not throughput (a busy machine took 2 s for 41 KB, CI run 41861890580).
+/// The real test always writes [`TEST_BYTES`], so this only spares tiny
+/// writes; [`MAX_WRITE_SECS`] still applies to every write.
 pub fn speed_ok(bytes: u64, secs: f64) -> bool {
-    secs <= MAX_WRITE_SECS as f64 && (secs < 1.0 || bytes as f64 >= MIN_SPEED as f64 * secs)
+    secs <= MAX_WRITE_SECS as f64
+        && (secs < 1.0 || bytes < MIN_SPEED || bytes as f64 >= MIN_SPEED as f64 * secs)
 }
 
 /// The progress of the disk test: 10 % to 34 % while writing.
@@ -3812,7 +3817,13 @@ mod tests {
         assert!(!speed_ok(1 << 40, 101.0));
         assert!(speed_ok(TEST_BYTES, 0.0));
         assert!(speed_ok(4096, 0.5));
-        assert!(!speed_ok(4096, 1.5));
+        // Too small to time: fsync latency, not speed (but never past 100 s).
+        assert!(speed_ok(4096, 1.5));
+        assert!(speed_ok(MIN_SPEED - 1, 30.0));
+        assert!(!speed_ok(MIN_SPEED - 1, 101.0));
+        // From one second's worth on, the average counts.
+        assert!(!speed_ok(MIN_SPEED, 1.5));
+        assert!(speed_ok(MIN_SPEED, 1.0));
         let u = checking_update(128 << 20, TEST_BYTES, Some(18_000_000));
         assert_eq!((u.step, u.percent), ("checking", 22));
         assert_eq!(u.message, "Checking the disk: 128 MB of 256 MB at 18 MB/s…");
