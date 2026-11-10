@@ -236,9 +236,9 @@ pub struct Live {
     /// `system.battery`, read in the background: a laptop's battery
     /// (ACPI) can take long to answer, and the state must not wait for it.
     battery: Arc<Mutex<Value>>,
-    /// The connected Wi-Fi network, asked of iwd in the background: a busy
-    /// iwd held the state up to the `iwctl` limit (T28).
-    ssid: Arc<Mutex<Option<String>>>,
+    /// The joined Wi-Fi network with its signal bars, asked of iwd in the
+    /// background: a busy iwd held the state up to the `iwctl` limit (T28).
+    joined: Arc<Mutex<Option<wifi::Joined>>>,
     chain: chain::Store,
     wifi_job: Mutex<Option<Job>>,
     archive_job: Mutex<Option<Job>>,
@@ -585,7 +585,7 @@ impl Live {
         Arc::new(Self {
             hardware: Arc::new(Mutex::new(hardware_pending())),
             battery: Arc::new(Mutex::new(Value::Null)),
-            ssid: Arc::new(Mutex::new(None)),
+            joined: Arc::new(Mutex::new(None)),
             chain,
             wifi_job: Mutex::new(None),
             archive_job: Mutex::new(None),
@@ -1143,11 +1143,11 @@ impl Live {
                 t.elapsed().as_millis()
             );
         });
-        let ssid = Arc::clone(&self.ssid);
+        let joined = Arc::clone(&self.joined);
         std::thread::spawn(move || {
             loop {
-                let v = wifi::device().as_deref().and_then(wifi::connected_ssid);
-                *lock(&ssid) = v;
+                let v = wifi::device().as_deref().and_then(wifi::joined);
+                *lock(&joined) = v;
                 std::thread::sleep(Duration::from_secs(3));
             }
         });
@@ -1931,7 +1931,10 @@ impl Live {
     fn full_state(&self) -> Value {
         let ports = live::ports();
         let dev = wifi::device();
-        let ssid = lock(&self.ssid).clone();
+        let (ssid, signal) = match lock(&self.joined).as_ref() {
+            Some(j) => (Some(j.ssid.clone()), Some(j.signal)),
+            None => (None, None),
+        };
         let ports_json: Vec<Value> = ports
             .iter()
             .map(|p| {
@@ -1945,6 +1948,7 @@ impl Live {
                     },
                     "address": p.address,
                     "ssid": if p.wifi { ssid.clone() } else { None },
+                    "signal": if p.wifi { signal } else { None },
                 })
             })
             .collect();
