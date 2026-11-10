@@ -837,6 +837,42 @@ writable through its own allowance (`/run/alp/allowed-format`), so an open
 archive is not touched; afterwards every partition and the disk are
 read-only again.
 
+### Files, read only (stage F, feature `media_files`, 2026-11-04)
+
+External disks for Settings > Advanced > Files (crates/alp-core/src/live_media.rs on
+crates/alp-live/src/media.rs). All need a signed-in console. A disk is named only by
+its opaque `id` from `state.media`; a path is a JSON list of names the server listed
+(each one name: never empty, `.`, `..`, or containing `/`). Every call checks the
+disk's role again (only external disks, never the stick, the computer's disks or
+the archive's disk; allowed file systems only).
+
+- `state.media` (signed in only; `[]` otherwise): `[{id, label, fs_type, size_bytes,
+  mounted, refused}]`; `refused` is the reason as text, or `null`. Refreshed at most
+  every 5 s, and at once after open and eject.
+- `POST media/open {media}` → 200 `{}`: mounted read-only (`ro,nosuid,nodev,noexec,
+  nosymfollow`, the partition read-only in the kernel).
+- `POST media/list {media, path, offset}` → 200 `{entries: [{name, dir, size_bytes}],
+  truncated, skipped}`; at most 10,000 entries per page; links and special files are
+  never listed. Only on an open disk (`409 media.not_open`).
+- `GET media/file?media=<id>&path=<JSON list, URL-encoded>`: only on an open disk;
+  `GET` only (no `HEAD`); only `.jpg .jpeg .png .gif .webp .bmp .mp4 .m4v .mov .webm`
+  and, always as `text/plain; charset=utf-8`, `.txt .log .md .csv .json .xml .ini
+  .cfg .conf .nfo` (by name; never SVG or HTML: `422 media.type`). Headers: the type, `Content-Disposition: inline`,
+  `Content-Security-Policy: sandbox; default-src 'none'`, `Accept-Ranges: bytes`,
+  and (on every console answer) `X-Content-Type-Options: nosniff`, `Cache-Control:
+  no-store`. One `Range` (206, at most 4 MiB per answer; 416 when outside the file);
+  without `Range` a file is sent whole only up to 32 MiB (`413 media.too_large`).
+  Text is a preview only: a text answer carries at most 256 KiB (the UI's `TEXT_MAX`),
+  with or without `Range`; a larger text file without `Range` gets `413`.
+  `Sec-Fetch-Dest`, when sent, must be `image`, `video` or `empty` (403). Paths are
+  never logged.
+- `POST media/eject {media}` → 200 `{}`: unmounted, and the id is forgotten (an old
+  link gives 404); the next `state.media` gives the disk a new id.
+
+Errors: `400 media.path`, `404 media.not_found` (unplugged, or ejected), `409
+media.not_open`, `409 media.busy`, `413 media.too_large`, `422 media.refused`
+(message says why), `422 media.type`, `500 media.failed`, `500 media.unreadable`.
+
 ### `POST /api/v1/live/archive/cancel` → 202 `{ "job": Job }`
 
 Body `{}`. Stops a running `archive.create` job (or the `erasing` step of a
