@@ -155,8 +155,12 @@ r=\$(code -X POST \$A/disks/format -d "\$(body \$st quick $pw x)")
 case "\$r" in 403|404|422) ok "the stick is refused (\$r)" ;; *) bad "stick: \$r \$(cat /run/fmt-body)" ;; esac
 
 # Refusals of an external disk: nothing written.
-r=\$(code -X POST \$A/disks/format -d "\$(body \$da quick $pw x \$(confirm \$da))")
-[ "\$r" = 422 ] && grep -q 'backup disk' /run/fmt-body && ok "the archive's disk is refused (422)" || bad "archive disk: \$r \$(cat /run/fmt-body)"
+# The archive's disk: refused at the estimate already (no confirmation is
+# given), and a format without one is refused too.
+r=\$(code -X POST \$A/disks/format/estimate -d "{\"disk_id\":\"\$(did \$da)\",\"partuuids\":[\$(parts \$da)]}")
+[ "\$r" = 422 ] && grep -q 'backup disk' /run/fmt-body && ok "the archive's disk is refused at the estimate (422)" || bad "archive disk estimate: \$r \$(cat /run/fmt-body)"
+r=\$(code -X POST \$A/disks/format -d "\$(body \$da quick $pw x)")
+case "\$r" in 409|422) ok "the archive's disk is refused (\$r)" ;; *) bad "archive disk: \$r \$(cat /run/fmt-body)" ;; esac
 r=\$(code -X POST \$A/disks/format -d "\$(body \$db quick $pw x)")
 [ "\$r" = 409 ] && grep -q 'format.confirm_stale' /run/fmt-body && ok "no confirmation is refused (409)" || bad "no confirmation: \$r \$(cat /run/fmt-body)"
 # Refusals before the confirmation is checked leave it valid.
