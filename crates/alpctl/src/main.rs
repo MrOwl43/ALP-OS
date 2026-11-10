@@ -14,13 +14,14 @@ fn main() {
         ["live", "protect-disks"] => live::protect_disks(),
         ["live", "diag"] => live::diag(),
         ["live", "bootlog"] => live::boot_log(),
+        ["live", "term-logs"] => live::term_logs(),
         ["live", "archive", rest @ ..] => archive::cli(rest),
         ["live", "index", rest @ ..] => index::cli(rest),
         ["live", "immich", rest @ ..] => immich::cli(rest),
         ["live", "pair", rest @ ..] => alp_live::pairing::cli(rest),
         _ => {
             eprintln!(
-                "usage: alpctl live report | screen | splash | protect-disks | diag | bootlog | archive … | index … | immich …"
+                "usage: alpctl live report | screen | splash | protect-disks | diag | bootlog | term-logs | archive … | index … | immich …"
             );
             2
         }

@@ -9,7 +9,7 @@ VM; the image has nftables 1.1.3 and uses no newer syntax).
 
 1. `lo` accepted.
 2. Packets from the network to `127.0.0.0/8` or `::1` dropped (spoofs).
-3. TCP 2283, 5432, 6379, 8410, 8411, 8412 dropped from the network by an
+3. TCP 2283, 5432, 6379, 8410, 8411, 8412, 8413 dropped from the network by an
    explicit rule, not only by their 127.0.0.1 bind address. The console API
    (8411) is never reachable from the LAN even if a service binds wrongly.
 4. Established/related accepted, invalid dropped.
@@ -41,3 +41,16 @@ Forward: drop. Output: accept (alpha).
   443 gets no answer.
 - In the guest: `nft list chain inet alp input` shows `policy drop` and the
   local-only rule; its counter rises when the host probes 8411.
+
+## Output: the Terminal's user (2026-11-04)
+
+One output rule: `oifname "lo" meta skuid 58413 ct state new reject`. The
+Terminal's shell runs as `alp-term` (uid 58413) and may open no new
+connection to this computer itself: loopback and the computer's own network
+addresses (both leave through `lo`), IPv4 and IPv6 (`inet` table). The
+console API trusts browser headers that any local program can fake, so this
+rule is what keeps the shell away from it, Immich, Postgres and Redis
+(security review T1, `docs/plans/live-terminal.md`). Answers on the
+connection the kiosk opened to ttyd are not new, so the session works.
+`alp-terminal.service` refuses to start when the rule is not loaded
+(`/usr/lib/alp/alp-term-check`). T-TERM-01 proves it.

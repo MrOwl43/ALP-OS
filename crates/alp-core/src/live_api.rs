@@ -16,6 +16,7 @@ use alp_live::{
 use serde_json::{Value, json};
 
 use crate::console::{Request, Response};
+use crate::live_terminal;
 
 const PREFIX: &str = "/api/v1/live/";
 /// Seconds an Immich answer is reused by `GET state` (it is polled often).
@@ -386,6 +387,8 @@ fn status_for(key: &str) -> u16 {
         "disk.changed" => 409,
         "disk.refused" => 422,
         "phone.reset_gone" => 410,
+        "terminal.running" | "terminal.no_password" => 409,
+        "terminal.failed" => 500,
         "index.missing" => 404,
         "index.failed" => 500,
         "internal" | "immich.failed" | "reset.failed" => 500,
@@ -788,6 +791,32 @@ impl Live {
             *pending = None;
             fam.worker.store(false, Ordering::SeqCst);
         });
+    }
+
+    /// Signed in now, without a request (the Terminal's watcher). Uses the
+    /// same "Lock after" time as the console, so both lock together.
+    fn console_fresh(&self) -> bool {
+        let c = lock(&self.console);
+        let idle = self.idle_lock();
+        c.token.is_some() && c.last.is_some_and(|t| t.elapsed() < idle)
+    }
+
+    /// `POST terminal/start {password}` (docs/plans/live-terminal.md, T5):
+    /// behind the console sign-in like every route, and the password again
+    /// each time, in the same counter and back-off as sign-in. Not without
+    /// a password (protection level 1 or setup): there is nothing to check.
+    fn terminal_start(self: &Arc<Self>, req: &Request) -> Result<Response, Fail> {
+        if self.require_index && (index::lock_state() == "setup" || index::protection() == "none") {
+            return Err(Fail::new(
+                "terminal.no_password",
+                "Choose an ALPArchive password first to use the Terminal.",
+            ));
+        }
+        let pw = password_field(req)?;
+        self.check_password(&pw)?;
+        let me = Arc::clone(self);
+        let url = live_terminal::start(move || me.console_fresh())?;
+        Ok(Response::json(200, &json!({"url": url})))
     }
 
     fn signin(&self, req: &Request) -> Result<Response, Fail> {
@@ -1450,9 +1479,16 @@ impl Live {
             "console/lock" if post => body(req).map(|_| {
                 *lock(&self.console) = Console::default();
                 lock(&self.confirms).clear();
+                // The Terminal ends with the console (plan rule 5).
+                live_terminal::stop();
                 // Words shown on the screen are wiped there; the code
                 // they belong to must not be confirmed by someone else.
                 let _ = self.recovery_cancel();
+                Response::json(200, &json!({}))
+            }),
+            "terminal/start" if post && live_terminal::available() => self.terminal_start(req),
+            "terminal/stop" if post && live_terminal::available() => body(req).map(|_| {
+                live_terminal::stop();
                 Response::json(200, &json!({}))
             }),
             "console/activity" if post => body(req)
@@ -1667,6 +1703,9 @@ impl Live {
             | "archive/recover"
             | "gallery/delete"
             | "gallery/trash/empty" => {
+                return Response::error(405, "request.method", "Not allowed here.");
+            }
+            "terminal/start" | "terminal/stop" if live_terminal::available() => {
                 return Response::error(405, "request.method", "Not allowed here.");
             }
             _ => return Response::error(404, "request.not_found", "Not found."),
@@ -1978,6 +2017,8 @@ impl Live {
             "features": features(),
             "prefs": lock(&self.prefs).json(),
             "display": display::state_json(),
+            // Never the session's address (plan, build note 3).
+            "terminal": live_terminal::state_json(),
             "index": self.space_json(index::MNT, index::is_open()),
             "archive": self.archive_state(),
             "immich": if *lock(&self.paused) {
@@ -3550,11 +3591,15 @@ const FEATURES: &[&str] = &[
     "idle_lock_pref",
 ];
 
-/// [`FEATURES`], plus `display_modes` when the image has `wlr-randr`.
+/// [`FEATURES`], plus `display_modes` when the image has `wlr-randr` and
+/// `terminal` when the image carries it.
 fn features() -> Vec<&'static str> {
     let mut f = FEATURES.to_vec();
     if display::modes_supported() {
         f.push("display_modes");
+    }
+    if live_terminal::available() {
+        f.push("terminal");
     }
     f
 }
@@ -4736,5 +4781,24 @@ mod tests {
             .count();
         assert_eq!(sets, 5);
         let _ = std::fs::remove_file(&l.prefs_file);
+    }
+
+    #[test]
+    fn the_terminal_locks_with_the_console_lock_after() {
+        let l = live("term-idle");
+        {
+            let mut c = lock(&l.console);
+            c.token = Some(zeroize::Zeroizing::new("t".into()));
+            c.last = Instant::now().checked_sub(Duration::from_secs(400));
+        }
+        // Default 300 s: 400 s idle is locked.
+        assert!(!l.console_fresh());
+        // Lock after 15 minutes: still signed in.
+        lock(&l.prefs).idle_lock_seconds = 900;
+        assert!(l.console_fresh());
+        // Lock after 1 minute.
+        lock(&l.prefs).idle_lock_seconds = 60;
+        assert!(!l.console_fresh());
+        assert_eq!(l.idle_lock(), Duration::from_secs(60));
     }
 }

@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# ttyd for the Terminal (docs/plans/live-terminal.md). Debian trixie has no
+# ttyd package (CI build of 2026-11-04: "Unable to locate package ttyd" in
+# snapshot 20261016T023245Z), so the image takes upstream's own static
+# release (MIT; built with musl, no libraries needed) and pins it by
+# SHA-256 (ADR 0021). The checksum equals the release's SHA256SUMS entry.
+# Format: <sha256> <file name in the image tree> <url>
+8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55 usr/bin/ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64
+8b7e100f8311cb428c57609164d93099bada2599f948359045d1ac876a7a625b usr/share/doc/ttyd/LICENSE https://raw.githubusercontent.com/tsl0922/ttyd/1.7.7/LICENSE
