@@ -7,4 +7,5 @@
 pub mod console;
 pub mod firstboot;
 pub mod live_api;
+pub mod live_terminal;
 pub mod state;

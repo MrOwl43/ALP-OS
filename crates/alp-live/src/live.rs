@@ -774,6 +774,41 @@ pub fn boot_log_text(now: &str) -> String {
     t + "\n"
 }
 
+/// The Terminal's log page (docs/plans/live-terminal.md, review T6).
+pub const TERM_LOGS_DIR: &str = "/run/alp-terminal-logs";
+const TERM_LOGS: &str = "/run/alp-terminal-logs/logs.txt";
+
+/// The Terminal's log page (docs/plans/live-terminal.md, review T6), written
+/// as root by alpd before a session (and by `alpctl live term-logs`): the
+/// boot log's text (fixed `journalctl` arguments, a fixed list of units, the
+/// same text that goes on the stick). alp-terminal.service binds the folder
+/// read-only into the session; nothing typed there reaches `journalctl`.
+pub fn term_logs() -> i32 {
+    let text = boot_log_text(&now_utc());
+    // Fresh for each session: root's folder (0755) and file (0644); the
+    // session's user can read them, never write them.
+    term_logs_clear();
+    let r = fs::create_dir(TERM_LOGS_DIR)
+        .and_then(|()| fs::write(TERM_LOGS, text.as_bytes()))
+        .and_then(|()| {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(TERM_LOGS_DIR, fs::Permissions::from_mode(0o755))?;
+            fs::set_permissions(TERM_LOGS, fs::Permissions::from_mode(0o644))
+        });
+    match r {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("alp: the Terminal's log page was not written: {e}");
+            1
+        }
+    }
+}
+
+/// Remove the Terminal's log page (the session ended).
+pub fn term_logs_clear() {
+    let _ = fs::remove_dir_all(TERM_LOGS_DIR);
+}
+
 /// `alpctl live bootlog`: write the boot log to the ALP-REPORT drive. The
 /// first write of a new boot moves the earlier logs one place older
 /// (`boot-log-previous.txt`, then `boot-log-2.txt` to `-4.txt`), so a start

@@ -1032,6 +1032,27 @@ Body `{}` or `{ "restart": true }`. Stops Immich, closes the archive and
 the index safely, saves, then powers off (or restarts). Steps, time
 limits and the `power` state block: 2026-10-26 change, item 1.
 
+### Terminal (stage F, feature `terminal`, 2026-11-04)
+
+Plan and security rules: `docs/plans/live-terminal.md` (revision 2, review
+T1-T6). Offered only when the image carries `alp-terminal.service` and ttyd.
+Behind the console sign-in like every route (`401 console.locked`).
+
+- `POST terminal/start {password}` → 200 `{ "url": "http://127.0.0.1:8413/<32 hex>/" }`.
+  The password is checked every time, in the sign-in counter and back-off
+  (`403 password.wrong`, `429 password.wait` with `retry_after_seconds`).
+  `409 terminal.running` when a session runs; `409 terminal.no_password`
+  when no ALP password was chosen (protection level 1, or setup);
+  `500 terminal.failed` when the session did not come up. The address is
+  given only here: never in the state or any log.
+- `POST terminal/stop {}` → 200 `{}`, also when no session runs.
+- State: `terminal: {"state": "off" | "running"}`, never the address.
+- A session ends when the console locks (`console/lock`, the idle lock or
+  a new sign-in), on `terminal/stop`, when its browser leaves (ttyd
+  `--once`), after 10 minutes without input at the prompt, after one hour,
+  and when alpd restarts. Then nothing listens on 8413: the old address
+  answers nothing.
+
 ## Other errors
 
 `404 request.not_found`, `405 request.method`, `400 request.json` (body is

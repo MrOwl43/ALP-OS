@@ -61,6 +61,9 @@ _stage:
     cp -r --no-preserve=mode,ownership ui/live target/alp-image-tree/usr/share/alp/ui/live
     rm -f target/alp-image-tree/usr/share/alp/ui/live/mock.js
     install -D -m 0644 profiles/generic-x86_64.toml target/alp-image-tree/usr/share/alp/profiles/generic-x86_64.toml
+    # ttyd for the Terminal (image/terminal/ttyd.lock): upstream's static
+    # release, checksum-pinned (Debian trixie has no ttyd package).
+    image/terminal/fetch.sh {{out}}/ttyd target/alp-image-tree
     # Immich's pinned container images (image/immich/images.lock, ADR 0015):
     # downloaded once into out/immich-images (every blob digest-checked; a
     # cache) and hard-linked into image/immich-images, where
@@ -71,7 +74,7 @@ _stage:
 # VM scenarios (docs/qa/live-alpha-test-plan.md): T-CORE (boot, verity, budget),
 # T-BOOT-03 tampered root, T-LIVE-01 hardware report and read-only disks,
 # T-LIVE-02 encrypted archive, T-API-01 console API, T-IMMICH-01 phone backup,
-# T-UI-01 kiosk screen, T-UI-02 second start, T-PAIR-01 phone pairing. ALP_QA_STRICT=1 turns skips into failures.
+# T-UI-01 kiosk screen, T-UI-02 second start, T-PAIR-01 phone pairing, T-TERM-01 Terminal. ALP_QA_STRICT=1 turns skips into failures.
 test-vm: test-vm-base test-vm-ui test-vm-immich test-vm-storage
 
 # The same scenarios in three groups that each fit CI's hour (they run as
@@ -87,6 +90,7 @@ test-vm-ui:
     tests/vm/t-ui-01.sh {{image}}
     tests/vm/t-ui-02.sh {{image}}
     tests/vm/t-pair-01.sh {{image}}
+    tests/vm/t-term-01.sh {{image}}
 
 # T-IMMICH-01 (with T-PAIR-02) and T-LIVE-03 need the photo service.
 test-vm-immich:
