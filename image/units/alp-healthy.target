@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=ALP-OS system healthy
+# Block 2 adds the real health conditions (alpd socket, network up, time sync
+# attempted). It must never require the data pool.
+After=multi-user.target

@@ -1,0 +1,456 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# alpd API contract (ADR 0004). Served by alpd over HTTPS on the LAN and on
+# localhost for the local console; the same API for every screen (spec 2.2).
+# Beta scope only (NEXT_TASK session 3). Changing it is a contract change.
+openapi: 3.1.0
+info:
+  title: alpd API
+  version: 0.2.0
+  description: >
+    Every error response is a Problem with a code from errors/catalog.toml.
+    User-facing text (title, action) comes from the catalog in the user's
+    language; the UI shows title and action first, then the code.
+    Access rules: every operation names the listeners that serve it
+    (x-alp-listeners) and its security. Anything not listed for a listener
+    returns 404 there. State-changing requests must send
+    Origin http://127.0.0.1:8411 and Content-Type application/json (CSRF).
+    See docs/contracts/api-access.md.
+servers:
+  - url: /api/v1
+x-alp-listeners:
+  console:
+    where: "http://127.0.0.1:8411 (localhost only; the kiosk browser on the server's own screen)"
+    tls: false
+  lan:
+    where: "https://<server>:443 on the home network (local CA)"
+    beta: "Serves only the Immich reverse proxy at / (the phone app's server URL). No /api/v1 management API on the LAN in the beta."
+  socket:
+    where: "unix:/run/alp/alpd.sock (mode 0600, root): alpctl, health check, tests"
+  gallery:
+    where: "http://localhost:8412 (loopback only): Immich web UI for the console; a different site from the console, so the console cookie is never sent or readable"
+# Default: an unlocked console session on the console listener, or root on the socket.
+security:
+  - consoleSession: []
+paths:
+  /health:
+    get:
+      summary: Liveness for alp-healthy.target ("alpd responding on its socket")
+      x-alp-listeners: [socket]
+      security: []
+      responses:
+        "200": { description: alpd is running, content: { application/json: { schema: { $ref: "#/components/schemas/Health" } } } }
+  /status:
+    get:
+      summary: Overall state and error codes only; shown on the locked console
+      x-alp-listeners: [console, socket]
+      security: []
+      responses:
+        "200": { description: Locked status, content: { application/json: { schema: { $ref: "#/components/schemas/LockedStatus" } } } }
+  /status/details:
+    get:
+      summary: Full status for the status screen (devices, last backups, storage, updates)
+      x-alp-listeners: [console, socket]
+      responses:
+        "200": { description: Status, content: { application/json: { schema: { $ref: "#/components/schemas/Status" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+  /alerts:
+    get:
+      summary: Current alerts, each with an error code
+      x-alp-listeners: [console, socket]
+      responses:
+        "200": { description: Alerts, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Alert" } } } } }
+        default: { $ref: "#/components/responses/Problem" }
+  /devices:
+    get:
+      summary: Devices in the chain
+      x-alp-listeners: [console, socket]
+      responses:
+        "200": { description: Devices, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Device" } } } } }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      summary: Add a phone (beta temporary method)
+      description: >
+        Beta only (NEXT_TASK beta scope 8; deviates from spec block 8 rule 2,
+        which the beta allows): alpd creates an Immich account for the phone
+        and returns the details once, to type into the Immich app. The
+        password is shown once and never stored in plain text. Replaced by
+        QR pairing into the chain after the beta (block 7).
+      x-alp-listeners: [console]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/NewDevice" } } }
+      responses:
+        "201": { description: Device added, content: { application/json: { schema: { $ref: "#/components/schemas/BetaPhoneConnection" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+  /devices/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    patch:
+      summary: Rename a device
+      x-alp-listeners: [console]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: false, required: [name], properties: { name: { type: string, maxLength: 64 } } } } }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/Device" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Revoke a device (recorded in the ledger)
+      description: >
+        Revoking ends the device's access only: it disables the device's
+        login and sessions. It never deletes the Immich user, its albums or
+        any photo (stream E test). Photos stay in the archive.
+      x-alp-listeners: [console]
+      responses:
+        "204": { description: Revoked }
+        default: { $ref: "#/components/responses/Problem" }
+  /storage:
+    get:
+      summary: Pool and disks for the storage screen
+      x-alp-listeners: [console, socket]
+      responses:
+        "200": { description: Storage, content: { application/json: { schema: { $ref: "#/components/schemas/Storage" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+  /storage/unlock:
+    post:
+      summary: Open the photo storage with the recovery key (ALP-KEY-002)
+      description: >
+        For when unattended unlock failed. Works while the console is locked
+        (the recovery key is stronger than the PIN). Same attempt limits as
+        /console/unlock; every attempt is recorded in the ledger.
+      x-alp-listeners: [console]
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/RecoveryWords" } } }
+      responses:
+        "204": { description: Storage opened }
+        default: { $ref: "#/components/responses/Problem" }
+  /recovery:
+    get:
+      summary: Recovery key status (never the key itself)
+      x-alp-listeners: [console, socket]
+      responses:
+        "200": { description: Status, content: { application/json: { schema: { $ref: "#/components/schemas/RecoveryStatus" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+  /recovery/sheet:
+    post:
+      summary: Show the recovery key as seed phrase and QR (export_recovery; ledger entry)
+      description: Requires an unlocked console session and the PIN entered again.
+      x-alp-listeners: [console]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PinReentry" } } }
+      responses:
+        "200": { description: Recovery sheet, content: { application/json: { schema: { $ref: "#/components/schemas/RecoverySheet" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+  /recovery/saved:
+    post:
+      summary: The user confirms the recovery key was saved
+      x-alp-listeners: [console]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/Confirm" } } }
+      responses:
+        "204": { description: Recorded }
+        default: { $ref: "#/components/responses/Problem" }
+  /updates:
+    get:
+      summary: Update state and last result
+      x-alp-listeners: [console, socket]
+      responses:
+        "200": { description: Updates, content: { application/json: { schema: { $ref: "#/components/schemas/Updates" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+  /updates/apply:
+    post:
+      summary: Apply an available update now (deferred while an upload is in flight)
+      x-alp-listeners: [console, socket]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/Empty" } } }
+      responses:
+        "202": { description: Scheduled or deferred, content: { application/json: { schema: { $ref: "#/components/schemas/Updates" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+  /console:
+    get:
+      summary: Local console lock state
+      x-alp-listeners: [console]
+      security: []
+      responses:
+        "200": { description: Console state, content: { application/json: { schema: { $ref: "#/components/schemas/ConsoleState" } } } }
+  /console/unlock:
+    post:
+      summary: Unlock the local console with the PIN or the recovery key
+      description: >
+        Attempt limits (shared by PIN and recovery-word attempts, counted in
+        the database so restarts do not reset them): 5 free attempts, then a
+        wait of 30 seconds that doubles after each further failure, up to
+        1 hour; a success resets the count. Every attempt is recorded in the
+        ledger (ConsoleUnlocked / ConsoleUnlockFailed).
+      x-alp-listeners: [console]
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/Unlock" } } }
+      responses:
+        "200": { description: "Unlocked; sets the alp_console cookie (HttpOnly, SameSite=Strict, Path=/api/v1)" }
+        default: { $ref: "#/components/responses/Problem" }
+  /console/lock:
+    post:
+      summary: Lock the local console
+      x-alp-listeners: [console]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/Empty" } } }
+      responses:
+        "204": { description: Locked }
+  /console/pin:
+    put:
+      summary: Set or change the console PIN
+      description: >
+        First boot: allowed without a session only while pin_set is false,
+        and only on the console listener. Afterwards: needs an unlocked
+        session and the current PIN.
+      x-alp-listeners: [console]
+      security: [{}, { consoleSession: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetPin" } } }
+      responses:
+        "204": { description: Set }
+        default: { $ref: "#/components/responses/Problem" }
+  /settings:
+    get:
+      summary: User settings
+      x-alp-listeners: [console, socket]
+      responses:
+        "200": { description: Settings, content: { application/json: { schema: { $ref: "#/components/schemas/Settings" } } } }
+    put:
+      summary: Change user settings
+      x-alp-listeners: [console]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/Settings" } } }
+      responses:
+        "200": { description: Saved, content: { application/json: { schema: { $ref: "#/components/schemas/Settings" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+  /firstboot:
+    get:
+      summary: First-boot progress
+      x-alp-listeners: [console, socket]
+      security: []
+      responses:
+        "200": { description: Steps, content: { application/json: { schema: { $ref: "#/components/schemas/FirstBoot" } } } }
+components:
+  securitySchemes:
+    consoleSession:
+      type: apiKey
+      in: cookie
+      name: alp_console
+      description: >
+        Session after unlocking the local console (console listener only).
+        Cookie HttpOnly, SameSite=Strict. Ends on lock, idle timeout or
+        screen blank. On the socket listener, root access counts as this.
+    deviceCertificate:
+      type: mutualTLS
+      description: Paired devices in the chain (after the beta; not used by any beta operation).
+  responses:
+    Problem:
+      description: Error with a catalog code
+      content: { application/json: { schema: { $ref: "#/components/schemas/Problem" } } }
+  schemas:
+    ErrorCode:
+      type: string
+      pattern: "^ALP-(INST|BOOT|UPD|STO|KEY|NET|PAIR|APP|PWR|HW)-[0-9]{3}$"
+    Severity:
+      type: string
+      enum: [needs-attention, action-required]
+    OverallState:
+      type: string
+      enum: [healthy, needs-attention, action-required]
+    Problem:
+      type: object
+      required: [code, title, action]
+      properties:
+        code: { $ref: "#/components/schemas/ErrorCode" }
+        title: { type: string }
+        action: { type: string }
+        severity: { $ref: "#/components/schemas/Severity" }
+        technician: { type: string, description: Shown only behind "Technical details". }
+        retry_after_seconds: { type: integer, minimum: 0, description: Set when an attempt limit applies. }
+    Alert:
+      type: object
+      required: [code, severity, title, action, since]
+      properties:
+        code: { $ref: "#/components/schemas/ErrorCode" }
+        severity: { $ref: "#/components/schemas/Severity" }
+        title: { type: string }
+        action: { type: string }
+        since: { type: string, format: date-time }
+    Health:
+      type: object
+      required: [alive]
+      properties: { alive: { type: boolean } }
+    LockedStatus:
+      type: object
+      description: What the locked console may show (spec block 8 console rule 2).
+      required: [state, alert_codes]
+      additionalProperties: false
+      properties:
+        state: { $ref: "#/components/schemas/OverallState" }
+        alert_codes: { type: array, items: { $ref: "#/components/schemas/ErrorCode" } }
+    Status:
+      type: object
+      required: [state, alerts]
+      properties:
+        state: { $ref: "#/components/schemas/OverallState" }
+        alerts: { type: array, items: { $ref: "#/components/schemas/Alert" } }
+        last_backup:
+          type: array
+          items:
+            type: object
+            required: [device_id, device_name]
+            properties:
+              device_id: { type: string }
+              device_name: { type: string }
+              at: { type: [string, "null"], format: date-time }
+        storage: { $ref: "#/components/schemas/StorageSummary" }
+        update_state: { $ref: "#/components/schemas/UpdateState" }
+    StorageSummary:
+      type: object
+      required: [available]
+      properties:
+        available: { type: boolean }
+        used_bytes: { type: integer, minimum: 0 }
+        usable_bytes: { type: integer, minimum: 0 }
+        protection: { type: string, enum: [none, bit-rot-only, disk-failure] }
+    Storage:
+      type: object
+      required: [summary, disks]
+      properties:
+        summary: { $ref: "#/components/schemas/StorageSummary" }
+        disks:
+          type: array
+          items:
+            type: object
+            required: [id, model, size_bytes, health]
+            properties:
+              id: { type: string }
+              model: { type: string }
+              size_bytes: { type: integer, minimum: 0 }
+              health: { type: string, enum: [ok, warning, failing, missing] }
+        last_scrub: { type: [string, "null"], format: date-time }
+        snapshots: { type: integer, minimum: 0 }
+    Device:
+      type: object
+      required: [id, name, kind, added_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        kind: { type: string, enum: [phone, computer, other] }
+        admin: { type: boolean }
+        added_at: { type: string, format: date-time }
+        last_seen: { type: [string, "null"], format: date-time }
+        revoked: { type: boolean }
+    NewDevice:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 64 }
+    BetaPhoneConnection:
+      type: object
+      required: [device, server_url, email, password]
+      description: Shown once on the console; the password is never stored in plain text.
+      properties:
+        device: { $ref: "#/components/schemas/Device" }
+        server_url: { type: string, example: "https://alparchive.local", description: "The LAN listener; Immich behind alpd's reverse proxy." }
+        email: { type: string }
+        password: { type: string }
+    RecoveryStatus:
+      type: object
+      required: [created, saved_confirmed, tier]
+      properties:
+        created: { type: boolean }
+        saved_confirmed: { type: boolean }
+        tier: { type: string, enum: [standard, archive] }
+    RecoverySheet:
+      type: object
+      required: [words, qr_svg]
+      properties:
+        words: { type: array, items: { type: string } }
+        qr_svg: { type: string }
+    RecoveryWords:
+      type: object
+      additionalProperties: false
+      required: [recovery_words]
+      properties:
+        recovery_words: { type: array, items: { type: string } }
+    Empty:
+      type: object
+      additionalProperties: false
+      description: "{} (state-changing requests always carry a JSON body; CSRF rule)"
+    Confirm:
+      type: object
+      additionalProperties: false
+      required: [confirm]
+      properties:
+        confirm: { type: boolean, const: true }
+    PinReentry:
+      type: object
+      additionalProperties: false
+      required: [pin]
+      properties:
+        pin: { $ref: "#/components/schemas/Pin" }
+    Pin:
+      type: string
+      pattern: "^[0-9]{6,8}$"
+    SetPin:
+      type: object
+      additionalProperties: false
+      required: [new_pin]
+      properties:
+        new_pin: { $ref: "#/components/schemas/Pin" }
+        current_pin: { $ref: "#/components/schemas/Pin" }
+    UpdateState:
+      type: string
+      enum: [up-to-date, available, deferred, applying, rolled-back, failed]
+    Updates:
+      type: object
+      required: [current_version, state]
+      properties:
+        current_version: { type: string }
+        available_version: { type: [string, "null"] }
+        state: { $ref: "#/components/schemas/UpdateState" }
+        last_result: { type: [string, "null"], enum: [success, rolled-back, failed, null] }
+        maintenance_window: { type: string, example: "03:00" }
+    ConsoleState:
+      type: object
+      required: [locked, pin_set]
+      properties:
+        locked: { type: boolean }
+        pin_set: { type: boolean }
+        retry_after_seconds: { type: integer, minimum: 0 }
+    Unlock:
+      oneOf:
+        - { $ref: "#/components/schemas/PinReentry" }
+        - { $ref: "#/components/schemas/RecoveryWords" }
+    Settings:
+      type: object
+      additionalProperties: false
+      properties:
+        language: { type: string, example: en }
+        time_zone: { type: string, example: UTC }
+    FirstBoot:
+      type: object
+      required: [complete, steps]
+      properties:
+        complete: { type: boolean }
+        steps:
+          type: array
+          items:
+            type: object
+            required: [id, state]
+            properties:
+              id: { type: string, enum: [keys, pool, recovery, console-pin, ca, first-phone] }
+              state: { type: string, enum: [pending, running, done, failed] }
+              error: { $ref: "#/components/schemas/Problem" }

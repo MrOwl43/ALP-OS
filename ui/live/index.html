@@ -1,0 +1,28 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ALPArchive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="stage">
+  <header class="top">
+    <div class="bar">
+      <div class="lead"><span id="lead"></span><span class="brand" id="brand">ALPArchive</span></div>
+      <div class="tray" id="tray"></div>
+    </div>
+    <nav class="steps" id="steps" aria-live="polite"></nav>
+  </header>
+  <main class="center">
+    <section class="card" id="card" aria-live="polite"></section>
+  </main>
+  <footer class="foot" id="foot"></footer>
+</div>
+<script src="api.js"></script>
+<script src="mock.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

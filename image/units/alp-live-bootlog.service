@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The boot log on the stick's ALP-REPORT drive (T29): what waits, what
+# failed, ALPArchive's units and warnings, so a start that hangs can be read
+# afterwards (from Windows, or after the next start: boot-log-previous.txt).
+# Started by alp-live-bootlog.timer; never part of the boot itself.
+[Unit]
+Description=ALP-OS Live: save the boot log on the stick
+DefaultDependencies=no
+After=local-fs.target
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/alpctl live bootlog
+TimeoutStartSec=120s
+# A stop (shutdown) must not hold the power-off up. A mount left by a kill
+# is undone by the next run (on_report_drive), and at shutdown by systemd.
+TimeoutStopSec=15s

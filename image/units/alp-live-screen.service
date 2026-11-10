@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Fallback when the kiosk cannot start (no working graphics): the text
+# screen on tty1 (started by alp-kiosk.service OnFailure). tty2 is the
+# admin login (docs/security/admin-account.md).
+[Unit]
+Description=ALP-OS Live: text screen on tty1 (graphics fallback)
+After=alp-live-report.service alp-kiosk.service
+Conflicts=getty@tty1.service alp-kiosk.service
+
+[Service]
+ExecStart=/usr/bin/alpctl live screen
+Restart=always
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes

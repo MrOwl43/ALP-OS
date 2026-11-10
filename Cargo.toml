@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[workspace]
+resolver = "3"
+members = [
+    "crates/alp-core",
+    "crates/alp-storage",
+    "crates/alp-crypto",
+    "crates/alp-network",
+    "crates/alp-orchestrator",
+    "crates/alp-installer",
+    "crates/alp-hw",
+    "crates/alpctl",
+    "crates/alp-live",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[workspace.dependencies]
+# Each dependency needs a one-line justification (spec Section 2 rule 3).
+# Zeroizing wrappers for secrets (named by spec Section 2 rule 4).
+zeroize = { version = "=1.9.1", default-features = false, features = ["alloc"] }
+# Serialization of API and configuration types (named by spec Section 2 rule 1).
+serde = { version = "=1.0.229", features = ["derive"] }
+# Parses TOML: the error-code contract check (tests) and the hardware profile (alpctl live).
+toml = "=1.1.8"
+# JSON for the alpd console API and Immich's API (serde's own JSON crate; MIT OR Apache-2.0).
+serde_json = "=1.0.154"
+# QR codes as SVG for the phone address and the chain words (Nayuki's reference
+# implementation, no dependencies; MIT).
+qrcodegen = "=1.8.0"
+# BIP-39 seed words for the sync chain (rust-bitcoin's implementation; CC0-1.0).
+# No own cryptography: checksum and seed derivation come from this crate.
+bip39 = { version = "=3.0.0", default-features = false, features = ["std"] }
+# SHA-256 for the 8-bit checksum of the 8-word chain code (ADR 0013). rust-bitcoin's
+# hashes crate, already in the tree as bip39's dependency (same pinned version; CC0-1.0).
+bitcoin_hashes = { version = "=0.14.101", default-features = false }
+alp-crypto = { path = "crates/alp-crypto", version = "=0.0.0" }
+alp-hw = { path = "crates/alp-hw", version = "=0.0.0" }
+alp-live = { path = "crates/alp-live", version = "=0.0.0" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }

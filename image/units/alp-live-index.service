@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Stands for the unlocked index on the stick (ADR 0011). alpd unlocks it
+# with the user's password (cryptsetup, password on stdin) and then starts
+# this unit, so that at shutdown Immich and the archive stop first and the
+# index is closed last.
+[Unit]
+Description=ALP-OS Live: the encrypted index on the stick is open
+After=alp-live-state.service
+Requires=alp-live-state.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/alpctl live index check
+ExecStop=/usr/bin/alpctl live index close
+TimeoutStopSec=60

@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=ALP-OS Live: make the new disk %I read-only
+# Started by 90-alp-live-protect.rules for each disk that appears; the
+# disks there at boot are first handled by alp-live-protect.service.
+DefaultDependencies=no
+After=alp-live-protect.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/alpctl live protect-disks
+TimeoutStartSec=60

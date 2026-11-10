@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
+# Static build for programs that run in the image (ADR 0007).
+targets = ["x86_64-unknown-linux-musl"]

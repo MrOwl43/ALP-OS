@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# ALP-OS Live: a disk plugged in while Live runs is made read-only too
+# (alpctl skips the stick ALP-OS runs from). ADR 0007.
+# Not RUN+=: inside udevd's sandbox (private mounts) alpctl could not see
+# what the stick has mounted and failed on every disk (0.2.4 boot log). A
+# systemd unit runs it in the normal system, after the boot-time run.
+ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", KERNEL!="loop*|ram*|zram*|dm-*|sr*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="alp-live-protect-disk@%k.service"

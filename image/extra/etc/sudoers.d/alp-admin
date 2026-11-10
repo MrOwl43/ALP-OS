@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+admin ALL=(ALL:ALL) ALL
+Defaults:admin use_pty, timestamp_timeout=5

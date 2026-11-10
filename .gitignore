@@ -1,0 +1,53 @@
+# Rust
+target/
+**/*.rs.bk
+
+# Build output
+out/
+mkosi.output/
+mkosi.cache/
+mkosi.workspace/
+image/mkosi.output/
+image/mkosi.cache/
+image/mkosi.tools/
+# Immich images staged by `just _stage` (ADR 0015)
+image/immich-images/
+
+# Disk and VM images
+*.img
+*.raw
+*.qcow2
+*.iso
+*.vmdk
+*.vdi
+*.efi
+*.fd
+
+# Signing material must never be committed
+*.key
+*.pem
+mkosi.key
+mkosi.crt
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.TemporaryItems
+.DocumentRevisions-V100
+Icon?
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Per-device Claude Code instructions (not shared)
+CLAUDE.local.md

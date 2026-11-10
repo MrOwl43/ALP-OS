@@ -1,0 +1,437 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# ALP-OS error catalog: the single source of every user-facing error code
+# (spec Section 2.2). It generates docs/errors.md and the UI strings.
+#
+# Rules:
+# - Code format: ALP-<AREA>-<NNN>. Areas: INST, BOOT, UPD, STO, KEY, NET,
+#   PAIR, APP, PWR, HW.
+# - Codes are never reused or renumbered. Retired codes stay, marked retired.
+# - Every entry needs: severity, title, action (both plain language, shown to
+#   the user) and technician (detail plus the logs to check).
+# - severity is the level the UI colours the (i) icon with (ADR 0023, owner
+#   decision 2026-11-08, replacing the earlier two values):
+#     "note"     white: please note, nothing has to be done now;
+#     "action"   yellow: something needs to be handled;
+#     "now"      red: needs an answer right away;
+#     "critical" flashing red with a yellow frame: the backup is at risk;
+#                stop using the archive until it is fixed.
+# - The same code is written to the journal in the field ALP_ERROR.
+# - Optional: retired = true (the code stays reserved forever).
+# - CI checks (crates/alp-core/tests/error_catalog.rs) that every entry is
+#   well-formed and that every ALP-* code used in crates/ exists here.
+# - Codes known so far are listed per area; streams add codes by PR.
+
+# ---------------------------------------------------------------- INST
+
+[ALP-INST-001]
+severity = "action"
+title = "This computer can't run ALP-OS"
+action = "ALP-OS needs a computer that starts in modern (UEFI) mode. Check the computer's start-up settings for a UEFI option, or try another computer. Nothing on this computer was changed."
+technician = "Firmware booted in legacy BIOS/CSM mode: /sys/firmware/efi is absent. Enable UEFI boot (disable CSM) in the firmware setup. Logs: installer journal (journalctl -b -t alp-installer)."
+
+[ALP-INST-002]
+severity = "action"
+title = "No disk is big enough"
+action = "ALP-OS needs a disk of at least the size shown on screen. Connect a bigger disk and start again. Nothing on this computer was changed."
+technician = "No candidate disk meets the minimum size from the hardware profile (system area plus minimum data area). Logs: installer journal; lsblk output in the installer report."
+
+[ALP-INST-003]
+severity = "action"
+title = "This computer has too little memory"
+action = "ALP-OS needs at least 4 GB of memory. Add memory or use another computer. Nothing on this computer was changed."
+technician = "MemTotal below the hardware profile minimum (spec Section 3: 4 GB). Logs: installer journal."
+
+[ALP-INST-004]
+severity = "action"
+title = "Installation could not finish"
+action = "Restart the computer from the USB stick and try again. If it happens again, write down this code and ask for help."
+technician = "Partitioning, image copy or first-boot seeding failed. The installer journal names the failed step. Logs: journalctl -b -t alp-installer; systemd-repart and systemd-sysupdate output."
+
+[ALP-INST-005]
+severity = "action"
+title = "The disks changed since installation"
+action = "Reconnect the disks exactly as they were during installation and restart the server. Nothing was changed on your disks."
+technician = "First boot rediscovered disks that do not match the first-boot seed (missing member, different serial/size/partition, or safety check refused); no pool was created. Logs: journalctl -t alpd; firstboot-seed.toml."
+
+# ---------------------------------------------------------------- BOOT
+
+[ALP-BOOT-001]
+severity = "note"
+title = "An update did not work, so your server went back to the previous version"
+action = "Nothing to do: your photos are safe and the server works as before."
+technician = "Boot counting reached zero for the new UKI and systemd-boot started the previous slot. Logs: journalctl -b -1; bootctl list; systemd-bless-boot status."
+
+# ----------------------------------------------------------------- UPD
+
+[ALP-UPD-001]
+severity = "note"
+title = "Updates could not be downloaded"
+action = "Check that the server is connected to your home network and the internet. It will try again by itself."
+technician = "systemd-sysupdate could not fetch the update index or files. Logs: journalctl -u systemd-sysupdate.service."
+
+[ALP-UPD-002]
+severity = "now"
+title = "An update was rejected because it could not be verified"
+action = "Your server kept its current version and is safe. If this message stays, write down this code and ask for help."
+technician = "Signature or hash verification of SHA256SUMS(.gpg) failed; the transfer was not applied. Logs: journalctl -u systemd-sysupdate.service."
+
+# ----------------------------------------------------------------- STO
+
+[ALP-STO-001]
+severity = "now"
+title = "A disk is missing"
+action = "Your photos are still readable, but they are no longer protected against another disk failing. Reconnect the missing disk, or replace it using the storage screen."
+technician = "Pool is degraded: a member device is missing (btrfs filesystem show reports missing devices). Logs: journalctl -t alpd -t kernel; alp-storage health."
+
+[ALP-STO-002]
+severity = "action"
+title = "A disk is wearing out"
+action = "Replace the disk named on screen soon. If it is the only disk in your server, copy your photos to another device now."
+technician = "smartctl reports a failing health self-assessment or rising reallocated/pending sectors. Logs: smartctl -a <disk>; journalctl -t alpd."
+
+[ALP-STO-003]
+severity = "action"
+title = "Your storage is almost full"
+action = "Add a disk using the storage screen, or remove photos you no longer need."
+technician = "Free space below the profile threshold. Logs: btrfs filesystem usage on the pool mount."
+
+[ALP-STO-004]
+severity = "critical"
+title = "Some damaged data could not be repaired"
+action = "Do not remove any disk. Write down this code and ask for help."
+technician = "Scrub found uncorrectable errors (no good copy). Logs: btrfs scrub status -d; journalctl -t kernel for BTRFS errors."
+
+[ALP-STO-005]
+severity = "now"
+title = "Your photo storage could not be opened"
+action = "Check that all disks are connected, then restart the server. If it stays, write down this code and ask for help."
+technician = "Pool open failed (LUKS unlock or mount). Boot and health are unaffected (spec Section 6). Logs: journalctl -t alpd -u systemd-cryptsetup*."
+
+[ALP-STO-006]
+severity = "action"
+title = "That disk can't be used for photos"
+action = "Choose another disk. Nothing was changed."
+technician = "alp_hw::safety::check_member refused the pool member (system disk, or an ESP/root/verity/alp-state partition, or not an alp-data partition). Logs: journalctl -t alpd."
+
+[ALP-STO-007]
+severity = "action"
+title = "A storage change was stopped for safety"
+action = "Nothing was changed. Try again; if it happens again, write down this code and ask for help."
+technician = "Confirmed::by_user refused: the plan's digest differs from the confirmed digest (internal error; plan recomputed differently or changed after confirmation). Logs: journalctl -t alpd; ledger OperationConfirmed entry."
+
+# Stream A (ALP-OS Live), backup disk for the archive: 100-199.
+
+[ALP-STO-100]
+severity = "action"
+title = "Not enough free space on this disk"
+action = "Free up space on the disk, or plug in a bigger one. The archive needs at least 1.1 GB free."
+technician = "archive::refusal: max_size(free) < MIN_BYTES (1 GiB); the margin kept free is min(1 GiB, 5 % of free). Free space from df -B1 on a read-only probe mount. Logs: journalctl -u alpd; alpctl live archive candidates."
+
+[ALP-STO-101]
+severity = "action"
+title = "FAT32 can't hold the archive"
+action = "Use a disk formatted as exFAT, NTFS or ext4, or another disk."
+technician = "ID_FS_TYPE=vfat: FAT32 limits a file to 4 GiB, the archive is one file. Logs: alpctl live archive candidates; udevadm info /dev/<device>."
+
+[ALP-STO-102]
+severity = "action"
+title = "This disk has an operating system on it"
+action = "ALPArchive only uses disks that just store files. Plug in another disk."
+technician = "A partition of the disk has an OS GPT type (OS_TYPES: EFI System, Microsoft reserved/recovery, LDM, Storage Spaces, Linux root/usr) or holds Windows\\System32 or os-release (owner decision 2026-10-19). Logs: alpctl live archive candidates; lsblk -o NAME,PARTTYPE,FSTYPE."
+
+[ALP-STO-103]
+severity = "action"
+title = "This disk's format can't be used"
+action = "Use a disk formatted as exFAT, NTFS or ext4, or another disk."
+technician = "ID_FS_TYPE empty (no filesystem, unknown, or a partition table without partitions) or not one of ext4, ntfs, exfat. Logs: alpctl live archive candidates; udevadm info /dev/<device>."
+
+[ALP-STO-104]
+severity = "action"
+title = "This disk is write-protected"
+action = "If the disk or card has a lock switch, slide it to unlocked, then plug it in again."
+technician = "/sys/block/<disk>/ro was 1 before protect-disks set it (marker in /run/alp/hw-readonly/<disk>-<diskseq>), or blockdev --setrw left the partition read-only. Logs: journalctl -b -k (Write Protect is on)."
+
+[ALP-STO-105]
+severity = "action"
+title = "This disk is locked with BitLocker"
+action = "Turn BitLocker off for this disk in Windows, or use another disk."
+technician = "ID_FS_TYPE=BitLocker: the volume cannot be read without its key, which ALP-OS never asks for. Logs: alpctl live archive candidates."
+
+[ALP-STO-106]
+severity = "action"
+title = "Windows on this computer is not fully shut down"
+action = "Start Windows, then hold Shift and click Shut down. Start ALP-OS again. A disk formatted as ext4 works without this."
+technician = "archive::windows_asleep: an NTFS volume's hiberfil.sys starts with hibr (hibernation or Fast Startup), a BitLocker partition prevents the check, or an NTFS probe failed; no exFAT/NTFS volume is written then (review B1). Not used for external backup disks since 2026-10-20 (owner: only the disk itself is checked, see ALP-STO-108 and ALP-STO-109). Logs: journalctl -u alpd; alpctl live archive candidates."
+
+[ALP-STO-107]
+severity = "action"
+title = "This disk could not be read"
+action = "Unplug the disk, plug it in again and try again. If it stays, try another disk."
+technician = "Read-only probe mount failed (mount -o ro; the message carries mount's error). Logs: journalctl -b -k; journalctl -u alpd."
+
+[ALP-STO-108]
+severity = "action"
+title = "This disk was not removed safely"
+action = "Plug the disk into a Windows or Mac computer, let it check the disk, eject it properly, then plug it in here again."
+technician = "No longer returned since ALPHA 0.2 (ADR 0014): a dirty volume is repaired automatically, see ALP-STO-118. Was: the volume's own dirty flag is set: exFAT boot sector VolumeFlags bit 1 (VolumeDirty, offset 106), or NTFS $Volume dirty (ntfs3 /proc/fs/ntfs3/<dev>/volinfo line 6 on the read-only probe mount; ntfs3 also refuses a rw mount without force). Logs: journalctl -b -k; alpctl live archive candidates."
+
+[ALP-STO-109]
+severity = "action"
+title = "Windows on this disk is not fully shut down"
+action = "Start the Windows on this disk, hold Shift and click Shut down, then plug the disk in here again."
+technician = "hiberfil.sys on this NTFS volume starts with hibr (hibernation or Fast Startup): writing it could be overwritten when that Windows resumes. Logs: alpctl live archive candidates."
+
+[ALP-STO-110]
+severity = "now"
+title = "The backup disk could not be prepared"
+action = "Unplug the backup disk, plug it in again and try again. If it stays, try another disk."
+technician = "archive.create job, step preparing: state partition, partition lookup, probe, allow_write (blockdev --setrw) or the rw mount failed; the message carries the cause. Logs: journalctl -b | grep ALP-JOB; journalctl -b -k; alpctl live diag."
+
+[ALP-STO-111]
+severity = "critical"
+title = "Writing to the backup disk failed"
+action = "Unplug the backup disk, plug it in again and try again, or choose a smaller size. If it stays, the disk may be worn out: try another disk."
+technician = "archive.create job, step reserving: fallocate or the zero fill of ALPArchive/archive.alp.partial returned an error (EIO after a USB reset, ENOSPC, the device went away). The .partial is kept and continued on the next try. Logs: journalctl -b | grep ALP-JOB; journalctl -b -k (usb, I/O error); alpctl live diag."
+
+[ALP-STO-112]
+severity = "critical"
+title = "The backup disk stopped answering"
+action = "Unplug the backup disk, plug it into another USB port and try again. A faster disk (USB 3) helps."
+technician = "archive.create job: an external program (losetup, cryptsetup, mkfs.btrfs, mount, btrfs, sync) did not finish within its time limit and was stopped. Logs: journalctl -b | grep ALP-JOB; journalctl -b -k; alpctl live diag."
+
+[ALP-STO-113]
+severity = "now"
+title = "Locking the archive failed"
+action = "Try again. If it stays, restart the computer with the stick in and try again."
+technician = "archive.create job, step encrypting: key file in the index, losetup, cryptsetup luksFormat/luksUUID/open or luksHeaderBackup failed; the message carries the program's error. Logs: journalctl -b | grep ALP-JOB; journalctl -b -k; alpctl live diag."
+
+[ALP-STO-114]
+severity = "now"
+title = "Setting up the archive failed"
+action = "Try again. If it stays, try another disk."
+technician = "archive.create job, step formatting: mkfs.btrfs, mount, btrfs subvolume create, sync -f, the rename of archive.alp.partial or the record on the stick failed. Logs: journalctl -b | grep ALP-JOB; journalctl -b -k; alpctl live diag."
+
+[ALP-STO-115]
+severity = "action"
+title = "This disk is too slow"
+action = "The disk writes slower than 3 MB/s. Plug it into another USB port (a blue USB 3 port is faster), or use a faster disk."
+technician = "archive.create job, step checking (ADR 0014): the 256 MiB write test of ALPArchive/.alp-disk-test (4 MiB blocks, fsync every 32 MiB) wrote under 3 MB/s, or the writing took more than 100 s. The test file is deleted. Logs: journalctl -b | grep ALP-JOB; journalctl -b -k (usb); alpctl live diag."
+
+[ALP-STO-116]
+severity = "now"
+title = "The disk failed the read and write test"
+action = "This disk may be faulty. Unplug it, plug it in again and try again. If it stays, use another disk."
+technician = "archive.create job, step checking (ADR 0014): writing, the unmount and mount again, or reading back ALPArchive/.alp-disk-test returned an I/O error, or the data read back differed from what was written (possible faulty drive or fake-capacity stick). The test file is deleted. Logs: journalctl -b | grep ALP-JOB; journalctl -b -k (I/O error); alpctl live diag."
+
+[ALP-STO-117]
+severity = "critical"
+title = "The disk reports a problem with its health"
+action = "The disk's own health check says it may fail soon. Use another disk; copy anything you need from this one."
+technician = "archive.create job, step checking (ADR 0014): smartctl -H -n standby (or with -d sat) exited with bit 3 (disk failing) or bit 4 (pre-fail attribute at or below threshold) set. Disks without SMART (sticks, bridges without SAT) are skipped. Logs: journalctl -b | grep ALP-JOB; smartctl -a /dev/<disk>."
+
+[ALP-STO-118]
+severity = "now"
+title = "The disk could not be repaired"
+action = "This disk was not removed safely and the automatic repair did not work. Plug it into a Windows or Mac computer, let it check the disk, eject it properly, then plug it in here again, or use another disk."
+technician = "Automatic repair (ADR 0014) before create, open or recover: fsck.exfat -p (exfatprogs) or ntfsfix -d (ntfs-3g) on the unmounted partition failed or timed out, or the volume's dirty flag was still set when read again. Logs: journalctl -b | grep ALP-JOB; journalctl -u alpd; journalctl -u alp-live-archive."
+
+[ALP-STO-119]
+severity = "now"
+title = "Preparing the disk failed"
+action = "Unplug the disk, plug it in again and try again. If it stays, the disk may be faulty: use another disk."
+technician = "disk.prepare job (ADR 0014): blockdev --setrw, sfdisk --lock --wipe always --wipe-partitions always, udevadm settle or mkfs.exfat -L ALPArchive failed or timed out; the message carries the program's error. The disk is made read-only again. Logs: journalctl -b | grep ALP-JOB; journalctl -b -k; alpctl live diag."
+
+[ALP-STO-120]
+severity = "action"
+title = "This disk cannot be prepared"
+action = "Only an external disk with nothing usable on it can be erased here. Look at the list of disks again, or use another disk."
+technician = "disks/prepare refused (ADR 0014): not an external disk, the ALP-OS stick, write-protected, an operating system or an ALPArchive folder on it, a usable partition, or a partition that is not FAT32, unknown or unreadable. Logs: journalctl -u alpd; alpctl live archive candidates."
+
+[ALP-STO-121]
+severity = "now"
+title = "Starting over did not finish"
+action = "Restart the computer with the stick in and choose Start over again. If it stays, write ALP-OS to the stick again."
+technician = "reset job (POST live/reset): archive::reset, cryptsetup erase or the secure wipe of an unprotected index (crates/alp-live/src/wipe.rs: blkdiscard, zero overwrite, else the first and last 16 MiB) failed; an unfinished wipe of an unprotected index resumes at the next setup (index-wipe-pending). Logs: journalctl -u alpd | grep -E 'reset|wipe'; alpctl live diag."
+
+[ALP-STO-122]
+severity = "now"
+title = "The disk was not formatted completely"
+action = "Unplug the disk, plug it in again and format it once more. If a secure format says the disk was only partly erased, the disk may be failing: do not use it for anything private."
+technician = "disk.format job (POST live/disks/format, T49): sfdisk or mkfs.exfat failed, or a secure format could overwrite only the first and last 16 MiB (crates/alp-live/src/wipe.rs, Method::Edges). The disk is read-only again afterwards (format::ALLOWED_FORMAT removed). Logs: journalctl -u alpd | grep -E 'disk.format|wipe'."
+
+[ALP-STO-123]
+severity = "action"
+title = "This disk cannot be formatted here"
+action = "Only an external disk that is not your backup disk can be formatted. Eject it if it is open, unlock its write-protect switch, then look at the list of disks again."
+technician = "disks/format refused (crates/alp-live/src/format.rs decision): not an external (USB) disk, the archive's disk (record PARTUUID), write-protected, something of the disk mounted, or the partitions changed since the list. Logs: journalctl -u alpd."
+
+[ALP-STO-124]
+severity = "action"
+title = "This is the computer's own disk"
+action = "ALPArchive Live never changes the computer's own disk or the ALPArchive stick, to keep what is on them safe. Use an external disk plugged in by USB."
+technician = "A disk route (disks/*, archive/create) named a disk classed Stick or Internal (ADR 0022, crates/alp-live/src/disks.rs): not on the USB bus, the boot stick, a virtual device, or the stick was not found. Logs: journalctl -u alpd."
+
+[ALP-STO-125]
+severity = "action"
+title = "The disk check could not finish"
+action = "Nothing on the disk was changed. Unplug the disk, plug it in again and try the check again. If it keeps failing, copy what you need from the disk."
+technician = "Job disk.check (crates/alp-live/src/disks.rs check_disk): the disk was unplugged or open, or the sandboxed read-only fsck (systemd-run unit alp-disk-check) did not run. fsck output is never logged. Logs: journalctl -u alpd -u alp-disk-check."
+
+# ----------------------------------------------------------------- KEY
+
+[ALP-KEY-001]
+severity = "action"
+title = "Save your recovery key"
+action = "Print the recovery sheet or keep the recovery key safe. You need it if this server ever breaks."
+technician = "Recovery key created but not yet confirmed as saved (Standard tier). Logs: alpd recovery status."
+
+[ALP-KEY-002]
+severity = "now"
+title = "Your server needs the recovery key to open your photos"
+action = "Enter your recovery key on the server's screen to open your photos. You can find it on your recovery sheet."
+technician = "Unsealing the wrap key failed (TPM2 PCR mismatch or missing keyfile); unattended unlock impossible. Logs: journalctl -t alpd; systemd-cryptenroll/tpm2 errors."
+
+[ALP-KEY-003]
+severity = "critical"
+title = "The server's activity record does not check out"
+action = "Your photos are not affected. Write down this code and ask for help."
+technician = "Audit ledger verification failed; the report names the first bad sequence number (block 6). Logs: alpctl ledger verify."
+
+[ALP-KEY-004]
+severity = "now"
+title = "Your server could not save its keys"
+action = "Restart the server. If this message comes back, write down this code and ask for help. Your photos are not affected."
+technician = "Writing a sealed blob to state failed (disk full, I/O error or permissions). Logs: journalctl -t alpd; df and smartctl for the system disk."
+
+# ----------------------------------------------------------------- NET
+
+[ALP-NET-001]
+severity = "now"
+title = "Your server is not connected to the network"
+action = "Check the network cable between the server and your router."
+technician = "No carrier or no address on any wired link. Logs: networkctl status; journalctl -u systemd-networkd."
+
+[ALP-NET-002]
+severity = "note"
+title = "Your server's clock could not be set"
+action = "Check that the server can reach the internet. It will try again by itself."
+technician = "systemd-timesyncd has not synchronised. Logs: timedatectl timesync-status; journalctl -u systemd-timesyncd."
+
+[ALP-NET-100]
+severity = "action"
+title = "No wired network adapter was found"
+action = "ALPArchive needs a wired network connection. Plug a USB-Ethernet adapter into this computer and start the test again."
+technician = "No non-wireless interface with a device under /sys/class/net. USB adapters without a driver do not appear; check lsusb and dmesg. Logs: journalctl -b -k; the report file's technical details."
+
+[ALP-NET-101]
+severity = "action"
+title = "No network cable is connected"
+action = "Connect a network cable from this computer to your router, then start the test again to check the connection."
+technician = "Wired adapters were switched on (ip link set up) but none reported carrier=1 within the wait time. Logs: journalctl -b -k (link up/down messages); /sys/class/net/*/carrier."
+
+[ALP-NET-102]
+severity = "note"
+title = "A network adapter has no driver"
+action = "One network adapter in this computer does not work with ALP-OS yet. Please send the report file so we can add support for it."
+technician = "PCI network controller (class 0x02) with no bound driver: driver or firmware missing in the image. The report lists its PCI vendor:device ID. Logs: journalctl -b -k (firmware load errors)."
+
+# ---------------------------------------------------------------- PAIR
+
+# ---------------------------------------------------------------- PAIR
+
+[ALP-PAIR-001]
+severity = "note"
+title = "That code did not work"
+action = "Show a new code on the server's screen and try again."
+technician = "Pairing code wrong, expired or already used (codes are single use and rate-limited). Logs: journalctl -t alpd."
+
+# ----------------------------------------------------------------- APP
+
+[ALP-APP-001]
+severity = "now"
+title = "The photo app is not running"
+action = "Restart the server. If it stays, write down this code and ask for help. Your photos are not affected."
+technician = "Immich Quadlet units failed or are not healthy. Logs: systemctl --user status (immich units); podman logs; journalctl -t alpd."
+
+[ALP-APP-002]
+severity = "note"
+title = "The photo app could not be updated and was kept at its previous version"
+action = "Nothing to do. Your photos are safe."
+technician = "Immich/PostgreSQL migration failed; the pre-migration snapshot was restored (spec Section 2.1). Logs: podman logs; alpd migration report."
+
+# ----------------------------------------------------------------- PWR
+
+[ALP-PWR-001]
+severity = "note"
+title = "The power went off"
+action = "Your server restarted and checks itself; if it finds a problem, it will show it here. A battery backup (UPS) can prevent this."
+technician = "Unclean shutdown detected at boot (no clean-shutdown marker). Logs: journalctl --list-boots; journalctl -b -1."
+
+# ------------------------------------------------------------------ HW
+
+[ALP-HW-001]
+severity = "action"
+title = "The system disk is wearing out"
+action = "Replace the system disk soon. If your photos are on this same disk, copy them to another device now."
+technician = "SMART health warning on the system disk. Logs: smartctl -a <system disk>."
+
+[ALP-HW-100]
+severity = "action"
+title = "This computer has too little memory"
+action = "ALPArchive needs at least 4 GB of memory. Add memory or use another computer."
+technician = "Installed memory (SMBIOS type 17, or MemTotal when SMBIOS is unreadable) is below min_ram_bytes in profiles/generic-x86_64.toml. Logs: the report file; /sys/firmware/dmi/entries/17-*."
+
+[ALP-HW-101]
+severity = "action"
+title = "This computer's processor is too old"
+action = "ALPArchive needs a 64-bit processor. Use a newer computer."
+technician = "The 'lm' flag is missing from /proc/cpuinfo."
+
+[ALP-HW-102]
+severity = "action"
+title = "This computer started in old (legacy BIOS) mode"
+action = "ALPArchive needs a computer that starts in modern (UEFI) mode. Turn on UEFI and turn off legacy or CSM mode in the computer's start-up settings."
+technician = "/sys/firmware/efi is absent: the firmware booted in legacy BIOS/CSM mode. (ALP-OS Live itself only starts in UEFI mode.)"
+
+[ALP-HW-103]
+severity = "note"
+title = "No security chip (TPM 2.0) was found"
+action = "ALPArchive works without it, but your archive key is then kept in a key file instead of the chip. If the computer has one, it may be switched off in the start-up settings, where it can be called TPM, PTT or fTPM."
+technician = "No /sys/class/tpm/tpm0, or tpm_version_major is not 2. Logs: journalctl -b -k | grep -i tpm."
+
+[ALP-HW-104]
+severity = "note"
+title = "Secure Boot is on"
+action = "Test versions of ALP-OS are not signed yet, so they normally do not start with Secure Boot on. Turn Secure Boot off in the computer's start-up settings."
+technician = "EFI variable SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c reads 1."
+
+[ALP-HW-105]
+severity = "action"
+title = "No internal disk was found"
+action = "ALPArchive keeps your photos on a disk inside the computer. Check that the computer has a disk and that it is switched on in the start-up settings (some computers hide disks behind RAID or Intel RST mode; choose AHCI)."
+technician = "No disk other than the ALP-OS stick that is non-removable and not on USB. Intel VMD/RST can hide NVMe disks. Logs: journalctl -b -k; lsblk."
+
+[ALP-HW-106]
+severity = "action"
+title = "The internal disk is too small"
+action = "ALPArchive needs an internal disk of at least 64 GB. Fit a bigger disk or use another computer."
+technician = "Largest internal disk is below min_single_disk_bytes in profiles/generic-x86_64.toml."
+
+[ALP-HW-107]
+severity = "note"
+title = "No graphics adapter was found"
+action = "ALPArchive can run without a screen, but you need one to set it up. If you can read this, the screen works anyway."
+technician = "No PCI device of class 0x03 in /sys/bus/pci/devices."
+
+[ALP-HW-108]
+severity = "note"
+title = "The report could not be saved on the stick"
+action = "Take a photo of this screen and send it instead. The stick may be write-protected or damaged."
+technician = "Mounting or writing the ALP-REPORT partition failed (error shown in the report). Logs: journalctl -b -u alp-live-report.service; journalctl -b -k."
+
+[ALP-HW-109]
+severity = "note"
+title = "The processor has no encryption speed-up (AES-NI)"
+action = "ALPArchive works, but encrypting your photos is slower on this computer."
+technician = "The 'aes' flag is missing from /proc/cpuinfo; block 5 then chooses a cipher without AES-NI."

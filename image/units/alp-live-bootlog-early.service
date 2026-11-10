@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The first boot log of a start, written as soon as the stick's disks are
+# there (T44): a start that hangs before alp-live-bootlog.timer's first run
+# still leaves its own log, and the earlier ones move one place older.
+# Nothing waits for it, and it gives up quickly.
+[Unit]
+Description=ALP-OS Live: save the first boot log on the stick
+DefaultDependencies=no
+After=alp-live-protect.service local-fs.target
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/alpctl live bootlog
+TimeoutStartSec=30s
+TimeoutStopSec=10s

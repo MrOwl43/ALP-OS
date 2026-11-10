@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Hardware profile: generic x86_64 PC (the only v1 profile, spec Section 5).
+# Schema: alp_hw::profile::HardwareProfile (contract, ADR 0004). Do not add
+# hardware checks in code; add them here.
+
+name = "generic-x86_64"
+architecture = "x86_64"
+
+# Installer minimums (spec Section 3; single disk: owner decision, ADR 0005).
+min_ram_bytes = 4_000_000_000
+min_system_disk_bytes = 32_000_000_000
+min_single_disk_bytes = 64_000_000_000
+
+capacity_low_percent = 10
+scrub_interval_days = 30
+
+[backends]
+boot = "UefiSystemdBoot"
+key_seal = ["Tpm2Seal", "PassphraseOrKeyfileSeal"]
+storage = "BtrfsBackend"
+power = "GenericPcPower"
+
+[snapshots]
+hourly = 24
+daily = 14
+weekly = 8

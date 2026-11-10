@@ -1,0 +1,124 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# alp-installer local API contract (ADR 0004). Served on http://127.0.0.1:8410
+# only, by alp-installer on the live USB image; used by the installer screens
+# in ui/. Nothing is served on the network.
+openapi: 3.1.0
+info:
+  title: alp-installer API
+  version: 0.1.0
+servers:
+  - url: /installer/v1
+paths:
+  /language:
+    put:
+      summary: Choose the installer language (Welcome screen)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [language], properties: { language: { type: string, example: en } } } } }
+      responses:
+        "204": { description: Set }
+  /hardware:
+    get:
+      summary: Hardware check in plain words (Your computer screen)
+      responses:
+        "200": { description: Check, content: { application/json: { schema: { $ref: "#/components/schemas/HardwareCheck" } } } }
+  /disks:
+    get:
+      summary: Disks with the recommended layout preselected (Where to install)
+      responses:
+        "200": { description: Disks and plan, content: { application/json: { schema: { $ref: "#/components/schemas/DiskChoice" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+  /plan:
+    post:
+      summary: Build the exact plan for the chosen disks; returns what will be erased
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [system_disk], properties: { system_disk: { type: string }, data_disks: { type: array, items: { type: string } } } } } }
+      responses:
+        "200": { description: Plan, content: { application/json: { schema: { $ref: "#/components/schemas/InstallPlan" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+  /install:
+    post:
+      summary: Start installing (Confirm screen). Requires the plan id and the typed confirmation word.
+      description: >
+        The plan is bound to each disk's by-id name, serial and size. Right
+        before writing, the installer discovers disks again and refuses with
+        an ALP-INST code if any planned disk changed or another disk took its
+        place (spec block 7: never touch a disk the user did not confirm).
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [plan_id, confirmation_word], properties: { plan_id: { type: string }, confirmation_word: { type: string } } } } }
+      responses:
+        "202": { description: Started }
+        default: { $ref: "#/components/responses/Problem" }
+  /progress:
+    get:
+      summary: Installation progress (Installing and Done screens)
+      responses:
+        "200": { description: Progress, content: { application/json: { schema: { $ref: "#/components/schemas/Progress" } } } }
+components:
+  responses:
+    Problem:
+      description: Error with a catalog code (ALP-INST-*)
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code, title, action]
+            properties:
+              code: { type: string, pattern: "^ALP-(INST|HW)-[0-9]{3}$" }
+              title: { type: string }
+              action: { type: string }
+              technician: { type: string }
+  schemas:
+    HardwareCheck:
+      type: object
+      required: [can_install, items]
+      properties:
+        can_install: { type: boolean }
+        blocking_code: { type: [string, "null"] }
+        items:
+          type: array
+          items:
+            type: object
+            required: [id, ok, text]
+            properties:
+              id: { type: string, enum: [uefi, memory, disks, security-chip, secure-boot, cpu-encryption] }
+              ok: { type: boolean }
+              text: { type: string }
+    Disk:
+      type: object
+      required: [id, model, size_bytes, transport]
+      properties:
+        id: { type: string }
+        model: { type: string }
+        size_bytes: { type: integer, minimum: 0 }
+        transport: { type: string, enum: [sata, nvme, usb, virtio, other] }
+        is_install_medium: { type: boolean }
+    DiskChoice:
+      type: object
+      required: [disks, recommended]
+      properties:
+        disks: { type: array, items: { $ref: "#/components/schemas/Disk" } }
+        recommended:
+          type: object
+          required: [system_disk]
+          properties:
+            system_disk: { type: string }
+            data_disks: { type: array, items: { type: string } }
+    InstallPlan:
+      type: object
+      required: [plan_id, will_erase, protection, usable_bytes, confirmation_word]
+      properties:
+        plan_id: { type: string }
+        will_erase: { type: array, items: { $ref: "#/components/schemas/Disk" } }
+        protection: { type: string, enum: [none, bit-rot-only, disk-failure] }
+        usable_bytes: { type: integer, minimum: 0 }
+        confirmation_word: { type: string, description: The word the user must type to confirm. }
+    Progress:
+      type: object
+      required: [state, percent]
+      properties:
+        state: { type: string, enum: [idle, partitioning, writing-system, preparing-first-boot, done, failed] }
+        percent: { type: integer, minimum: 0, maximum: 100 }
+        error: { $ref: "#/components/responses/Problem/content/application~1json/schema" }

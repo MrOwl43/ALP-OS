@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=ALP-OS Live: hardware report, saved on the stick
+Requires=alp-live-protect.service
+After=alp-live-protect.service
+Before=alp-healthy.target alp-live-screen.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=-/usr/bin/udevadm settle --timeout=30
+ExecStart=/usr/bin/alpctl live report
+TimeoutStartSec=90s
+
+[Install]
+WantedBy=multi-user.target

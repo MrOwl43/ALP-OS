@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[package]
+name = "alpctl"
+description = "CLI talking to alpd over a unix socket (technicians, tests)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alp-live.workspace = true

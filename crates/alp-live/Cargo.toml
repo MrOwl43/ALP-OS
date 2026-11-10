@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[package]
+name = "alp-live"
+description = "ALP-OS Live: hardware report, disk guard, Wi-Fi, encrypted archive, Immich setup, sync chain (shared by alpctl and alpd)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+alp-hw.workspace = true
+# Reads the hardware profile (profiles/*.toml) and the archive record.
+toml.workspace = true
+# Immich API bodies (phone pairing).
+serde_json.workspace = true
+# QR codes (SVG) for the phone address and the chain words.
+qrcodegen.workspace = true
+# Chain seed words (BIP-39).
+bip39.workspace = true
+# SHA-256 checksum of the 8-word chain code.
+bitcoin_hashes.workspace = true
+# Wipes the chain words from memory after use.
+zeroize.workspace = true
+
+[lints]
+workspace = true

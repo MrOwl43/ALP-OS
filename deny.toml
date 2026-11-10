@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# cargo-deny configuration. Tightened as dependencies are added.
+
+[graph]
+all-features = true
+
+[advisories]
+yanked = "deny"
+
+[licenses]
+# Allow-list grows only with a reviewed justification (spec Section 2.1).
+# CC0-1.0 (public-domain dedication, compatible with AGPL-3.0): bip39,
+# bitcoin_hashes and hex-conservative, the BIP-39 seed words for the sync
+# chain (ADR 0010); there is no maintained MIT/Apache BIP-39 crate with fewer
+# dependencies.
+allow = ["MIT", "Apache-2.0", "Unicode-3.0", "CC0-1.0"]
+confidence-threshold = 0.9
+# Our own crates are unpublished (license: AGPL-3.0-or-later, see ADR 0002).
+private = { ignore = true }
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

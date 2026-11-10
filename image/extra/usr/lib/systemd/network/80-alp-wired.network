@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Every physical wired port, built in or USB, gets an address by DHCP
+# (spec block 9). Wi-Fi is not configured.
+[Match]
+Type=ether
+Kind=!*
+
+[Network]
+DHCP=yes
+IPv6AcceptRA=yes
+LinkLocalAddressing=yes
+
+[DHCPv4]
+# Show up in the router's device list under the computer's own name.
+SendHostname=yes

@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The kiosk on the computer's own screen (ADR 0010): cage + Chromium on
+# the console UI. Not part of alp-healthy.target (spec block 8 console rule
+# 1); restarts on its own. If graphics never work, the text screen takes
+# tty1 over (OnFailure).
+[Unit]
+Description=ALP-OS Live: kiosk on the computer's screen
+After=alpd.service systemd-user-sessions.service systemd-logind.service alp-live-report.service
+Wants=alpd.service
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+OnFailure=alp-live-screen.service
+StartLimitIntervalSec=300
+StartLimitBurst=4
+
+[Service]
+User=alp-kiosk
+PAMName=alp-kiosk
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty1
+UtmpMode=user
+RuntimeDirectory=alp-kiosk
+RuntimeDirectoryMode=0700
+Environment=HOME=/run/alp-kiosk XDG_SESSION_TYPE=wayland WLR_RENDERER_ALLOW_SOFTWARE=1
+# Wait for a KMS device (drivers load from udev); none after 30 s = no
+# working graphics: fail, so the text screen takes over.
+ExecStartPre=/bin/sh -c 'for i in $(seq 30); do for c in /dev/dri/card*; do [ -e "$c" ] && exit 0; done; sleep 1; done; echo "ALP-OS Live: no graphics device" >&2; exit 1'
+ExecStart=/usr/bin/cage -d -s -- /usr/bin/chromium --kiosk --ozone-platform=wayland --no-first-run --noerrdialogs --disable-session-crashed-bubble --overscroll-history-navigation=0 --user-data-dir=/run/alp-kiosk/profile http://127.0.0.1:8411/
+# Closing the browser restarts the kiosk (kiosk-lockdown.md).
+Restart=always
+RestartSec=3
+# Never hold up a shutdown (T15).
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=multi-user.target

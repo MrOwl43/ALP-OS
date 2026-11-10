@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[package]
+name = "alp-storage"
+description = "StorageBackend trait, BtrfsBackend, disk discovery, SMART"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+alp-crypto.workspace = true
+alp-hw.workspace = true
+
+[lints]
+workspace = true

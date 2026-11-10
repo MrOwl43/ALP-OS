@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# mkosi post-installation script (image/mkosi.conf.d/h-immich.conf, ADR 0015):
+# put the Immich container images pinned in images.lock into the signed
+# root, read-only, at /usr/lib/alp/immich-images/<name>/ (containers/image
+# "dir:" format: manifest.json, compressed layer blobs named by digest).
+#
+# Input: $SRCDIR/immich-images/<name>/, made and digest-checked by
+# image/immich/fetch.sh (`just _stage`). Every digest is checked again here.
+#
+# The images are NOT unpacked here: mkosi 26 builds without root and maps a
+# single ID into the image, so layers owned by other IDs (e.g. /etc/gshadow
+# root:42) cannot be unpacked with their owners. The immich user's own
+# rootless podman unpacks them into its store in the index on first start
+# (and after an update): /usr/lib/alp/alp-immich-load, immich-images.service.
+#
+# ALP_IMMICH_IMPORT=0 skips this (local builds without the images;
+# T-IMMICH-01 then skips: no images in the image).
+set -euo pipefail
+
+dest_rel=usr/lib/alp/immich-images
+dest="$BUILDROOT/$dest_rel"
+lock="$SRCDIR/immich/images.lock"
+images="$SRCDIR/immich-images"
+
+if [[ ${ALP_IMMICH_IMPORT:-1} == 0 ]]; then
+    echo "immich: import skipped (ALP_IMMICH_IMPORT=0)"
+    exit 0
+fi
+[[ -f $lock ]] || { echo "immich: FAIL: $lock missing" >&2; exit 1; }
+
+check() { # <file> <sha256:hex>
+    [[ $(sha256sum "$1" | cut -d' ' -f1) == "${2#sha256:}" ]] \
+        || { echo "immich: FAIL: digest mismatch: $1 (want $2)" >&2; exit 1; }
+}
+
+rm -rf "$dest"
+mkdir -p "$dest"
+: >"$dest/list.new"
+while read -r name ref tag index amd64; do
+    [[ -n $name && $name != \#* ]] || continue
+    dir="$images/$name"
+    [[ -f $dir/manifest.json ]] || { echo "immich: FAIL: $dir not fetched (run image/immich/fetch.sh)" >&2; exit 1; }
+    check "$dir/manifest.json" "$amd64"
+    config=$(jq -r .config.digest "$dir/manifest.json")
+    mkdir -p "$dest/$name"
+    install -m 0644 "$dir/manifest.json" "$dir/version" "$dest/$name/"
+    for d in $config $(jq -r '.layers[].digest' "$dir/manifest.json"); do
+        check "$dir/${d#sha256:}" "$d"
+        install -m 0644 "$dir/${d#sha256:}" "$dest/$name/"
+    done
+    # name, reference with tag, index digest, amd64 manifest, image ID
+    echo "$name $ref:$tag $index $amd64 $config" >>"$dest/list.new"
+    echo "immich: added $ref:$tag (${config#sha256:})"
+done <"$lock"
+mv "$dest/list.new" "$dest/list"
+# For tests (T-IMMICH-01/04) and support: what is in the image.
+install -m 0644 "$dest/list" "$BUILDROOT/usr/lib/alp/containers.list"
+du -sh "$dest"

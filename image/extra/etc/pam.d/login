@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# ALP-OS Live (docs/security/admin-account.md): only `admin`, only on tty2,
+# password from the stick checked by pam_pwdfile (never with `debug`: it
+# would log the hash). 5 failures lock the login for 5 minutes.
+auth     requisite  pam_nologin.so
+auth     required   pam_faildelay.so delay=3000000
+auth     requisite  pam_faillock.so preauth
+auth     [success=1 default=bad] pam_pwdfile.so pwdfile=/var/lib/alp/live/admin.pwd
+auth     [default=die] pam_faillock.so authfail
+auth     sufficient pam_faillock.so authsucc
+auth     required   pam_deny.so
+account  required   pam_access.so
+account  required   pam_unix.so
+password required   pam_deny.so
+@include common-session
