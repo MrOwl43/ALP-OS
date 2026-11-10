@@ -256,14 +256,22 @@ pub fn ensure(addresses: &[String]) -> Result<(), NotServed> {
     if addresses.is_empty() {
         return Ok(()); // nothing a phone could connect to yet
     }
-    if !systemctl(&["is-active", "--quiet", "nginx.service"]) {
-        // nginx runs only with Immich; nothing to check before it starts.
-        return Err(NotServed {
-            message: "The connection for phones is not running yet. Wait until the photo service has started.".into(),
-            served: Vec::new(),
-        });
-    }
     let mut served = served_all(&addresses);
+    // Decided by what answers on 443, not only by systemd's state (security
+    // review of 976b802): an nginx that is activating, reloading or failing
+    // but still answers TLS gets the full check below.
+    if !systemctl(&["is-active", "--quiet", "nginx.service"])
+        && served.iter().all(|s| s.sha256.is_none())
+    {
+        // Nothing answers: nginx runs only with Immich. While it is stopped nothing stale can
+        // be served: the file now names every address, and nginx reads that
+        // file when it starts. The phone screen says that the photo service
+        // is not ready (its own reason), so a QR made now is not a broken
+        // promise; pairing itself does not need nginx (T-PAIR-01, CI run
+        // 42780229103: pair/open was refused in a VM without Immich).
+        // Not cached as verified: the first call after nginx starts checks.
+        return Ok(());
+    }
     // A reload takes a moment to reach new connections.
     for _ in 0..3 {
         if served.iter().all(|s| s.ok(Some(&file_sha))) {
