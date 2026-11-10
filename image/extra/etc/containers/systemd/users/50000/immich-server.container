@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Immich server v3.3.3 (ADR 0015). Machine learning is off and not shipped.
+# Media: /data is the index's thumbnails and videos (stick); upload,
+# library and backups are the originals on the archive (bind-mounted at
+# /run/alp/immich/originals by `alpctl live immich prepare`).
+[Unit]
+Description=Immich server
+# The pinned images are loaded from the system image first (ADR 0015).
+Requires=immich-images.service
+After=immich-images.service
+# Never write to the RAM-backed /var: only with the index (home) and the
+# archive (originals) bound by `alpctl live immich prepare`.
+ConditionPathIsMountPoint=/var/lib/immich
+ConditionPathIsMountPoint=/run/alp/immich/originals
+Requires=immich-postgres.service immich-valkey.service
+After=immich-postgres.service immich-valkey.service
+
+[Container]
+ContainerName=immich-server
+# Pinned: image/immich/images.lock; imported read-only into the image.
+Image=ghcr.io/immich-app/immich-server:v3.3.3
+Pull=never
+Pod=immich.pod
+# No User=: the server runs as the container's root, which is the host's
+# unprivileged uid 50000 (rootless). Originals it writes are owned by
+# 50000, the uid the archive's exFAT/NTFS disk is mounted with (ADR 0014).
+# DB_PASSWORD (random, made by `alpctl live immich prepare`).
+EnvironmentFile=/run/alp/immich/db.env
+Environment=DB_HOSTNAME=127.0.0.1 DB_USERNAME=postgres DB_DATABASE_NAME=immich REDIS_HOSTNAME=127.0.0.1
+Environment=IMMICH_CONFIG_FILE=/config/immich.json IMMICH_TRUSTED_PROXIES=127.0.0.1 IMMICH_LOG_LEVEL=log NO_COLOR=true
+Volume=/usr/share/alp/immich/immich.json:/config/immich.json:ro
+Volume=/var/lib/immich/data:/data
+Volume=/run/alp/immich/originals/upload:/data/upload
+Volume=/run/alp/immich/originals/library:/data/library
+Volume=/run/alp/immich/originals/backups:/data/backups
+NoNewPrivileges=true
+DropCapability=NET_RAW
+
+[Service]
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=600
+MemoryMax=1536M
+CPUWeight=30
+IOWeight=30
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Wi-Fi: iwd joins the network (chosen on the Live screen); networkd gets
+# the address by DHCP, as for wired ports.
+[Match]
+Type=wlan
+
+[Network]
+DHCP=yes
+IPv6AcceptRA=yes
+LinkLocalAddressing=yes
+IgnoreCarrierLoss=3s
+
+[DHCPv4]
+SendHostname=yes

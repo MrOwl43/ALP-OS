@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=ALP-OS Live: "ALPArchive is starting" on the screen
+DefaultDependencies=no
+After=systemd-vconsole-setup.service
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/alpctl live splash
+TimeoutStartSec=10s
+StandardOutput=tty
+TTYPath=/dev/tty1
+
+[Install]
+WantedBy=sysinit.target

@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Immich on ALP-OS Live (ADR 0015): one rootless pod for the server, its
+# database and its cache. They talk over the pod's own loopback; only the
+# server port is published, on the host's loopback, for nginx (443) and
+# alpd. Started by alp-immich.service (system) through user@50000.service,
+# only while the index and the archive are open.
+[Unit]
+Description=Immich pod (ALPArchive photo service)
+# Never write to the RAM-backed /var: only with the index (home) and the
+# archive (originals) bound by `alpctl live immich prepare`.
+ConditionPathIsMountPoint=/var/lib/immich
+ConditionPathIsMountPoint=/run/alp/immich/originals
+
+[Pod]
+PodName=immich
+Network=pasta
+PublishPort=127.0.0.1:2283:2283
+# Upstream compose: shm_size 128mb for Postgres; /dev/shm is the pod's.
+ShmSize=128m
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=Report on the console that ALP-OS reached alp-healthy.target
+After=alp-healthy.target
+
+[Service]
+Type=oneshot
+# For the VM tests' serial log; on a computer without that console the
+# write fails, which is not a failure of the start (T38).
+ExecStart=/bin/sh -c 'echo "ALP-OS: alp-healthy.target reached" >/dev/console 2>/dev/null || true'

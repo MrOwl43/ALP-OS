@@ -1,0 +1,198 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: CI
+
+on:
+  push:
+    # Pushes to working branches do not run CI (owner, 2026-10-24: save
+    # usage; testing is done by code review, the second developer and the
+    # owner by hand). Run it on demand with workflow_dispatch or a PR.
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      vm_groups:
+        # Rerun only some VM groups to save usage, e.g. ["immich"].
+        description: 'VM test groups as a JSON list'
+        required: false
+        default: '["base", "ui", "immich"]'
+      release_version:
+        # Instead of the VM tests: build the image and publish it as a
+        # pre-release (e.g. 0.2.4) for the owner to write to a stick.
+        description: 'Publish the image as alpha <version> (no VM tests)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # rustup reads the pinned toolchain from rust-toolchain.toml
+      - run: rustup show
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+
+  supply-chain:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-deny@0.20.2,cargo-audit@0.22.2
+      - run: cargo deny check
+      - run: cargo audit
+
+  shell:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Pinned: the runner's preinstalled shellcheck differs from the dev VM's,
+      # and versions report different warning codes.
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: shellcheck@0.11.0
+      - run: shellcheck --version && shellcheck tests/vm/*.sh tests/ci/*.sh tests/contracts/*.sh tests/e2e/*.sh tests/lib/*.sh
+      - run: tests/ci/check-snapshot-epoch.sh image/mkosi.conf
+      - run: python3 -I tools/split-spec.py --check
+      - name: Error codes are append-only
+        run: |
+          git fetch -q --depth=1 origin main
+          tests/ci/check-codes-lock.sh origin/main
+
+  # Live console (docs/plans/live-ui-0.2.4.md): every screen and the 0.2.4
+  # flows over the mock API in headless Chromium. Playwright pinned: the same
+  # version as the cloud dev container's, which the smoke test was written on.
+  ui:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: for f in ui/live/*.js; do node --check "$f"; done
+      - run: python3 -I tests/ui/check-i18n.py
+      - run: npm install --no-save --no-package-lock --prefix "$RUNNER_TEMP/pw" playwright@1.63.0 && "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
+      - run: NODE_PATH="$RUNNER_TEMP/pw/node_modules" ALP_QA_OUT=out/qa/ui node tests/ui/smoke.mjs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: ui-screens
+          path: out/qa/ui/
+
+  image:
+    if: ${{ !inputs.release_version }}
+    # Same Ubuntu release as the dev VM, so build tools (mkosi, systemd-repart,
+    # ukify) match and image hashes are comparable.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    # The VM scenarios in three groups, each on its own runner with its own
+    # build of the image (7 min), so each fits the hour (owner, 2026-10-30).
+    strategy:
+      fail-fast: false
+      matrix:
+        group: ${{ fromJSON(inputs.vm_groups || '["base", "ui", "immich"]') }}
+    name: image (${{ matrix.group }})
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install image build and VM test tools (exact versions)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends --allow-downgrades \
+            $(grep -v '^#' tests/ci/build-tools.lock)
+          tests/ci/check-build-tools.sh tests/ci/build-tools.lock
+      - name: Allow mkosi to use user namespaces
+        run: |
+          sudo install -m 0644 tests/ci/mkosi.apparmor /etc/apparmor.d/mkosi
+          sudo apparmor_parser -r /etc/apparmor.d/mkosi
+      # Only for ephemeral GitHub-hosted runners (GitHub's documented pattern);
+      # never apply this rule to the dev VM or a self-hosted runner.
+      - name: Enable KVM for the runner user
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+      - name: Contract checks (API files, installed disk layout)
+        run: |
+          python3 -I tests/contracts/check-openapi.py api/*.openapi.yaml
+          tests/contracts/check-install-layout.sh
+      # Immich's pinned images (digest-checked by fetch.sh), kept between runs:
+      # three groups fetching them at once hit ghcr.io's rate limit (HTTP 429,
+      # run 41103027590).
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: out/immich-images
+          key: immich-images-${{ hashFiles('image/immich/images.lock') }}
+      - run: just build-image
+      - run: cat out/SHA256SUMS
+      - run: just test-vm-${{ matrix.group }}
+        env:
+          # Immich runs only on hosted runners, never on the dev VM (owner).
+          ALP_ALLOW_IMMICH: "1"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        # Also after a failed test, so the screenshots show what went wrong.
+        if: always()
+        with:
+          name: image-manifest-${{ matrix.group }}
+          path: |
+            out/SHA256SUMS
+            out/alp-os.manifest
+            out/budget.json
+            out/*.png
+            out/qa/*.png
+
+  # The owner's image for a USB stick (owner, 2026-11-01: no image builds on
+  # the dev VM). xz-compressed: one file must stay under GitHub's 2 GiB, and
+  # Rufus and balenaEtcher write .img.xz directly.
+  release-image:
+    if: ${{ inputs.release_version }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install image build tools (exact versions)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends --allow-downgrades \
+            $(grep -v '^#' tests/ci/build-tools.lock)
+          tests/ci/check-build-tools.sh tests/ci/build-tools.lock
+      - name: Allow mkosi to use user namespaces
+        run: |
+          sudo install -m 0644 tests/ci/mkosi.apparmor /etc/apparmor.d/mkosi
+          sudo apparmor_parser -r /etc/apparmor.d/mkosi
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: out/immich-images
+          key: immich-images-${{ hashFiles('image/immich/images.lock') }}
+      - run: just build-image
+      - name: Compress and hash
+        env:
+          VERSION: ${{ inputs.release_version }}
+        run: |
+          name="ALP-OS-Live-alpha-${VERSION}.img"
+          cp --sparse=always out/alp-os.raw "out/$name"
+          xz -T0 -6 -k "out/$name"
+          cd out
+          sha256sum "$name" "$name.xz" > "$name.sha256"
+          cat "$name.sha256"
+          ls -l "$name.xz"
+      - name: Publish (pre-release, private repository)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.release_version }}
+        run: |
+          name="ALP-OS-Live-alpha-${VERSION}.img"
+          notes="ALP-OS Live alpha ${VERSION}, built from ${GITHUB_SHA::7} on ${GITHUB_REF_NAME}. Write ${name}.xz to a USB stick with Rufus or balenaEtcher (they unpack .xz themselves). SHA-256 of the unpacked image and of the .xz: see ${name}.sha256."
+          gh release create "alpha-${VERSION}" --target "$GITHUB_SHA" --prerelease \
+            --title "ALP-OS Live alpha ${VERSION}" --notes "$notes" \
+            "out/${name}.xz" "out/${name}.sha256"

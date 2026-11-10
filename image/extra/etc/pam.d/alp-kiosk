@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# PAM for alp-kiosk.service (ADR 0010). systemd runs only the account and
+# session phases: no password is asked; pam_systemd registers a logind
+# session on seat0 so cage gets the screen and input devices.
+account  required pam_unix.so
+session  required pam_unix.so
+session  required pam_systemd.so

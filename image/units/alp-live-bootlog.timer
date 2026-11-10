@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The boot log (alp-live-bootlog.service): 40 s after the start, then every
+# minute while the computer runs (T29).
+[Unit]
+Description=ALP-OS Live: save the boot log on the stick every minute
+DefaultDependencies=no
+After=local-fs.target
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Timer]
+OnBootSec=40s
+OnUnitActiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=sysinit.target

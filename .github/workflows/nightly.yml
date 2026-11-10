@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Nightly
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repro-check:
+    # Block 1 acceptance: two clean builds of the same commit give identical
+    # artifact hashes. Too slow for every pull request.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install image build tools (exact versions)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends --allow-downgrades \
+            $(grep -v '^#' tests/ci/build-tools.lock)
+          tests/ci/check-build-tools.sh tests/ci/build-tools.lock
+      - name: Allow mkosi to use user namespaces
+        run: |
+          sudo install -m 0644 tests/ci/mkosi.apparmor /etc/apparmor.d/mkosi
+          sudo apparmor_parser -r /etc/apparmor.d/mkosi
+      - run: just repro-check
+      - run: cat out/repro-a/SHA256SUMS
