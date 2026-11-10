@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Immich's job queue (valkey 9, upstream's "redis"), ADR 0015.
+[Unit]
+Description=Immich cache (valkey)
+# The pinned images are loaded from the system image first (ADR 0015).
+Requires=immich-images.service
+After=immich-images.service
+# Never write to the RAM-backed /var: only with the index (home) and the
+# archive (originals) bound by `alpctl live immich prepare`.
+ConditionPathIsMountPoint=/var/lib/immich
+ConditionPathIsMountPoint=/run/alp/immich/originals
+
+[Container]
+ContainerName=immich-valkey
+# Pinned: image/immich/images.lock; imported read-only into the image.
+Image=docker.io/valkey/valkey:9
+Pull=never
+Pod=immich.pod
+Volume=/var/lib/immich/valkey:/data
+NoNewPrivileges=true
+DropCapability=NET_RAW
+HealthCmd=valkey-cli ping
+HealthInterval=30s
+Notify=healthy
+
+[Service]
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=300
+MemoryMax=128M
+CPUWeight=20
+IOWeight=20
+
+[Install]
+WantedBy=default.target

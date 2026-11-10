@@ -1,0 +1,15 @@
+<!-- Generated from docs/spec.md (Version 0.5) by tools/split-spec.py. Do not edit; edit docs/spec.md and rerun the tool. -->
+
+### Block 7 — Installer, first boot and pairing
+
+**Goal.** From USB stick to first backup in minutes, with a screen but without technical knowledge.
+
+**Installer.** The USB image boots into the kiosk session, which opens the installer UI served on localhost by `alp-installer`. The library crate holds all logic (hardware check, disk discovery, plan, repart, image copy, first-boot seed); the graphical screens are a thin front end built from the shared `ui/` code, so a headless or remote front end can be added later without changing logic. Screens, in order: **Welcome** (language picker, defaults to English) → **Your computer** (hardware check in plain words: memory, disks, security chip; if the machine cannot run ALP-OS, for example legacy BIOS only, explain kindly with an error code and stop) → **Where to install** (disks shown with model, size and a simple picture; the recommended layout preselected; a clear summary of exactly what will be erased) → **Confirm** (an unmistakable confirmation, such as typing a word or press-and-hold; never a single accidental click) → **Installing** (progress, no questions) → **Done** (remove the USB stick, restart). Never touch a disk the user did not confirm. Every failure shows a plain message, the action to take and an `ALP-INST-*` code.
+
+**First boot.** Generates keys (block 5), creates the pool (block 4), creates the recovery key, creates the local CA and server certificate, and announces `alparchive.local` via mDNS (`avahi`). On the screen, in the same graphical style: set a short **console PIN** (protects the local console), offer the **printable recovery sheet** (Standard tier: optional; Archive encryption tier: required with re-entry check, see block 5), and show a **QR and short pairing code** to join the first phone. The QR contains the address and the CA fingerprint.
+
+**Pairing protocol.** Use SPAKE2 (`spake2` crate) with the short code to authenticate the first device against man-in-the-middle, then exchange public keys. The server issues the device a certificate signed by the node CA; later connections use mutual TLS. The first paired device becomes the admin device. Pairing codes are single use, expire in minutes, and rate-limited. VERIFY the exact message flow with a written threat model in an ADR before implementing.
+
+**Acceptance (VM).** Scripted install through the installer library on virtual hardware with 1 disk and with 2 disks, no manual input apart from the confirmation. One automated end-to-end test drives the graphical screens in the VM (screenshot or accessibility-tree based; **VERIFY** the tool in an ADR). An unsupported machine (legacy BIOS VM) shows the right `ALP-INST-*` code and changes nothing. A simulated client pairs using the code and fails with a wrong code, an expired code or a reused code. Installing never modifies a disk that was not selected.
+
+**Out of scope.** Headless install, BLE or Wi-Fi AP provisioning, shipping languages other than English (the translation and right-to-left layer is in scope and must work).

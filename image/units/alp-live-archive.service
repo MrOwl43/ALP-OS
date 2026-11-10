@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Opens the encrypted archive on the external disk (ADR 0011). Not started
+# at boot: its key file is inside the index, so alpd starts this unit after
+# the user typed the password (or after creating the archive).
+[Unit]
+Description=ALP-OS Live: open the encrypted archive
+Requires=alp-live-state.service
+BindsTo=alp-live-index.service
+# Immich follows an opened archive at every start (T14: before, only a
+# newly created archive started it, so after a restart phones never got
+# an answer). Its own conditions skip it when the archive did not open.
+Wants=alp-immich.service
+After=alp-live-state.service alp-live-protect.service alp-live-index.service
+ConditionPathExists=/var/lib/alp/live/archive.toml
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=-/usr/bin/udevadm settle --timeout=30
+ExecStart=/usr/bin/alpctl live archive open
+ExecStop=/usr/bin/alpctl live archive close
+# A Btrfs unmount (old archives) on a slow USB disk can take minutes
+# (review S10), but a shutdown must end (T15): alpd closes the archive
+# itself first; this is the fallback limit.
+TimeoutStopSec=60

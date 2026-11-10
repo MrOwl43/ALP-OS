@@ -1,0 +1,153 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The per-device TLS certificate for the phone app (ADR 0015), kept in the
+# encrypted index on the stick (never in the image or the repo):
+#   ca.key/ca.crt          the device's own small CA (10 years). Phones
+#                          install ca.crt once; it is name-constrained to
+#                          alparchive.local and private IPv4 ranges, so even
+#                          a stolen key cannot impersonate other sites.
+#   server.key/server.crt  nginx's certificate (P-256, 90 days, ADR 0017;
+#                          renewed by alpd), signed by the CA, naming
+#                          alparchive.local and every IPv4 ADDRESS given,
+#                          EKU serverAuth (Apple's and Android's rules).
+# A new server certificate is made when it is missing, expires within 30
+# days, does not match its key or the CA, or misses one of the ADDRESSes; then
+# "changed" is printed (alpd reloads nginx). Phones keep trusting the CA.
+# Also publishes ca.crt for the certificate page (nginx port 80) at
+# /run/alp/tls/alparchive.crt and its SHA-256 fingerprint in ca.sha256.
+#   kid.key                the server's identity key K_id (Ed25519, ADR 0017),
+#                          made once per stick; phones pin it. It signs an
+#                          endorsement of the CA: the message
+#                          "alparchive-ca-endorsement-v1\n<id>\n<ca>\n", where
+#                          <id> is the raw public key in base32 (RFC 4648,
+#                          no padding) and <ca> the SHA-256 (hex) of the CA's
+#                          public key (DER SubjectPublicKeyInfo).
+#   identity.json          {v, alg, id, ca, endorsement (base64), ca_cert},
+#                          published at /run/alp/tls/identity.json for
+#                          /.well-known/alparchive/identity.
+#
+# Usage: alp-live-tls [IPv4 address...]
+set -eu
+umask 077
+d=/var/lib/alp-index/alp/tls
+pub=/run/alp/tls
+addrs=
+for a in "$@"; do
+    case $a in
+        *[!0-9.]*) continue ;;   # IPv6 or a name: the certificate names only alparchive.local
+    esac
+    # Only addresses the CA's name constraints permit: any other one (e.g.
+    # 100.64/10 or 169.254/16) would make a certificate no phone accepts, and
+    # `openssl verify` below would reject it again on every call.
+    case $a in
+        10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*) ;;
+        *) continue ;;
+    esac
+    case " $addrs " in *" $a "*) ;; *) addrs="$addrs $a" ;; esac
+done
+mountpoint -q /var/lib/alp-index || { echo "alp-live-tls: the index is not open" >&2; exit 1; }
+mkdir -p "$d"
+chmod 0700 "$d"
+cd "$d"
+changed=
+
+same_key() { # <crt> <key>
+    [ "$(openssl x509 -in "$1" -noout -pubkey 2>/dev/null)" = "$(openssl pkey -in "$2" -pubout 2>/dev/null)" ]
+}
+
+ca_ok() {
+    [ -s ca.key ] && [ -s ca.crt ] && same_key ca.crt ca.key &&
+        openssl x509 -in ca.crt -noout -checkend 31536000 >/dev/null
+}
+
+if ! ca_ok; then
+    cat >ca.cnf <<CNF
+[req]
+distinguished_name = dn
+x509_extensions = v3
+prompt = no
+[dn]
+O = ALPArchive
+CN = ALPArchive home server $(openssl rand -hex 4)
+[v3]
+basicConstraints = critical,CA:TRUE,pathlen:0
+keyUsage = critical,keyCertSign,cRLSign
+subjectKeyIdentifier = hash
+nameConstraints = critical,permitted;DNS:alparchive.local,permitted;IP:10.0.0.0/255.0.0.0,permitted;IP:172.16.0.0/255.240.0.0,permitted;IP:192.168.0.0/255.255.0.0
+CNF
+    openssl req -x509 -new -config ca.cnf -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+        -noenc -keyout ca.key.tmp -out ca.crt.tmp -days 3650 -sha256 2>/dev/null
+    chmod 0644 ca.crt.tmp
+    sync ca.key.tmp ca.crt.tmp
+    mv ca.key.tmp ca.key
+    mv ca.crt.tmp ca.crt
+    rm -f ca.cnf server.crt server.key
+    changed=1
+fi
+
+names_addr() {
+    sans=$(openssl x509 -in server.crt -noout -ext subjectAltName 2>/dev/null | tr ',' '\n' | sed 's/^ *//')
+    for a in $addrs; do
+        printf '%s\n' "$sans" | grep -qx "IP Address:$a" || return 1
+    done
+}
+
+server_ok() {
+    [ -s server.key ] && [ -s server.crt ] && same_key server.crt server.key &&
+        openssl verify -CAfile ca.crt server.crt >/dev/null 2>&1 &&
+        openssl x509 -in server.crt -noout -checkend 2592000 >/dev/null && names_addr
+}
+
+if ! server_ok; then
+    san=DNS:alparchive.local
+    for a in $addrs; do san="$san,IP:$a"; done
+    cat >server.ext <<EXT
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature
+extendedKeyUsage = serverAuth
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid
+subjectAltName = $san
+EXT
+    openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -noenc \
+        -keyout server.key.tmp -out server.csr -subj "/CN=alparchive.local" 2>/dev/null
+    openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key \
+        -set_serial "0x$(openssl rand -hex 16)" -days 90 -sha256 \
+        -extfile server.ext -out server.crt.tmp 2>/dev/null
+    chmod 0644 server.crt.tmp
+    sync server.key.tmp server.crt.tmp
+    mv server.key.tmp server.key
+    mv server.crt.tmp server.crt
+    rm -f server.csr server.ext
+    changed=1
+fi
+sync .
+
+# The identity key (once) and the CA endorsement (whenever the CA changed).
+if ! [ -s kid.key ]; then
+    openssl genpkey -algorithm ed25519 -out kid.key.tmp 2>/dev/null
+    sync kid.key.tmp
+    mv kid.key.tmp kid.key
+fi
+id=$(openssl pkey -in kid.key -pubout -outform DER | tail -c 32 | base32 -w0 | tr -d =)
+ca=$(openssl x509 -in ca.crt -noout -pubkey | openssl pkey -pubin -outform DER | sha256sum | cut -d' ' -f1)
+printf 'alparchive-ca-endorsement-v1\n%s\n%s\n' "$id" "$ca" >endorse.msg
+if ! [ -s identity.json ] || ! grep -q "\"ca\": \"$ca\"" identity.json || ! grep -q "\"id\": \"$id\"" identity.json; then
+    sig=$(openssl pkeyutl -sign -inkey kid.key -rawin -in endorse.msg | base64 -w0)
+    pem=$(awk '{printf "%s\\n", $0}' ca.crt)
+    printf '{"v": 1, "alg": "ed25519", "id": "%s", "ca": "%s", "endorsement": "%s", "ca_cert": "%s"}\n' \
+        "$id" "$ca" "$sig" "$pem" >identity.json.tmp
+    sync identity.json.tmp
+    mv identity.json.tmp identity.json
+fi
+rm -f endorse.msg
+
+openssl x509 -in ca.crt -noout -fingerprint -sha256 | cut -d= -f2 >ca.sha256.tmp
+mv ca.sha256.tmp ca.sha256
+[ -d /run/alp ] || mkdir -m 0755 /run/alp
+[ -d "$pub" ] || mkdir -m 0755 "$pub"
+install -m 0644 identity.json "$pub/identity.json.tmp"
+mv "$pub/identity.json.tmp" "$pub/identity.json"
+install -m 0644 ca.crt "$pub/alparchive.crt.tmp"
+mv "$pub/alparchive.crt.tmp" "$pub/alparchive.crt"
+[ -z "$changed" ] || echo changed

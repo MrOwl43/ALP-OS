@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=ALP-OS daemon: console UI and API on http://127.0.0.1:8411
+# The archive and Wi-Fi code it runs needs Live's state on the stick.
+# Not after tpm2.target (T44): waiting for it could hold the console up;
+# alpd waits for /dev/tpmrm0 itself, in the background (index::tpm_unlock).
+After=alp-live-state.service alp-live-report.service alp-live-archive.service network.target
+Wants=alp-live-state.service
+
+[Service]
+ExecStart=/usr/bin/alpd
+Restart=always
+RestartSec=2
+TimeoutStopSec=10s
+# Runs as root: it creates and opens the encrypted archive (cryptsetup,
+# losetup, mount) and joins Wi-Fi. It listens on loopback only.
+# No ProtectHome=/PrivateTmp=: they give alpd its own mount namespace, and
+# the index and archive it mounts must be seen by the rest of the system
+# (units, Immich). Found in the VM: alp-live-index.service failed because
+# the index mounted by alpd was invisible outside alpd.
+
+[Install]
+WantedBy=multi-user.target

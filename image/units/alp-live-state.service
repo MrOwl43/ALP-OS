@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=ALP-OS Live: mount Live's own state from the stick
+DefaultDependencies=no
+After=alp-live-protect.service local-fs.target
+Before=alp-live-archive.service alp-live-report.service sysinit.target
+ConditionPathIsMountPoint=!/var/lib/alp
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/alpctl live archive state-mount
+# T44: a start never waits forever on the stick.
+TimeoutStartSec=90s
+
+[Install]
+WantedBy=sysinit.target

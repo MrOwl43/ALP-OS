@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Container images shipped inside the ALP-OS Live system image for Immich
+# (docs/plans/live-immich.md plan A, ADR 0011). Pinned by digest; checked by
+# image/immich/fetch.sh (every blob's sha256) and at build time.
+# Upgrade only deliberately, one image at a time, with T-IMMICH-01 passing.
+# Columns: local name, registry repository, tag, index digest, linux/amd64 manifest digest.
+# Immich server v3.3.3 (AGPL-3.0), released 2026-10-14; machine learning is not shipped.
+immich-server ghcr.io/immich-app/immich-server v3.3.3 sha256:bae7664ff3aa4c2c1fcbdcdd86b40b105643c5f861f3e6a770fc760089f25862 sha256:8c94984724f79503eb431dfd34ea58b57111c186df8030a66f39ffacf51d7c81
+# Immich's own Postgres 14 with VectorChord 0.4.3 and pgvecto.rs 0.2.0 (digest as in upstream's compose file).
+immich-postgres ghcr.io/immich-app/postgres 14-vectorchord0.4.3-pgvectors0.2.0 sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23 sha256:b1d33572a9a0634aa6d344077467ad32847812a37fa3859f702952cba22a2f55
+# Valkey 9 (BSD-3-Clause), Immich's "redis" (digest as in upstream's compose file).
+immich-valkey docker.io/valkey/valkey 9 sha256:c123e3715db63d06d4ad6964884037aa0d5d4d703939b9929954112889708e1d sha256:67878c70fc179bb928b1a9b510860aff1c475ff245e91d98d4b2133326bf8e3e

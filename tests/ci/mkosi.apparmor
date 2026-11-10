@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Ubuntu restricts unprivileged user namespaces; allow them for mkosi only.
+# Installed on CI runners and on the dev VM (/etc/apparmor.d/mkosi).
+abi <abi/4.0>,
+include <tunables/global>
+
+profile mkosi /usr/bin/mkosi flags=(unconfined) {
+  userns,
+}

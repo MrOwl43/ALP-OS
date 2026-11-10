@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[Unit]
+Description=ALP-OS Live: make the computer's own disks read-only
+# Disks that appear later are handled by 90-alp-live-protect.rules.
+DefaultDependencies=no
+After=systemd-udev-trigger.service local-fs.target
+Before=alp-live-report.service sysinit.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=-/usr/bin/udevadm settle --timeout=30
+ExecStart=/usr/bin/alpctl live protect-disks
+# T44: a start never waits forever (udev settle 30 s + the run).
+TimeoutStartSec=90s
+
+[Install]
+WantedBy=sysinit.target

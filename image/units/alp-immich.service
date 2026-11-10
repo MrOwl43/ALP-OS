@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Immich, the photo service (ADR 0015). Not started at boot: alpd starts it
+# after the index and the archive are open, and it stops before either is
+# closed (PartOf= + After=). It prepares the folders, binds and the
+# database password (`alpctl live immich prepare`), then starts the immich
+# user's own service manager, user@50000.service, whose default.target
+# pulls in the Quadlet pod (/etc/containers/systemd/users/50000). Lingering
+# only while this unit runs: since systemd 256 the manager's own PAM session
+# (class "manager", pam_systemd(8)) does not keep the user alive, so logind
+# would stop a user@50000.service started without a session or linger. The
+# linger file is in /var/lib/systemd/linger on the tmpfs /var, so logind
+# never starts the manager at boot, before the index (the user's home) is
+# open.
+[Unit]
+Description=ALP-OS Live: Immich photo service (rootless, user immich)
+After=alp-live-index.service alp-live-archive.service network.target
+PartOf=alp-live-index.service alp-live-archive.service
+Wants=nginx.service
+Before=nginx.service
+ConditionPathIsMountPoint=/var/lib/alp-index
+ConditionPathIsMountPoint=/var/lib/alp-pool/files
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/alpctl live immich prepare
+ExecStart=/usr/bin/loginctl enable-linger immich
+ExecStart=/usr/bin/systemctl start user@50000.service
+ExecStop=-/usr/bin/loginctl disable-linger immich
+ExecStop=/usr/bin/systemctl stop user@50000.service
+ExecStopPost=/usr/bin/alpctl live immich cleanup
+# Postgres gets up to 40 s to stop cleanly (immich-postgres.container);
+# a shutdown must end (T15). A killed Postgres recovers from its WAL.
+TimeoutStartSec=180
+TimeoutStopSec=90

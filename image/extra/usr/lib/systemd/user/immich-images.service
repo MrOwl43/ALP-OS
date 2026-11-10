@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Loads Immich's pinned images into the immich user's store before the pod
+# starts (ADR 0015). Pulled in only by the Immich containers.
+[Unit]
+Description=Load Immich images from the system image
+ConditionUser=immich
+ConditionPathIsMountPoint=/var/lib/immich
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/alp/alp-immich-load
+# Unpacking about 2.5 GB onto a USB stick can be slow.
+TimeoutStartSec=45min
+Nice=10
+IOSchedulingClass=idle

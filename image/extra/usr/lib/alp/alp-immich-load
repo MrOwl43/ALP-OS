@@ -1,0 +1,42 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Load the Immich images shipped read-only in the signed root
+# (/usr/lib/alp/immich-images, image/immich/import.postinst) into the
+# immich user's own rootless podman store (its home, in the encrypted index
+# on the stick). Runs as the immich user before the pod (immich-images.service).
+# An image already there with the pinned ID is skipped, so this takes
+# minutes only on first start and after a system update changes an image.
+# The ID is the config digest, which names every layer: it pins the image.
+# Progress goes to /run/alp/immich/load-status (made for us by `alpctl
+# live immich prepare`; alpd shows it on the waiting screen, T21):
+# key=value lines state (checking|loading|done|failed), part, parts,
+# bytes_done, bytes_total. Best effort: never fails the load.
+set -eu
+dir=/usr/lib/alp/immich-images
+status=/run/alp/immich/load-status
+say() { { [ -w "$status" ] && printf '%s\n' "$@" >"$status"; } 2>/dev/null || true; }
+trap 'say state=failed' EXIT
+[ -f "$dir/list" ] || { echo "immich: no images in this system image" >&2; exit 1; }
+say state=checking
+parts=$(grep -c . "$dir/list" || true)
+total=$(du -sb "$dir" 2>/dev/null | cut -f1 || echo 0)
+part=0
+done_bytes=0
+while read -r name ref _index _amd64 config; do
+    part=$((part + 1))
+    size=$(du -sb "$dir/$name" 2>/dev/null | cut -f1 || echo 0)
+    id=${config#sha256:}
+    if [ "$(podman image inspect --format '{{.Id}}' "$ref" 2>/dev/null || true)" = "$id" ]; then
+        done_bytes=$((done_bytes + ${size:-0}))
+        continue
+    fi
+    say state=loading "part=$part" "parts=$parts" "bytes_done=$done_bytes" "bytes_total=${total:-0}"
+    echo "immich: loading $ref (first start or update; this can take some minutes)"
+    got=$(podman pull -q "dir:$dir/$name" | tail -n 1)
+    [ "$got" = "$id" ] || { echo "immich: FAIL: $name loaded as $got, want $id" >&2; exit 1; }
+    podman tag "$id" "$ref"
+    done_bytes=$((done_bytes + ${size:-0}))
+done <"$dir/list"
+trap - EXIT
+say state=done
+# Images of earlier system versions are not removed in the alpha.

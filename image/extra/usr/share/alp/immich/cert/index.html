@@ -1,0 +1,45 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- ALPArchive certificate page (ADR 0015), served by nginx on port 80 of
+     the home network. Static: no scripts, no outside links. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ALPArchive certificate</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 1.2rem; line-height: 1.5; color: #1b1f24; background: #fff; max-width: 40rem; }
+  h1 { font-size: 1.4rem; margin: 0 0 .6rem; }
+  h2 { font-size: 1.1rem; margin: 1.4rem 0 .4rem; }
+  a.button { display: inline-block; padding: .8rem 1.2rem; border-radius: .6rem; background: #1f6feb; color: #fff; text-decoration: none; font-weight: 600; }
+  ol { padding-inline-start: 1.3rem; }
+  li { margin: .3rem 0; }
+  .fine { color: #57606a; font-size: .9rem; }
+  @media (prefers-color-scheme: dark) { body { color: #e6edf3; background: #0d1117; } .fine { color: #9198a1; } }
+</style>
+</head>
+<body>
+<h1>Let this phone trust your ALPArchive</h1>
+<p>Your ALPArchive at home made its own security certificate. Install it once on each phone, then the Immich app can back up your photos over an encrypted connection.</p>
+<p><a class="button" href="/alparchive.crt">Download the certificate</a></p>
+
+<h2>Android</h2>
+<ol>
+  <li>Tap <b>Download the certificate</b> above.</li>
+  <li>Open <b>Settings</b>, search for <b>CA certificate</b> (often under Security &gt; Encryption &amp; credentials &gt; Install a certificate).</li>
+  <li>Choose <b>CA certificate</b>, tap <b>Install anyway</b>, and pick <b>alparchive.crt</b> from Downloads.</li>
+</ol>
+<p class="fine">The Immich app for Android does not use certificates you install yourself, so it may still say the server cannot be reached. The browser works; ALPArchive's own phone app will fix the app.</p>
+
+<h2>iPhone and iPad</h2>
+<ol>
+  <li>Open this page in <b>Safari</b> and tap <b>Download the certificate</b>, then <b>Allow</b>.</li>
+  <li>Open <b>Settings</b> &gt; <b>Profile Downloaded</b> and tap <b>Install</b>.</li>
+  <li>Open <b>Settings</b> &gt; <b>General</b> &gt; <b>About</b>, scroll to the very bottom, open <b>Certificate Trust Settings</b> and turn on <b>ALPArchive home server</b>. Without this step the certificate stays "Not Trusted". If the line is missing, the profile was not installed yet (step 2, also under <b>General</b> &gt; <b>VPN &amp; Device Management</b>).</li>
+</ol>
+
+<h2>Then</h2>
+<p>To check: open <b>https://</b> and the address shown on the ALPArchive screen in the browser. A page that says "The connection is safe" means the certificate works. Then open the Immich app and type the address, email and your ALP password shown on the ALPArchive screen.</p>
+<p class="fine">This certificate only works for your ALPArchive on your home network. It cannot be used for any other website. Check that the fingerprint in your phone's certificate details matches the one on the ALPArchive screen (under "My phone cannot connect").</p>
+</body>
+</html>

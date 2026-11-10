@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Immich's database: upstream's own Postgres 14 with VectorChord (ADR 0015).
+# Data in the encrypted index on the stick; daily dumps go to the archive.
+[Unit]
+Description=Immich database (PostgreSQL 14)
+# The pinned images are loaded from the system image first (ADR 0015).
+Requires=immich-images.service
+After=immich-images.service
+# Never write to the RAM-backed /var: only with the index (home) and the
+# archive (originals) bound by `alpctl live immich prepare`.
+ConditionPathIsMountPoint=/var/lib/immich
+ConditionPathIsMountPoint=/run/alp/immich/originals
+
+[Container]
+ContainerName=immich-postgres
+# Pinned: image/immich/images.lock; imported read-only into the image.
+Image=ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
+Pull=never
+Pod=immich.pod
+# POSTGRES_PASSWORD (random, made by `alpctl live immich prepare`).
+EnvironmentFile=/run/alp/immich/db.env
+Environment=POSTGRES_USER=postgres POSTGRES_DB=immich POSTGRES_INITDB_ARGS=--data-checksums DB_STORAGE_TYPE=HDD
+Volume=/var/lib/immich/postgres:/var/lib/postgresql/data
+NoNewPrivileges=true
+DropCapability=NET_RAW
+HealthCmd=pg_isready --dbname=immich --username=postgres
+HealthInterval=30s
+HealthStartPeriod=5m
+Notify=healthy
+StopTimeout=40
+
+[Service]
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=600
+TimeoutStopSec=60
+MemoryMax=1G
+CPUWeight=20
+IOWeight=20
+
+[Install]
+WantedBy=default.target
