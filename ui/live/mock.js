@@ -85,7 +85,7 @@
   if (W.lock.state !== "setup" && !W.lock.protection) W.lock.protection = "password";
   if (p.get("protection")) W.lock.protection = p.get("protection");   // &protection=none|console|password|strong
   const lvp = p.get("level");   // &level=note|action|now|critical: T54 status from the server
-  if (lvp && FEATURES.includes("status_levels")) { W.status = { level: lvp, key: "mock." + lvp, message: "Mock status: " + lvp, code: "ALP-MOCK-1" }; W.alerts = [Object.assign({}, W.status)]; }
+  if (lvp && FEATURES.includes("status_levels")) { W.status = { level: lvp, key: "mock." + lvp, message: "Mock status: " + lvp, code: "ALP-STO-110" }; W.alerts = [Object.assign({}, W.status)]; }
   if (preset === "lock-warn" || preset === "home-warn") { W.archive.free_bytes = 6 * GB; W.archive.space = "low"; W.archive.health = "warn";
     if (!lvp) { W.status = { level: "action", key: "space.low", message: "The backup disk is getting full.", code: "ALP-STO-110" }; W.alerts = [Object.assign({}, W.status)]; } }
   if (preset === "home-full") { W.archive.free_bytes = 0; W.archive.space = "full"; W.archive.health = "warn"; W.immich.state = "paused"; }
