@@ -164,12 +164,31 @@ pub fn scan(dev: &str) -> Vec<Network> {
     nets
 }
 
-/// The network `dev` is connected to (`iwctl station <dev> show`).
-pub fn connected_ssid(dev: &str) -> Option<String> {
-    let out = strip_ansi(&iwctl(&["station", dev, "show"]));
+/// The Wi-Fi network this computer joined, for the state's
+/// `network.ports`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Joined {
+    /// The joined network's SSID.
+    pub ssid: String,
+    /// Signal bars 0–4 (from iwd's diagnostics; 0 when unknown).
+    pub signal: u8,
+}
+
+/// The Wi-Fi network `dev` joined and its signal bars, or `None` when it
+/// is not connected (`iwctl station <dev> show`; T07).
+pub fn joined(dev: &str) -> Option<Joined> {
+    parse_station(&iwctl(&["station", dev, "show"]))
+}
+
+/// Parse `iwctl station <dev> show`: the `State` and `Connected network`
+/// property rows, plus `RSSI` from the diagnostics iwd appends to the
+/// same table. That RSSI is plain dBm (`-77`), not the hundredths of a
+/// dBm that `get-networks rssi-dbms` prints.
+fn parse_station(output: &str) -> Option<Joined> {
     let mut connected = false;
     let mut ssid = None;
-    for l in out.lines() {
+    let mut rssi = None;
+    for l in strip_ansi(output).lines() {
         let t = l.trim();
         if let Some(v) = t.strip_prefix("State") {
             connected = v.trim() == "connected";
@@ -177,8 +196,19 @@ pub fn connected_ssid(dev: &str) -> Option<String> {
         if let Some(v) = t.strip_prefix("Connected network") {
             ssid = Some(v.trim().to_string());
         }
+        // iwd prints RSSI and AverageRSSI; the plain row is the live
+        // reading (AverageRSSI does not start with "RSSI").
+        if let Some(v) = t.strip_prefix("RSSI") {
+            rssi = v
+                .split_whitespace()
+                .next()
+                .and_then(|w| w.parse::<i32>().ok());
+        }
     }
-    ssid.filter(|_| connected)
+    ssid.filter(|_| connected).map(|ssid| Joined {
+        ssid,
+        signal: rssi.map(bars).unwrap_or(0),
+    })
 }
 
 /// Check a connect request before anything is stored.
@@ -220,7 +250,7 @@ pub fn connect(dev: &str, net: &Network, password: &str) -> Result<(), crate::fa
     }
     iwctl(&["station", dev, "connect", &net.ssid]);
     for _ in 0..20 {
-        if connected_ssid(dev).as_deref() == Some(net.ssid.as_str()) {
+        if joined(dev).is_some_and(|j| j.ssid == net.ssid) {
             return Ok(());
         }
         sleep(Duration::from_secs(1));
@@ -387,6 +417,36 @@ mod tests {
             [(4, true), (1, false), (0, false)]
         );
         assert!(parse_networks("No networks available\n").is_empty());
+    }
+
+    #[test]
+    fn parses_station_show() {
+        // `iwctl station <dev> show` (Debian's iwd): the property rows,
+        // then the diagnostics iwd appends to the same table. Their signal
+        // is plain dBm, unlike `get-networks rssi-dbms`.
+        let out = "\x1b[0m                                               Station: wlan0\x1b[0m\n\
+\x1b[0;37m--------------------------------------------------------------------------------\x1b[0m\n\
+\x1b[1;90m  Settable  Property              Value\x1b[0m\n\
+\x1b[0;37m--------------------------------------------------------------------------------\x1b[0m\n\
+            State                 connected\n\
+            Scanning              no\n\
+            Connected network     Home WiFi\n\
+            IPv4 address          192.168.1.23\n\
+            Address               60:57:18:7b:2f:02\n\
+            Security              psk\n\
+            Frequency             2437\n\
+            Channel               6\n\
+            RSSI                  -77 dBm\n\
+            AverageRSSI           -75 dBm\n\
+            ConnectedTime         124 s\n";
+        let j = parse_station(out).unwrap();
+        assert_eq!((j.ssid.as_str(), j.signal), ("Home WiFi", 1));
+        // An iwd without the diagnostics rows: still the network, 0 bars.
+        let old = out.replace("RSSI", "Signal");
+        let j = parse_station(&old).unwrap();
+        assert_eq!((j.ssid.as_str(), j.signal), ("Home WiFi", 0));
+        // Not connected: nothing, whatever else the table shows.
+        assert!(parse_station(&out.replace("connected", "disconnected")).is_none());
     }
 
     #[test]
