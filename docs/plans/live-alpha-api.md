@@ -520,7 +520,7 @@ area starts.
     "online": true,
     "address": "192.168.1.23",
     "ports": [ { "name": "wlan0", "kind": "wifi", "state": "connected",
-                 "address": "192.168.1.23", "ssid": "Home" } ],
+                 "address": "192.168.1.23", "ssid": "Home", "signal": 4 } ],
     "wifi_present": true,
     "addresses": [ { "address": "192.168.1.23", "url": "https://192.168.1.23",
                      "port": "wlan0", "kind": "wifi" } ],
@@ -560,7 +560,8 @@ area starts.
 - `network.online`: some port has a home-network address; `address` is the
   one shown to the user (phones use it). `ports[].kind`: `wired` | `wifi`;
   `state`: `connected` | `waiting` (cable in / Wi-Fi joined, no address yet) |
-  `off`. `ssid` only for Wi-Fi. `job`: the Wi-Fi connect job or `null`.
+  `off`. `ssid` only for Wi-Fi, `signal` 0–4 with it (the joined network's
+  strength, `0` when iwd reports none). `job`: the Wi-Fi connect job or `null`.
 - `lock` is about the encrypted index on the stick: `state`: `setup`
   (first start: no password chosen yet) | `locked` (the index is closed:
   no TPM chip, or the chip did not open it; the unlock screen asks for the
