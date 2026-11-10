@@ -16,6 +16,7 @@ use alp_live::{
 use serde_json::{Value, json};
 
 use crate::console::{Request, Response};
+use crate::live_media;
 
 const PREFIX: &str = "/api/v1/live/";
 /// Seconds an Immich answer is reused by `GET state` (it is polled often).
@@ -385,6 +386,12 @@ fn status_for(key: &str) -> u16 {
         "disk.not_found" => 404,
         "disk.changed" => 409,
         "disk.refused" => 422,
+        "media.not_found" => 404,
+        "media.not_open" | "media.busy" => 409,
+        "media.refused" | "media.type" => 422,
+        "media.too_large" => 413,
+        "media.failed" | "media.unreadable" => 500,
+        "request.forbidden" => 403,
         "phone.reset_gone" => 410,
         "index.missing" => 404,
         "index.failed" => 500,
@@ -1505,6 +1512,12 @@ impl Live {
                 self.need_open().and_then(|()| self.disks_format_estimate(req))
             }
             "disks/format" if post => self.need_open().and_then(|()| self.disks_format(req)),
+            // Stage F Files (feature media_files): read only (live_media.rs).
+            "media/open" if post => body(req).and_then(|b| live_media::open(&b)),
+            "media/list" if post => body(req).and_then(|b| live_media::list(&b)),
+            // GET only: a HEAD answer would carry the body (review N2).
+            "media/file" if req.method == "GET" => live_media::file(req),
+            "media/eject" if post => body(req).and_then(|b| live_media::eject(&b)),
             "password/check" if post => password_field(req)
                 .and_then(|pw| self.check_password(&pw))
                 .map(|()| Response::json(200, &json!({}))),
@@ -1633,6 +1646,10 @@ impl Live {
             | "disks/prepare"
             | "disks/format/estimate"
             | "disks/format"
+            | "media/open"
+            | "media/list"
+            | "media/file"
+            | "media/eject"
             | "archive/cancel"
             | "password/check"
             | "reset"
@@ -1682,6 +1699,8 @@ impl Live {
         if !open {
             locked_view(&mut v);
         }
+        // External disks for Files (stage F): only for a signed-in console.
+        v["media"] = if open { live_media::state() } else { json!([]) };
         v
     }
 
@@ -3548,6 +3567,7 @@ const FEATURES: &[&str] = &[
     "status_levels",
     "prefs",
     "idle_lock_pref",
+    "media_files",
 ];
 
 /// [`FEATURES`], plus `display_modes` when the image has `wlr-randr`.
