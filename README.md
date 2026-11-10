@@ -1,5 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-# ALP-OS
+# ALP-OS ALPHA DEVELOPING | ALPArchive Project 
+
+***!PLEASE DO NOT USE THIS OS WITH YOUR REAL FILES, Alpha Version - DEV TEST ONLY!****
 
 ALP-OS is the operating system of ALPArchive: an open source, immutable appliance
 Linux that turns a PC into a private, always-encrypted home archive. The first
