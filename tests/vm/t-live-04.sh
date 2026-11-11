@@ -120,6 +120,9 @@ unpeek
 c -X POST \$A/archive/create -d '{"partuuid":"$ext_uuid","alp_password":"$pw"}' >/dev/null
 for i in \$(seq 90); do mountpoint -q /var/lib/alp-pool/files && break; sleep 5; done
 mountpoint -q /var/lib/alp-pool/files && ok "archive open after the second create" || bad "archive did not open: \$(job)"
+# The mount comes before the create job ends; until it ends the state
+# says "creating" (seen once in CI), so wait for the job before the snapshot.
+for i in \$(seq 60); do c \$A/state | tr -d '\n' | grep -q '"state": *"creating"' || break; sleep 1; done
 snap OPEN
 echo reset-me > /var/lib/alp-pool/files/test.txt; sync
 
