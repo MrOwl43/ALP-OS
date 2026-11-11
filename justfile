@@ -97,11 +97,12 @@ test-vm-immich:
     tests/vm/t-immich-01.sh {{image}}
     tests/vm/t-live-03.sh {{image}}
 
-# T-LIVE-04 (reset, cancel, real wipe) and T-LIVE-05 (T49 quick and secure
-# format): erasing disks, kept in their own CI job.
+# T-LIVE-04 (reset, cancel, real wipe), T-LIVE-05 (T49 quick and secure
+# format) and T-LIVE-06 (read-only Files): external disks, in their own CI job.
 test-vm-storage:
     tests/vm/t-live-04.sh {{image}}
     tests/vm/t-live-05.sh {{image}}
+    tests/vm/t-live-06.sh {{image}}
 
 # Remove image build output
 clean-image:
