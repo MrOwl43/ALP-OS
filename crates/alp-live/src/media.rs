@@ -476,18 +476,10 @@ pub fn mount_ro(id: &str) -> Result<MountedMedia, Fail> {
     }
     // The mount really is the device that was checked (review S1): the
     // device name could have moved to another disk in between.
-    let want = fs::read_to_string(Path::new("/sys/class/block").join(&p.name).join("dev"))
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
-    let got = fs::read_to_string("/proc/self/mountinfo")
-        .ok()
-        .and_then(|m| mount_dev(&m, &at.to_string_lossy()));
-    if want.is_empty() || got.as_deref() != Some(want.as_str()) {
+    if let Err(e) = mounted_is(&p, &at) {
         let _ = run("umount", &[&at.to_string_lossy()]);
         let _ = fs::remove_dir(&at);
-        return Err(failed(format!(
-            "mounted device {got:?} is not the checked one {want:?}"
-        )));
+        return Err(failed(e));
     }
     Ok(MountedMedia {
         id: id.into(),
@@ -495,7 +487,45 @@ pub fn mount_ro(id: &str) -> Result<MountedMedia, Fail> {
     })
 }
 
-/// Unmount `id` and remove its folder.
+/// The file system mounted at `at` is partition `p` (its `major:minor`).
+fn mounted_is(p: &Part, at: &Path) -> Result<(), String> {
+    let want = fs::read_to_string(Path::new("/sys/class/block").join(&p.name).join("dev"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    let got = fs::read_to_string("/proc/self/mountinfo")
+        .ok()
+        .and_then(|m| mount_dev(&m, &at.to_string_lossy()));
+    if want.is_empty() || got.as_deref() != Some(want.as_str()) {
+        return Err(format!(
+            "mounted device {got:?} is not the checked one {want:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// The open (mounted) disk `id`, checked again now (role, file system, and
+/// that its mount is still that partition). Never mounts: a disk that was
+/// not opened, or was ejected, is refused (stage F review F2).
+pub fn opened(id: &str) -> Result<MountedMedia, Fail> {
+    let _g = locked();
+    let p = resolve(id)?;
+    let at = mount_point(id);
+    if !is_mounted(&at) {
+        return Err(Fail::new("media.not_open", "Open this disk first."));
+    }
+    mounted_is(&p, &at).map_err(|e| {
+        eprintln!("ALP-OS Live: media: {id}: {e}");
+        Fail::new("media.not_open", "Open this disk first.")
+    })?;
+    Ok(MountedMedia {
+        id: id.into(),
+        root: at,
+    })
+}
+
+/// Unmount `id`, remove its folder and forget the id, so an old link to a
+/// file on it stops working (stage F review F4); the next list gives the
+/// disk a new id.
 pub fn eject(id: &str) -> Result<(), Fail> {
     let _g = locked();
     if !valid_id(id) {
@@ -503,10 +533,19 @@ pub fn eject(id: &str) -> Result<(), Fail> {
     }
     let at = mount_point(id);
     if is_mounted(&at) {
-        run("umount", &[&at.to_string_lossy()])
-            .map_err(|e| Fail::new("media.busy", format!("The disk is still in use: {e}.")))?;
+        run("umount", &[&at.to_string_lossy()]).map_err(|e| {
+            eprintln!("ALP-OS Live: media: {id}: {e}");
+            Fail::new(
+                "media.busy",
+                "The disk is still in use. Close what is open on it and try again.",
+            )
+        })?;
     }
     let _ = fs::remove_dir(&at);
+    let mut ids = load_ids();
+    if ids.remove(id).is_some() {
+        save_ids(&ids).map_err(|e| Fail::new("media.failed", e))?;
+    }
     Ok(())
 }
 

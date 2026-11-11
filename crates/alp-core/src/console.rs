@@ -295,6 +295,7 @@ fn reason(status: u16) -> &'static str {
     match status {
         200 => "OK",
         202 => "Accepted",
+        206 => "Partial Content",
         302 => "Found",
         400 => "Bad Request",
         403 => "Forbidden",
@@ -303,6 +304,7 @@ fn reason(status: u16) -> &'static str {
         409 => "Conflict",
         411 => "Length Required",
         413 => "Content Too Large",
+        416 => "Range Not Satisfiable",
         421 => "Misdirected Request",
         422 => "Unprocessable Content",
         431 => "Request Header Fields Too Large",
