@@ -430,6 +430,34 @@ fn call(
     })
 }
 
+/// The console's gallery (security review 2026-11-01, section 2): the web
+/// gallery on its own local origin, served by nginx on this port, which
+/// adds the family account's key itself (after asking alpd, see
+/// `gallery/gate`). The browser never holds a credential of the photo
+/// service.
+pub const GALLERY_URL: &str = "http://127.0.0.1:8412/";
+
+/// The family account's key for the gallery proxy; `None` until the family
+/// account exists. Only letters, digits and `-_+/=` are passed on (it goes
+/// into a request header).
+pub fn family_key() -> Option<Zeroizing<String>> {
+    let k = Zeroizing::new(
+        fs::read_to_string(family_key_path())
+            .ok()?
+            .trim()
+            .to_string(),
+    );
+    header_safe(&k).then_some(k)
+}
+
+/// A key that can go into a request header as it is.
+fn header_safe(k: &str) -> bool {
+    !k.is_empty()
+        && k.len() <= 128
+        && k.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'+' | b'/' | b'='))
+}
+
 fn api_key_header(key: &str) -> String {
     format!("x-api-key: {key}")
 }
@@ -946,6 +974,14 @@ pub fn cli(args: &[&str]) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_a_plain_key_goes_into_a_header() {
+        assert!(super::header_safe("AbC-12_3+/="));
+        for bad in ["", "a b", "a\r\nx-api-key: z", "a;b", &"k".repeat(129)] {
+            assert!(!super::header_safe(bad), "{bad:?}");
+        }
+    }
+
     #[test]
     fn devices_leave_out_the_console() {
         let s = serde_json::json!([

@@ -19,10 +19,11 @@ pub const ORIGIN: &str = "http://127.0.0.1:8411";
 const HOSTS: [&str; 2] = ["127.0.0.1:8411", "localhost:8411"];
 const MAX_HEAD: usize = 16 << 10;
 pub const MAX_BODY: usize = 64 << 10;
-/// `frame-src`: only the Immich web gallery and the Terminal (ttyd, feature
-/// `terminal`) on loopback, shown under the
-/// console's own top bar in the kiosk (T16, `immich.console_url`).
-const CSP: &str = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; frame-src http://127.0.0.1:2283 http://127.0.0.1:8413";
+/// `frame-src`: only the gallery proxy (nginx on 8412, `immich.gallery_url`)
+/// and the Terminal (ttyd, feature `terminal`) on loopback, shown under
+/// the console's own top bar in the kiosk. Never the photo service's own
+/// port: that would pass by the delete guard.
+const CSP: &str = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; frame-src http://127.0.0.1:8412 http://127.0.0.1:8413";
 
 #[derive(Debug, Default)]
 pub struct Request {

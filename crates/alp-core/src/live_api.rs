@@ -692,6 +692,30 @@ impl Live {
         ok
     }
 
+    /// `GET gallery/gate`: nginx asks this before it passes a gallery
+    /// request on 127.0.0.1:8412 to the photo service (`auth_request`). The
+    /// answer carries the family account's key for nginx to add, only while
+    /// the console is signed in: locking the console closes the gallery at
+    /// once, with nothing to clean up. A browser can never read the key:
+    /// every browser request carries `Sec-Fetch-Site` (nginx does not pass
+    /// it on), and those are refused here. 401 for every refusal.
+    fn gallery_gate(&self, req: &Request, get: bool) -> Response {
+        let no = || Response::json(401, &json!({}));
+        if !get || req.header("sec-fetch-site").is_some() || req.header("origin").is_some() {
+            return no();
+        }
+        if !self.console_open(req, false) {
+            return no();
+        }
+        let Some(key) = immich::family_key() else {
+            return no();
+        };
+        let mut r = Response::json(200, &json!({}));
+        r.headers
+            .push(("X-Alp-Gallery-Key", key.as_str().to_string()));
+        r
+    }
+
     /// A new console session; the cookie goes on `r`.
     fn sign_in(&self, mut r: Response) -> Response {
         let token = random_hex();
@@ -1462,6 +1486,11 @@ impl Live {
         };
         let get = req.method == "GET" || req.method == "HEAD";
         let post = req.method == "POST";
+        // Asked by the gallery proxy, never by a page; it must not count as
+        // use of the console (no keep-alive from the gallery frame).
+        if route == "gallery/gate" {
+            return self.gallery_gate(req, get);
+        }
         let free = matches!(
             route,
             "state"
@@ -2154,6 +2183,9 @@ impl Live {
             "detail": secs.map(immich::detail),
             "seconds_starting": secs,
             "console_url": (st == immich::State::Ready).then_some(immich::CONSOLE_URL),
+            // Feature gallery_session: set once the gallery proxy can answer.
+            "gallery_url": (st == immich::State::Ready && immich::family_key().is_some())
+                .then_some(immich::GALLERY_URL),
         });
         let fam = if st == immich::State::Ready {
             immich::family()
@@ -3611,6 +3643,7 @@ const FEATURES: &[&str] = &[
     "idle_lock_pref",
     "media_files",
     "clock",
+    "gallery_session",
 ];
 
 /// [`FEATURES`], plus `display_modes` when the image has `wlr-randr` and
@@ -3940,6 +3973,37 @@ mod tests {
             ..Request::default()
         });
         (r.status, serde_json::from_slice(&r.body).unwrap())
+    }
+
+    /// The gallery proxy's question: never answered to a browser (it sends
+    /// `Sec-Fetch-Site` or `Origin`), only to GET, and without a family
+    /// key there is nothing to give (the test machine has none).
+    #[test]
+    fn the_gallery_gate_refuses_browsers_and_gives_no_key_without_one() {
+        let l = live("gate");
+        let ask = |method: &str, headers: Vec<(String, String)>| {
+            l.handle(&Request {
+                method: method.into(),
+                path: format!("{PREFIX}gallery/gate"),
+                headers,
+                ..Request::default()
+            })
+        };
+        for r in [
+            ask("GET", vec![]),
+            ask("POST", vec![]),
+            ask("GET", vec![("sec-fetch-site".into(), "same-origin".into())]),
+            ask(
+                "GET",
+                vec![("origin".into(), "http://127.0.0.1:8411".into())],
+            ),
+        ] {
+            assert_eq!(r.status, 401);
+            assert!(r.headers.iter().all(|(k, _)| *k != "X-Alp-Gallery-Key"));
+        }
+        let f = l.state(true)["features"].clone();
+        assert!(f.as_array().unwrap().contains(&json!("gallery_session")));
+        assert_eq!(l.state(true)["immich"]["gallery_url"], Value::Null);
     }
 
     #[test]

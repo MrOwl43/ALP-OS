@@ -208,6 +208,11 @@ pair02() { # base, immich token
     [[ $san == *" back=yes "* ]] \
         || { echo "FAIL: T-PAIR-CLOCK: the CA or the certificate sent does not start a day back ($san)" >&2; return 1; }
     echo "ok:   T-PAIR-CLOCK: the CA and the server certificate start a day before the computer's time"
+    local gal
+    gal=$(mark GAL 180) || { echo "FAIL: T-GAL-01: no result from the guest" >&2; return 1; }
+    [[ $gal == *"GAL gu=1 page=200 me=1 leak=0 anon=401 gate=401 del=403 out=403 locked=401 end"* ]] \
+        || { echo "FAIL: T-GAL-01: the console gallery on 8412 is not as expected (${gal#*PAIRAGENT })" >&2; return 1; }
+    echo "ok:   T-GAL-01: the gallery answers on 8412 only while the console is signed in; no delete, no key in the browser"
 }
 export -f pair02
 export -f hook
@@ -262,6 +267,24 @@ age() { echo \$(( \$(date +%s) - \$(date -d "\$(openssl x509 -noout -startdate 2
 back=no
 [ "\$(age <\$tls/ca.crt)" -ge 82800 ] && [ "\$(leaf | age)" -ge 82800 ] && back=yes
 say "SAN ip=\$ip file=\$file stale=\$stale after=\$after opened=\$opened conn=\$conn back=\$back names=\$names"
+# T-GAL-01: the console's gallery on 127.0.0.1:8412 (nginx). Signed in, the
+# pages load and the API answers as the family account without the browser
+# holding a credential; with no console cookie, after a lock, or for a
+# delete, it is refused; alpd never gives the key to a browser request.
+G=http://127.0.0.1:8412
+code() { curl -s -m 30 -o /dev/null -w '%{http_code}' "\$@"; }
+c -X POST \$A/console/signin -d '{"password":"$pw"}' >/dev/null
+gu=\$(c \$A/state | tr -d '\n' | grep -c '"gallery_url": *"http://127.0.0.1:8412/"')
+page=\$(code \$G/)
+me=\$(curl -s -m 30 -b /run/pa-jar \$G/api/users/me | grep -c 'family@alparchive.local')
+leak=\$(curl -s -m 30 -D - -o /dev/null -b /run/pa-jar \$G/api/users/me | grep -ci 'x-alp-gallery-key')
+anon=\$(code \$G/api/users/me)
+gate=\$(code -b /run/pa-jar -H 'Sec-Fetch-Site: same-origin' \$A/gallery/gate)
+del=\$(code -b /run/pa-jar -X DELETE \$G/api/assets)
+out=\$(code -b /run/pa-jar -X POST \$G/api/auth/logout)
+c -X POST \$A/console/lock -d '{}' >/dev/null
+locked=\$(code -b /run/pa-jar \$G/api/users/me)
+say "GAL gu=\$gu page=\$page me=\$me leak=\$leak anon=\$anon gate=\$gate del=\$del out=\$out locked=\$locked end"
 AGENT
 agent_b64=$(base64 -w0 <<<"$agent")
 
