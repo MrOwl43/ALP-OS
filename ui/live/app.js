@@ -208,6 +208,19 @@
     if (a === "none" || a === "failed") return { tone: "warn", label: t("tray.disk.none") };
     return null;   // locked: nothing is known yet
   }
+  // Feature clock: times on screen use the chosen time zone (UTC until one is chosen); the browser knows the zones.
+  // A zone name it does not know falls back to UTC.
+  function zoneOf(s) { const z = s && s.prefs && s.prefs.timeZone; if (!z) return "UTC"; try { new Intl.DateTimeFormat("en", { timeZone: z }); return z; } catch { return "UTC"; } }
+  function clockText(s, long) {
+    const d = new Date(s.clock.now * 1000), z = zoneOf(s);
+    const o = long ? { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: z, timeZoneName: "shortOffset" }
+      : { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: z };
+    return new Intl.DateTimeFormat("en-GB", o).format(d).replace("GMT", "UTC");
+  }
+  function clockEl(s) {
+    const label = clockText(s, true) + (s.clock.synced ? "" : " · " + t("clock.unsure"));
+    return h("span", { class: "tstat clock" + (s.clock.synced ? "" : " unsure"), role: "img", title: label, "aria-label": label, dir: "ltr" }, clockText(s, false));
+  }
   function batteryEl(b) {
     const p = Math.max(0, Math.min(100, b.percent)), tone = b.charging ? "" : p <= 10 ? "st-bad" : p <= 20 ? "st-warn" : "";
     const label = t(b.charging ? "tray.battery.charging" : "tray.battery", { n: p });
@@ -247,6 +260,7 @@
     const ds = diskStatus(S);
     if (ds) tray.append(trayBtn(ICON.disk, ds.label, gated ? () => netStatus(ds.label, "tray.disk.signin") : L.mode === "setup" ? () => jumpStep(4) : () => openSettings("disk"), ds.tone === "ok" ? "st-ok" : "st-off"));
     if (S.sys.battery) tray.append(batteryEl(S.sys.battery));
+    if (has("clock") && S.clock) tray.append(clockEl(S));
     // (i): a quiet grey icon; a small dot when something new happened (orange: needs attention, red: not working).
     const lvl = statusLevel(S);
     const ib = h("button", { class: "tbtn errb lvb" + (errPanel ? " on" : ""), type: "button", title: t("tray.errors") + ": " + t("lv." + lvl), "aria-label": t("tray.errors") + ": " + t("lv." + lvl), onclick: openErrors }, legendIcon(lvl, { word: false }));
@@ -1976,6 +1990,10 @@
               choiceMenu(t("set.lockafter"), [60, 300, 900, 1800].map((v) => ({ value: v, text: t("set.lockafter.min", { n: v / 60 }) })), S.console.idle,
                 async (v) => { try { await alp.setPrefs({ idle_lock_seconds: v }); await refresh(); openSettings("display"); } catch (e) { fail(e); } }))
               : row(t("set.lockafter"), t("set.lockafter.d", { n: Math.round(S.console.idle / 60) })),
+            // Feature clock: the time as the computer has it, whether the network set it, and the zone times are shown in.
+            has("clock") && S.clock ? row(t("set.clock"), clockText(S, true) + ". " + t(S.clock.synced ? "set.clock.synced" : "set.clock.unsure"),
+              choiceMenu(t("set.zone"), zoneOptions(), S.prefs.timeZone,
+                async (v) => { try { await alp.setPrefs({ time_zone: v }); await refresh(); openSettings("display"); } catch (e) { fail(e); } })) : null,
             has("natural_scrolling") ? row(t("set.natural"), t("set.natural.d"), sw(S.prefs.naturalScrolling !== false, t("set.natural"), async (i) => { try { await alp.setPrefs({ natural_scrolling: i.checked }); await refresh(); } catch (e) { i.checked = !i.checked; fail(e); } })) : null,
             row([iconEl("textsize"), t("set.size")], t("set.size.d"), size),
             modes ? row([iconEl("screen"), t("set.res")], t("set.res.d"), modes) : null,
@@ -2045,6 +2063,13 @@
   }
   // Resolution (feature display_modes): the switch reverts by itself after 15 s unless Keep is pressed.
   // Our own drop-down list (spec 2: no native <select>): a button and a list popover; arrows, Enter, Esc work.
+  // The time zones the browser knows, each with its offset now; first "UTC" (no zone chosen).
+  function zoneOptions() {
+    let names = [];
+    try { names = Intl.supportedValuesOf("timeZone"); } catch { names = []; }
+    const off = (z) => { try { return new Intl.DateTimeFormat("en", { timeZone: z, timeZoneName: "shortOffset" }).formatToParts(new Date(S.clock.now * 1000)).find((x) => x.type === "timeZoneName").value.replace("GMT", "UTC"); } catch { return ""; } };
+    return [{ value: null, text: "UTC" }].concat(names.map((z) => ({ value: z, text: z.replace(/_/g, " "), hint: off(z) })));
+  }
   function choiceMenu(label, options, value, onPick) {
     const cur = () => options.find((o) => o.value === value) || options[0] || { text: "" };
     const txt = h("span", {}, cur().text);
