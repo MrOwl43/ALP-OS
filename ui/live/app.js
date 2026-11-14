@@ -1123,7 +1123,7 @@
       const others = h("details", { class: "techd others" }, h("summary", {}, iconEl("chevron"), h("span", {}, t("phone.others"))),
         h("div", { class: "techd-body" }, h("p", { class: "fine" }, t("pair.temporary")), body));
       card.append(hero("phone"), h("h1", {}, t("phone.title")), h("p", { class: "sub" }, t(setup ? "phone.sub" : "phone.sub.more")), appBox, status, okBox, others,
-        h("div", { class: "row" }, h("button", { class: "link", type: "button", "data-ico": "", onclick: () => help.classList.toggle("hidden") }, t("phone.help.toggle"))), help,
+        h("div", { class: "row" }, h("button", { class: "link", type: "button", "data-ico": "", onclick: () => { if (!help.classList.toggle("hidden")) checkConnection(); } }, t("phone.help.toggle"))), help,
         h("div", { class: "toolbar bottom" }, stageBack, laterBtn(), go));
       let stopped = false, R = null, stage = 0, pairT = null, pwAsked = false, sig = "", qrTick = null, qrOpen = false;
       cur.stop = () => { stopped = true; clearTimeout(pairT); clearInterval(qrTick); if (qrOpen) alp.pairClose().catch(() => {}); };
@@ -1144,6 +1144,25 @@
         } catch (e) {   // an older alpd has no app pairing: the other ways are the way
           appQr.replaceChildren(banner("bad", e)); others.open = true;
         }
+      }
+      // What a phone meets on this network (GET phone/connection), in plain lines under the help text.
+      const checkBox = h("div", { class: "conncheck" }); help.firstElementChild.append(checkBox);
+      async function checkConnection() {
+        if (!has("connection_check")) return;
+        checkBox.replaceChildren(waitLine(t("conn.checking"), "wait.generic.slow", 30));
+        let c;
+        try { c = await alp.phoneConnection(); } catch (e) { if (!stopped) checkBox.replaceChildren(banner("bad", e)); return; }
+        if (stopped) return;
+        const line = (ok, text) => h("li", { class: ok ? "ok" : "bad" }, ok ? iconEl("check") : h("span", { class: "ico bang", "aria-hidden": "true" }, "!"), h("span", {}, text));
+        const served = Array.isArray(c.served) ? c.served : [];
+        const lines = [
+          line((c.addresses || []).length > 0, (c.addresses || []).length ? t("conn.addr", { a: c.addresses.join(", ") }) : t("conn.addr.none")),
+          line(!!c.nginx_active, t(c.nginx_active ? "conn.server" : "conn.server.off")),
+        ];
+        served.forEach((x) => lines.push(line(!!x.ok, t(x.ok ? "conn.cert" : x.answers === false ? "conn.cert.silent" : "conn.cert.bad", { a: x.address }))));
+        if (c.clock) lines.push(line(!!c.clock.synced, t(c.clock.synced ? "conn.clock" : "conn.clock.unsure", { time: clockText({ clock: c.clock, prefs: S.prefs }, true) })));
+        if (c.only_paired_phones) lines.push(line(true, t("conn.strict")));
+        checkBox.replaceChildren(h("ul", { class: "connlines" }, ...lines));
       }
       openAppQr();
       const certStage = () => !!(R && R.certificate_qr_svg && /^https:/.test(R.server_url || ""));

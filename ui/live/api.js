@@ -100,6 +100,7 @@
     removeDevice: (id) => raw("POST", "live/phone/devices/remove", { id }),
     // ADR 0017: pairing a phone with the QR and an approval on this screen.
     pairOpen: () => raw("POST", "live/pair/open", {}),
+    phoneConnection: () => raw("GET", "live/phone/connection"),   // feature connection_check
     pairClose: () => raw("POST", "live/pair/close", {}),
     pairApprove: (id) => raw("POST", "live/pair/approve", { id }),
     pairReject: (id) => raw("POST", "live/pair/reject", { id }),

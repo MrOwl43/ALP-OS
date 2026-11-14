@@ -12,7 +12,7 @@
   if (p.get("shot")) document.write('<img src="/__slow" alt="" hidden>');   // QA only: delays the load event so a headless screenshot waits for the screen
   const sl = (ms) => new Promise((r) => setTimeout(r, fast ? 30 : ms));
   const GB = 1e9;
-  const ALL_FEATURES = ["setup_progress", "recovery_commit", "password_change", "events", "gallery_session", "media_import", "natural_scrolling", "media_files", "terminal", "disks", "disk_check", "disk_eject", "status_levels", "prefs", "display_modes", "idle_lock_pref", "clock"];
+  const ALL_FEATURES = ["setup_progress", "recovery_commit", "password_change", "events", "gallery_session", "media_import", "natural_scrolling", "media_files", "terminal", "disks", "disk_check", "disk_eject", "status_levels", "prefs", "display_modes", "idle_lock_pref", "clock", "connection_check"];
   const FEATURES = p.get("features") === "none" ? [] : p.get("features") ? p.get("features").split(",") : ALL_FEATURES;
   let failOnce = p.get("fail");
   const E = (key, message, status, extra) => new ApiError(key, message, null, status || 400, extra);
@@ -31,7 +31,7 @@
         graphics: [{ vendor: "Intel", pci_id: "8086:46a3" }],
         network: [{ name: "wlan0", kind: "wifi", driver: "iwlwifi", usb: false, working: true }, { name: "enx00e04c680001", kind: "wired", driver: "r8152", usb: true, working: true }],
         tpm: "2.0", uefi: true, secure_boot: false, battery: { model: "L20M4PC1", health_percent: 91 } } },
-    system: { release: "ALP-OS Live alpha 0.2.5", build: "0650152a1b2c 2026-10-30", battery: p.get("battery") === "none" ? null : p.get("battery") === "low" ? { percent: 12, charging: false } : { percent: 76, charging: p.get("battery") === "charging" } },
+    system: { release: "ALP-OS Live alpha 0.2.6", build: "0650152a1b2c 2026-10-30", battery: p.get("battery") === "none" ? null : p.get("battery") === "low" ? { percent: 12, charging: false } : { percent: 76, charging: p.get("battery") === "charging" } },
     power: { state: "on", job: null },
     lock: { state: "open", retry_after_seconds: 0, tpm: "on", protection: p.get("protection") || "password" },
     console: { state: "open", idle_lock_seconds: p.get("idle") ? +p.get("idle") : 300 },
@@ -292,6 +292,10 @@
         case "POST live/display/mode": MODES.forEach((m) => (m.current = m.id === body.id)); return { revert_in: 15 };
         case "POST live/display/mode/keep": return {};
         case "POST live/display/mode/revert": return {};
+        case "GET live/phone/connection": await sl(400); return { addresses: ["192.168.1.50"], ports: [], index_open: true, only_paired_phones: false, nginx_active: true,
+          certificate: { sha256: "AA", names: [] }, ca_sha256: "BB", refused_requests: [],
+          served: [{ address: "192.168.1.50", answers: true, sha256: "AA", names: [], same_as_file: true, names_address: true, ok: p.get("conn") !== "bad" }],
+          clock: { now: Math.floor(Date.now() / 1000), synced: p.get("clock") !== "unsure" } };
         case "GET live/disks": await sl(300); return { disks: mockDisks() };
         case "POST live/disks/eject": await sl(300); ejected.add(body.disk_id); return {};
         case "POST live/disks/check": await sl(200); W.archive.job = { id: "disk.check", state: "done", percent: 100, message: "No errors found on this disk." }; return { job: W.archive.job };

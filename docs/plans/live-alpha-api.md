@@ -4,6 +4,9 @@
 Status: contract for UX and QA, 2026-10-19 (lead developer). Changes are
 listed here, newest first, before the code changes.
 
+- 2026-11-14 (additive): feature `connection_check` says that `GET
+  phone/connection` exists; the console shows its answer in plain lines
+  under "My phone cannot connect". No change to the answer itself.
 - 2026-11-14 (T09, the rest; additive, feature `setup_progress`):
   `POST setup/progress {complete?: true, skipped?: [..]}` answers
   `{setup}`. `skipped` replaces the kept list; each name is one of

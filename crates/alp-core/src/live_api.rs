@@ -3697,6 +3697,7 @@ fn setup_busy() -> Fail {
 
 /// Server capabilities announced in the state (`features`).
 const FEATURES: &[&str] = &[
+    "connection_check",
     "setup_progress",
     "recovery_commit",
     "disks",
