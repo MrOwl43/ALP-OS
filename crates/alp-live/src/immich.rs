@@ -308,6 +308,88 @@ pub fn devices(sessions: &Value) -> Vec<Device> {
     v
 }
 
+/// Phone sessions not used for this long are removed (T63, security
+/// review 2026-11-03, B3): a lost or sold phone does not stay signed in
+/// for ever. Its owner signs in again with the ALP password.
+pub const IDLE_SESSION_SECS: u64 = 60 * 24 * 3600;
+
+/// Seconds since 1970 of an ISO 8601 UTC time as the photo service writes
+/// it (`2026-10-28T10:00:00.000Z`); `None` for anything else.
+fn unix_of_iso(t: &str) -> Option<u64> {
+    let b = t.as_bytes();
+    if b.len() < 20
+        || b[4] != b'-'
+        || b[7] != b'-'
+        || b[10] != b'T'
+        || b[13] != b':'
+        || b[16] != b':'
+    {
+        return None;
+    }
+    if !t.ends_with('Z') {
+        return None;
+    }
+    let n = |r: std::ops::Range<usize>| t.get(r)?.parse::<u64>().ok();
+    let (y, m, d) = (n(0..4)?, n(5..7)?, n(8..10)?);
+    let (h, mi, s) = (n(11..13)?, n(14..16)?, n(17..19)?);
+    if y < 1970 || !(1..=12).contains(&m) || !(1..=31).contains(&d) || h > 23 || mi > 59 || s > 60 {
+        return None;
+    }
+    // Days from 1970-01-01 (the civil-date algorithm; March-based years).
+    let y2 = if m <= 2 { y - 1 } else { y };
+    let era = y2 / 400;
+    let yoe = y2 - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = (era * 146_097 + doe).checked_sub(719_468)?;
+    Some(days * 86_400 + h * 3600 + mi * 60 + s)
+}
+
+/// The ids of the sessions last seen more than `max_age` seconds before
+/// `now` (unix seconds). A session without a readable time is kept.
+pub fn idle_sessions(sessions: &Value, now: u64, max_age: u64) -> Vec<String> {
+    sessions
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|x| {
+            let seen = unix_of_iso(x["updatedAt"].as_str()?)?;
+            let id = x["id"].as_str()?;
+            (now.checked_sub(seen)? > max_age).then(|| id.to_string())
+        })
+        .collect()
+}
+
+/// Remove the family account's sessions idle for [`IDLE_SESSION_SECS`];
+/// how many went. Each removal is written to the journal (never a token:
+/// a session id is not a credential). The caller makes sure the clock can
+/// be trusted: a clock that is months ahead would sign every phone out.
+pub fn remove_idle_sessions(now: u64) -> Result<usize, Fail> {
+    let k = Zeroizing::new(
+        fs::read_to_string(key_path())
+            .map_err(|_| failed("No phone is set up yet."))?
+            .trim()
+            .to_string(),
+    );
+    let Some(id) = family_id(&k)? else {
+        return Ok(0);
+    };
+    let auth = api_key_header(&k);
+    let sessions = call("GET", &format!("/admin/users/{id}/sessions"), &auth, None)?
+        .json()
+        .ok_or_else(|| failed("The photo service did not list the signed-in devices."))?;
+    let mut gone = 0;
+    for sid in idle_sessions(&sessions, now, IDLE_SESSION_SECS) {
+        if remove_device(&sid).is_ok() {
+            eprintln!("alpd: phone: a device not seen for 60 days was signed out (session {sid})");
+            gone += 1;
+        }
+    }
+    Ok(gone)
+}
+
 /// Addresses with an open connection to the phone app's port 443 now
 /// (`ss -Htn state established '( sport = :443 )'`), sorted, without the
 /// computer itself. Immich does not keep a device's address; while a phone
@@ -980,6 +1062,91 @@ mod tests {
         for bad in ["", "a b", "a\r\nx-api-key: z", "a;b", &"k".repeat(129)] {
             assert!(!super::header_safe(bad), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn sessions_idle_for_60_days_are_found() {
+        assert_eq!(super::unix_of_iso("1970-01-01T00:00:00.000Z"), Some(0));
+        assert_eq!(
+            super::unix_of_iso("2026-11-14T08:15:55.000Z"),
+            Some(1_794_644_155)
+        );
+        assert_eq!(
+            super::unix_of_iso("2024-02-29T12:00:00Z"),
+            Some(1_709_208_000)
+        );
+        for bad in [
+            "",
+            "yesterday",
+            "2026-11-14 08:15:55",
+            "2026-13-01T00:00:00Z",
+            "2026-11-14T08:15:55+02:00",
+        ] {
+            assert_eq!(super::unix_of_iso(bad), None, "{bad}");
+        }
+        let now = 1_794_644_155;
+        let day = 86_400;
+        let iso = |secs_ago: u64| {
+            // Built from the same function's inverse by search: whole days only.
+            let t = now - secs_ago;
+            let (d, r) = (t / day, t % day);
+            let (mut y, mut left) = (1970, d);
+            loop {
+                let len = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+                    366
+                } else {
+                    365
+                };
+                if left < len {
+                    break;
+                }
+                left -= len;
+                y += 1;
+            }
+            let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+            let months = [
+                31,
+                if leap { 29 } else { 28 },
+                31,
+                30,
+                31,
+                30,
+                31,
+                31,
+                30,
+                31,
+                30,
+                31,
+            ];
+            let mut m = 0;
+            while left >= months[m] {
+                left -= months[m];
+                m += 1;
+            }
+            format!(
+                "{y:04}-{:02}-{:02}T{:02}:{:02}:{:02}.000Z",
+                m + 1,
+                left + 1,
+                r / 3600,
+                r % 3600 / 60,
+                r % 60
+            )
+        };
+        assert_eq!(super::unix_of_iso(&iso(61 * day)), Some(now - 61 * day));
+        let s = serde_json::json!([
+            {"id": "old", "updatedAt": iso(61 * day)},
+            {"id": "edge", "updatedAt": iso(60 * day)},
+            {"id": "new", "updatedAt": iso(3600)},
+            {"id": "future", "updatedAt": "2099-01-01T00:00:00.000Z"},
+            {"id": "odd", "updatedAt": "soon"},
+            {"updatedAt": iso(90 * day)},
+        ]);
+        assert_eq!(
+            super::idle_sessions(&s, now, super::IDLE_SESSION_SECS),
+            vec!["old".to_string()]
+        );
+        // A clock that is behind (a session "from the future") removes nothing.
+        assert!(super::idle_sessions(&s, 0, super::IDLE_SESSION_SECS).is_empty());
     }
 
     #[test]
