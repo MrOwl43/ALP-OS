@@ -4,6 +4,10 @@
 Status: contract for UX and QA, 2026-10-19 (lead developer). Changes are
 listed here, newest first, before the code changes.
 
+- 2026-11-14 (T63, security review B3; no API change): once a day, while
+  the clock was set from the network (`clock.synced`), alpd signs out phone
+  sessions the photo service has not seen for 60 days and writes each
+  removal to the journal. The phone signs in again with the ALP password.
 - 2026-11-14 (0.2.5-test1 field report: Photos could not be shown on the
   console; the gallery layer of the 0.2.4 plan was never built; additive,
   feature `gallery_session`):

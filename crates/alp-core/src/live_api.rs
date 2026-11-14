@@ -1235,11 +1235,31 @@ impl Live {
     /// after the photo service started, a new address from the router), and
     /// what nginx really sends is checked (0.2.5 field report; cheap when
     /// nothing changed). The device allowlist is rewritten every 12 hours.
+    /// Idle phone sessions are removed once a day (T63).
     pub fn watch_certificate(self: &Arc<Self>) {
         std::thread::spawn(|| {
             std::thread::sleep(Duration::from_secs(60));
             let mut last_map: Option<Instant> = None;
+            let mut last_idle: Option<Instant> = None;
             loop {
+                // T63: once a day, phone sessions not used for 60 days are
+                // signed out, but only while the clock was set from the
+                // network: a clock that runs months ahead (0.2.5-test1 saw
+                // one hours ahead) would sign every phone out.
+                let synced = clock_json()["synced"] == json!(true);
+                if index::is_open()
+                    && synced
+                    && last_idle.is_none_or(|t| t.elapsed() >= Duration::from_secs(24 * 3600))
+                    && immich::state() == immich::State::Ready
+                {
+                    let now = clock_json()["now"].as_u64().unwrap_or(0);
+                    match immich::remove_idle_sessions(now) {
+                        Ok(n) if n > 0 => eprintln!("alpd: phone: {n} idle device(s) signed out"),
+                        Ok(_) => {}
+                        Err(e) => eprintln!("alpd: phone: idle devices not checked: {}", e.message),
+                    }
+                    last_idle = Some(Instant::now());
+                }
                 if index::is_open() {
                     // Failures are logged by tls::ensure; the phone screen shows them.
                     let _ = immich::certificate_for(&live::addresses(&live::ports()));
