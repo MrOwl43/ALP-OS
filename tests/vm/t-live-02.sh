@@ -11,6 +11,8 @@
 #   the API; the internal disk is not offered and creating an archive on its
 #   NTFS partition is refused; the external disk is offered; the archive is
 #   created on it; a file is written; the recovery key is read if the API has it.
+#   T09: two setup steps are marked skipped (an unknown name is refused);
+#   boot 2 still lists them.
 # Boot 2 (same stick, overlay kept):
 #   case "tpm" (swtpm, state kept across boots): the archive reopens without
 #     the password;
@@ -146,6 +148,8 @@ probe1="$alive
 $(get STATE1 /api/v1/live/state)
 $(QA_HTTP_TIMEOUT=90 post SETUP /api/v1/live/password/setup "$(pwjson "$pw")")
 $(get STATE1B /api/v1/live/state)
+$(post SKIPBAD /api/v1/live/setup/progress '{"skipped":["phone","nonsense"]}')
+$(post SKIP /api/v1/live/setup/progress '{"skipped":["phone","network"]}')
 $(get CAND /api/v1/live/archive/candidates)
 $(post REFUSE /api/v1/live/archive/create "{\"partuuid\":\"$ntfs_uuid\",\"size_bytes\":1073741824}")
 $(post CREATE /api/v1/live/archive/create "{\"partuuid\":\"$ext_uuid\",\"size_bytes\":1073741824,\"alp_password\":\"$pw\"}")
@@ -258,6 +262,10 @@ expect "sixth wrong password backs off (429)" "$(block "$out2" BAD6)" '^HTTP/1\.
 expect "right password unlocks after the wait" "$(block "$out2" UNLOCK)" '^HTTP/1\.[01] 200'
 expect_archive_open "archive open after unlock" "$(block "$out2" STATE4)"
 fi
+# T09: skipped setup steps are kept on the stick.
+expect "an unknown setup step is refused (422)" "$(block "$out1" SKIPBAD)" '^HTTP/1\.[01] 422'
+expect "skipped setup steps are taken" "$(block "$out1" SKIP)" '"skipped": ?\[ ?"network", ?"phone" ?\]'
+expect "skipped setup steps are remembered after a restart" "$(block "$out2" STATE3)" '"skipped": ?\[ ?"network", ?"phone" ?\]'
 expect "file is still there after a restart" "$out2" '^archive-ok'
 # T42: the two-step recovery code (boot 1).
 rc_res=$(block "$out1" RCYCLE | tr -d "\r" | grep -E '^(ok|FAIL):' || true)

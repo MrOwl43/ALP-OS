@@ -1279,10 +1279,11 @@
   function detectMode() {
     if (L.exited) { L.mode = "everyday"; return; }
     if (has("setup_progress") && !(window.useMock && params.get("screen"))) {   // T09: the server knows
-      L.mode = S.lock.state === "setup" || !S.setup.complete ? "setup" : "everyday";
       S.setup.skipped.forEach((k) => { if (L.skip[k] === undefined) L.skip[k] = true; });
       if (S.setup.complete) L.finished = true;
-      return;
+      if (S.lock.state === "setup") { L.mode = "setup"; return; }
+      if (S.setup.complete) { L.mode = "everyday"; return; }
+      // Not marked complete (a stick set up before this was kept, or setup still running): the state decides, below.
     }
     const a = S.arch.state;
     // T09: setup finished or left before a restart stays finished (kept on the stick); a locked stick asks for the

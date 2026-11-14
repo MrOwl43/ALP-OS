@@ -371,7 +371,7 @@ fn status_for(key: &str) -> u16 {
         "locked" | "index.exists" | "state.not_ready" => 409,
         "password.wrong" | "recovery.wrong" | "disk.locked" => 403,
         "disk.open" => 409,
-        "prefs.invalid" => 422,
+        "prefs.invalid" | "setup.invalid" => 422,
         "display.busy" | "display.no_pending" => 409,
         "display.not_found" => 404,
         "display.unavailable" => 503,
@@ -405,6 +405,48 @@ fn status_for(key: &str) -> u16 {
 
 fn err(f: &Fail) -> Response {
     Response::json(status_for(f.key), &json!({"error": fail_json(f)}))
+}
+
+/// `state.setup` (T09): `complete` is `finished` under the name the
+/// `setup_progress` feature uses.
+fn setup_json() -> Value {
+    let done = archive::setup_done();
+    json!({"finished": done, "complete": done, "skipped": archive::setup_skipped()})
+}
+
+/// What a `setup/progress` request asks for: the new skipped list (if
+/// given) and whether setup is complete. Checked before anything is kept.
+fn setup_request(b: &Value) -> Result<(Option<Vec<&'static str>>, bool), Fail> {
+    let bad = || Fail::new("setup.invalid", "This setup progress is not valid.");
+    let mut skipped = None;
+    let mut complete = false;
+    for (k, v) in b.as_object().ok_or_else(bad)? {
+        match k.as_str() {
+            "complete" => complete = v.as_bool().filter(|c| *c).ok_or_else(bad)?,
+            "skipped" => {
+                let names: Option<Vec<&str>> = v
+                    .as_array()
+                    .ok_or_else(bad)?
+                    .iter()
+                    .map(Value::as_str)
+                    .collect();
+                skipped = Some(names.and_then(archive::setup_steps_of).ok_or_else(bad)?);
+            }
+            _ => return Err(bad()),
+        }
+    }
+    Ok((skipped, complete))
+}
+
+fn setup_progress(b: &Value) -> Result<Response, Fail> {
+    let (skipped, complete) = setup_request(b)?;
+    if let Some(s) = skipped {
+        archive::set_setup_skipped(&s).map_err(|e| Fail::new("internal", e))?;
+    }
+    if complete {
+        archive::set_setup_done().map_err(|e| Fail::new("internal", e))?;
+    }
+    Ok(Response::json(200, &json!({"setup": setup_json()})))
 }
 
 fn body(req: &Request) -> Result<Value, Fail> {
@@ -1555,6 +1597,7 @@ impl Live {
                 archive::set_setup_done().map_err(|e| Fail::new("internal", e))?;
                 Ok(Response::json(200, &json!({})))
             }),
+            "setup/progress" if post => body(req).and_then(|b| setup_progress(&b)),
             "recovery/create" if post => self.need_open().and_then(|()| self.recovery_create(req)),
             "recovery/commit" if post => self.need_open().and_then(|()| self.recovery_commit(req)),
             // `discard` is the Live UI developer's name for it (docs/plans/live-ui-0.2.4.md).
@@ -1760,6 +1803,7 @@ impl Live {
             | "console/lock"
             | "console/activity"
             | "setup/finish"
+            | "setup/progress"
             | "recovery/create"
             | "recovery/commit"
             | "recovery/cancel"
@@ -2079,7 +2123,7 @@ impl Live {
                      "tpm": index::tpm_state(),
                      "protection": if index::lock_state() == "setup" { Value::Null } else { index::protection().into() }},
             "console": {"state": "open", "idle_lock_seconds": self.idle_lock().as_secs()},
-            "setup": {"finished": archive::setup_done()},
+            "setup": setup_json(),
             // What this alpd can do, so the console (Live UI 0.2.4) shows
             // only the flows it has: two-step recovery code (T42).
             "features": features(),
@@ -3653,6 +3697,7 @@ fn setup_busy() -> Fail {
 
 /// Server capabilities announced in the state (`features`).
 const FEATURES: &[&str] = &[
+    "setup_progress",
     "recovery_commit",
     "disks",
     "events",
@@ -3962,6 +4007,32 @@ mod tests {
             .into())
     }
 
+    #[test]
+    fn setup_progress_takes_known_steps_only() {
+        let ok = |v: Value| setup_request(&v).ok();
+        assert_eq!(ok(json!({})), Some((None, false)));
+        assert_eq!(ok(json!({"complete": true})), Some((None, true)));
+        // Kept once each, in the order of the steps.
+        assert_eq!(
+            ok(json!({"skipped": ["phone", "network", "phone"]})),
+            Some((Some(vec!["network", "phone"]), false))
+        );
+        assert_eq!(ok(json!({"skipped": []})), Some((Some(vec![]), false)));
+        for bad in [
+            json!({"skipped": ["network", "nonsense"]}),
+            json!({"skipped": ["../x"]}),
+            json!({"skipped": [1]}),
+            json!({"skipped": "network"}),
+            json!({"complete": false}),
+            json!({"complete": 1}),
+            json!({"other": true}),
+        ] {
+            let e = setup_request(&bad)
+                .err()
+                .unwrap_or_else(|| panic!("{bad} was taken"));
+            assert_eq!(e.key, "setup.invalid");
+        }
+    }
     #[test]
     fn lock_screen_hides_names() {
         let mut v = json!({"console": {"state": "open"}, "hardware": {"report_file": "hw.txt"},
