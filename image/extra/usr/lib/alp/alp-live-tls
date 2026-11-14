@@ -22,7 +22,11 @@
 #                          <id> is the raw public key in base32 (RFC 4648,
 #                          no padding) and <ca> the SHA-256 (hex) of the CA's
 #                          public key (DER SubjectPublicKeyInfo).
-#   identity.json          {v, alg, id, ca, endorsement (base64), ca_cert},
+#                          Since 0.2.6 also v2 of the endorsement, over
+#                          "alparchive-ca-endorsement-v2\n<id>\n<ca>\n<seq>\n":
+#                          <seq> counts this stick's CAs from 1 (ca.seq).
+#   identity.json          {v, alg, id, ca, endorsement (base64), seq,
+#                          endorsement2 (base64), ca_cert},
 #                          published at /run/alp/tls/identity.json for
 #                          /.well-known/alparchive/identity.
 #
@@ -165,12 +169,35 @@ if ! [ -s kid.key ]; then
 fi
 id=$(openssl pkey -in kid.key -pubout -outform DER | tail -c 32 | base32 -w0 | tr -d =)
 ca=$(openssl x509 -in ca.crt -noout -pubkey | openssl pkey -pubin -outform DER | sha256sum | cut -d' ' -f1)
-printf 'alparchive-ca-endorsement-v1\n%s\n%s\n' "$id" "$ca" >endorse.msg
-if ! [ -s identity.json ] || ! grep -q "\"ca\": \"$ca\"" identity.json || ! grep -q "\"id\": \"$id\"" identity.json; then
+# The sequence number of the endorsed CA (security review 2026-11-03, S1):
+# 1 for the first CA of this stick, one more for every new CA. A phone keeps
+# the highest number it has seen and refuses a lower one, so the endorsement
+# of an older CA cannot be shown again after a change. ca.seq holds
+# "<number> <ca>".
+seq=1
+if [ -s ca.seq ]; then
+    read -r n was <ca.seq || true
+    case $n in
+        ''|*[!0-9]*) n=0 ;;
+    esac
+    if [ "$was" = "$ca" ] && [ "$n" -ge 1 ]; then seq=$n; else seq=$((n + 1)); fi
+fi
+if ! [ -s ca.seq ] || [ "$(cat ca.seq)" != "$seq $ca" ]; then
+    printf '%s %s\n' "$seq" "$ca" >ca.seq.tmp
+    sync ca.seq.tmp
+    mv ca.seq.tmp ca.seq
+fi
+if ! [ -s identity.json ] || ! grep -q "\"ca\": \"$ca\"" identity.json || ! grep -q "\"id\": \"$id\"" identity.json ||
+    ! grep -q "\"seq\": $seq," identity.json; then
+    # v1 (kept while phones with the first app are in use) and v2, which
+    # also signs the sequence number.
+    printf 'alparchive-ca-endorsement-v1\n%s\n%s\n' "$id" "$ca" >endorse.msg
     sig=$(openssl pkeyutl -sign -inkey kid.key -rawin -in endorse.msg | base64 -w0)
+    printf 'alparchive-ca-endorsement-v2\n%s\n%s\n%s\n' "$id" "$ca" "$seq" >endorse.msg
+    sig2=$(openssl pkeyutl -sign -inkey kid.key -rawin -in endorse.msg | base64 -w0)
     pem=$(awk '{printf "%s\\n", $0}' ca.crt)
-    printf '{"v": 1, "alg": "ed25519", "id": "%s", "ca": "%s", "endorsement": "%s", "ca_cert": "%s"}\n' \
-        "$id" "$ca" "$sig" "$pem" >identity.json.tmp
+    printf '{"v": 1, "alg": "ed25519", "id": "%s", "ca": "%s", "endorsement": "%s", "seq": %s, "endorsement2": "%s", "ca_cert": "%s"}\n' \
+        "$id" "$ca" "$sig" "$seq" "$sig2" "$pem" >identity.json.tmp
     sync identity.json.tmp
     mv identity.json.tmp identity.json
 fi

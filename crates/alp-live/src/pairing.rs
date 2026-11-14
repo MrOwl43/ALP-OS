@@ -49,6 +49,11 @@ pub struct Identity {
     pub id: String,
     pub ca: String,
     pub endorsement: String,
+    /// Endorsement v2 (0.2.6, security review S1): the CA's sequence number
+    /// on this stick and K_id's signature that covers it. `None` on an
+    /// identity file written before 0.2.6 (rewritten by `alp-live-tls`).
+    pub seq: Option<u64>,
+    pub endorsement2: Option<String>,
     pub ca_cert: String,
 }
 
@@ -61,6 +66,8 @@ pub fn identity() -> Option<Identity> {
         id: s("id")?,
         ca: s("ca")?,
         endorsement: s("endorsement")?,
+        seq: v["seq"].as_u64(),
+        endorsement2: s("endorsement2"),
         ca_cert: s("ca_cert")?,
     })
 }
@@ -282,7 +289,8 @@ impl Pairing {
                     json!({
                         "state": "approved", "certificate": cert,
                         "ca_cert": ident.as_ref().map(|i| i.ca_cert.clone()),
-                        "identity": ident.map(|i| json!({"id": i.id, "ca": i.ca, "endorsement": i.endorsement})),
+                        "identity": ident.map(|i| json!({"id": i.id, "ca": i.ca, "endorsement": i.endorsement,
+                            "seq": i.seq, "endorsement2": i.endorsement2})),
                     })
                 }
             },
@@ -720,6 +728,8 @@ mod tests {
             id: "ABC".into(),
             ca: "00ff".into(),
             endorsement: String::new(),
+            seq: Some(1),
+            endorsement2: None,
             ca_cert: String::new(),
         };
         let u = pair_uri(

@@ -48,6 +48,12 @@ printf 'alparchive-ca-endorsement-v1\n%s\n%s\n' "$id" "$ca" >msg
 pad=$(( (8 - ${#id} % 8) % 8 )); eq=$(printf '%*s' $pad '' | tr ' ' '=')
 { printf '\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00'; printf '%s%s' "$id" "$eq" | base32 -d; } >kid.der
 openssl pkeyutl -verify -pubin -keyform DER -inkey kid.der -rawin -in msg -sigfile sig >/dev/null 2>&1 && ok "CA endorsement verifies with K_id" || bad "CA endorsement does not verify"
+# Endorsement v2 (T62): the same, with the CA's sequence number signed too.
+seq=$(sed -n 's/.*"seq": *\([0-9][0-9]*\).*/\1/p' <<<"$idj")
+sed -n 's/.*"endorsement2": *"\([^"]*\)".*/\1/p' <<<"$idj" | base64 -d >sig2
+printf 'alparchive-ca-endorsement-v2\n%s\n%s\n%s\n' "$id" "$ca" "$seq" >msg2
+[[ $seq == 1 ]] && openssl pkeyutl -verify -pubin -keyform DER -inkey kid.der -rawin -in msg2 -sigfile sig2 >/dev/null 2>&1 \
+    && ok "CA endorsement v2 verifies with K_id (seq 1)" || bad "CA endorsement v2 does not verify (seq '$seq')"
 sed -n 's/.*"ca_cert": *"\([^"]*\)".*/\1/p' <<<"$idj" | sed 's/\\n/\n/g' >ca.pem
 got=$(openssl x509 -in ca.pem -noout -pubkey | openssl pkey -pubin -outform DER | sha256sum | cut -d' ' -f1)
 [ "$got" = "$ca" ] && ok "CA certificate matches the endorsed hash" || bad "CA hash differs"
