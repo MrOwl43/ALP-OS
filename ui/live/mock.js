@@ -12,7 +12,7 @@
   if (p.get("shot")) document.write('<img src="/__slow" alt="" hidden>');   // QA only: delays the load event so a headless screenshot waits for the screen
   const sl = (ms) => new Promise((r) => setTimeout(r, fast ? 30 : ms));
   const GB = 1e9;
-  const ALL_FEATURES = ["setup_progress", "recovery_commit", "password_change", "events", "gallery_session", "media_import", "natural_scrolling", "media_files", "terminal", "disks", "disk_check", "disk_eject", "status_levels", "prefs", "display_modes", "idle_lock_pref"];
+  const ALL_FEATURES = ["setup_progress", "recovery_commit", "password_change", "events", "gallery_session", "media_import", "natural_scrolling", "media_files", "terminal", "disks", "disk_check", "disk_eject", "status_levels", "prefs", "display_modes", "idle_lock_pref", "clock"];
   const FEATURES = p.get("features") === "none" ? [] : p.get("features") ? p.get("features").split(",") : ALL_FEATURES;
   let failOnce = p.get("fail");
   const E = (key, message, status, extra) => new ApiError(key, message, null, status || 400, extra);
@@ -41,7 +41,7 @@
     immich: { state: "off", error: null, detail: null, seconds_starting: null, console_url: null },
     phone: { server_url: null, account: null, paired: false, phones: 0, photos: 0, last_upload: null, devices: [] },
     chain: { state: "none", chain_id: null, role: null, since: null },
-    features: FEATURES, setup: { complete: false, skipped: [] }, events: [], media: [], import_job: null, prefs: { natural_scrolling: true, ui_scale: null, home_background: "blue" }, display: { width_mm: 309, height_mm: 174, auto_scale: 1.25 }, alerts: [], status: null,
+    features: FEATURES, setup: { complete: false, skipped: [] }, events: [], media: [], import_job: null, prefs: { natural_scrolling: true, ui_scale: null, home_background: "blue", time_zone: null }, clock: { now: 1794650400, synced: !new URLSearchParams(location.search).has("noclock") }, display: { width_mm: 309, height_mm: 174, auto_scale: 1.25 }, alerts: [], status: null,
   });
   const W = base();
   const online = (kind) => { W.network.online = true; W.network.address = "192.168.1.23";
@@ -286,6 +286,7 @@
           if ("natural_scrolling" in body) W.prefs.natural_scrolling = !!body.natural_scrolling;
           if ("ui_scale" in body) W.prefs.ui_scale = body.ui_scale;
           if ("idle_lock_seconds" in body) W.console.idle_lock_seconds = body.idle_lock_seconds;
+          if ("time_zone" in body) W.prefs.time_zone = body.time_zone;
           return { prefs: W.prefs };
         case "GET live/display/modes": await sl(200); return { modes: MODES };
         case "POST live/display/mode": MODES.forEach((m) => (m.current = m.id === body.id)); return { revert_in: 15 };

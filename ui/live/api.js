@@ -71,7 +71,9 @@
       media: Array.isArray(w.media) ? w.media : [],
       importJob: w.import_job || null,
       terminal: w.terminal || null,
-      prefs: { naturalScrolling: (w.prefs || {}).natural_scrolling, uiScale: (w.prefs || {}).ui_scale, homeBackground: (w.prefs || {}).home_background || "blue" },
+      prefs: { naturalScrolling: (w.prefs || {}).natural_scrolling, uiScale: (w.prefs || {}).ui_scale, homeBackground: (w.prefs || {}).home_background || "blue", timeZone: (w.prefs || {}).time_zone || null },
+      // Feature clock: the computer's time (seconds since 1970, UTC) and whether the network set it.
+      clock: w.clock && typeof w.clock.now === "number" ? { now: w.clock.now, synced: !!w.clock.synced } : null,
       // T56: the screen's size and modes when alpd knows them (feature display_modes); width_mm from the screen's EDID.
       display: w.display || null,
       // T54 (feature status_levels): the worst alert and the list; level ok|note|action|now|critical.
