@@ -4,6 +4,19 @@
 Status: contract for UX and QA, 2026-10-19 (lead developer). Changes are
 listed here, newest first, before the code changes.
 
+- 2026-11-14 (0.2.5-test1 field report: Photos could not be shown on the
+  console; the gallery layer of the 0.2.4 plan was never built; additive,
+  feature `gallery_session`):
+  1. `state.immich.gallery_url` is `http://127.0.0.1:8412/` once the photo
+     service is ready and the family account exists, else `null`. nginx
+     serves the web gallery there (loopback only, the delete guard of 443).
+  2. `GET gallery/gate` is for that nginx only (`auth_request`): `200` with
+     the header `X-Alp-Gallery-Key` while the console is signed in, `401`
+     otherwise and for every request that carries `Sec-Fetch-Site` or
+     `Origin` (every browser request). It does not count as use of the
+     console. The browser never holds a credential of the photo service.
+  3. The kiosk may no longer open `http://127.0.0.1:2283` (URL allow-list,
+     `frame-src`).
 - 2026-11-14 (0.2.5-test1 field report: the computer's clock ran ahead of
   the phone's, so its new certificates were "not valid yet" there; additive,
   feature `clock`):
