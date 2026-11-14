@@ -53,6 +53,10 @@ pub struct Prefs {
     /// The screen mode the user kept, with the identity hash of the screen
     /// it was kept on (review N-T56-2): applied only on that screen.
     pub mode: Option<(Mode, String)>,
+    /// The time zone the screen shows times in (a tz database name such as
+    /// "Etc/GMT-2"); None: UTC. Only for display: the system clock and
+    /// everything stored stay in UTC.
+    pub time_zone: Option<String>,
 }
 
 impl Default for Prefs {
@@ -63,8 +67,27 @@ impl Default for Prefs {
             home_background: BACKGROUNDS[0],
             idle_lock_seconds: IDLE_LOCK_DEFAULT,
             mode: None,
+            time_zone: None,
         }
     }
+}
+
+/// `time_zone` from JSON: null is UTC, else a tz database name by its shape
+/// (one to three parts of letters, digits, `_`, `+`, `-`; at most 64 bytes).
+/// The console's browser knows the zones and refuses a name it does not
+/// have; nothing on the server is run or opened with this text.
+fn time_zone_of(v: &Value) -> Option<Option<String>> {
+    if v.is_null() {
+        return Some(None);
+    }
+    let s = v.as_str()?;
+    let part = |p: &str| {
+        !p.is_empty()
+            && p.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'+' | b'-'))
+    };
+    let ok = s.len() <= 64 && s.split('/').count() <= 3 && s.split('/').all(part);
+    ok.then(|| Some(s.to_string()))
 }
 
 /// `ui_scale` from JSON: null is automatic, else one of [`SCALES`].
@@ -124,6 +147,10 @@ impl Prefs {
                 .and_then(idle_lock_of)
                 .unwrap_or(d.idle_lock_seconds),
             mode: v.get("mode").and_then(mode_of),
+            time_zone: v
+                .get("time_zone")
+                .and_then(time_zone_of)
+                .unwrap_or(d.time_zone),
         }
     }
 
@@ -134,6 +161,7 @@ impl Prefs {
             "ui_scale": self.ui_scale.map(|s| f64::from(s) / 100.0),
             "home_background": self.home_background,
             "idle_lock_seconds": self.idle_lock_seconds,
+            "time_zone": self.time_zone,
         })
     }
 
@@ -171,6 +199,10 @@ impl Prefs {
                 "idle_lock_seconds" => {
                     next.idle_lock_seconds = idle_lock_of(v)
                         .ok_or("\"idle_lock_seconds\" must be 60, 300, 900 or 1800.")?;
+                }
+                "time_zone" => {
+                    next.time_zone =
+                        time_zone_of(v).ok_or("\"time_zone\" must be a time zone name or null.")?;
                 }
                 _ => return Err("The request has a setting that does not exist.".into()),
             }
@@ -219,8 +251,20 @@ mod tests {
         assert_eq!(
             p.json(),
             json!({"natural_scrolling": true, "ui_scale": null, "home_background": "blue",
-                   "idle_lock_seconds": 300})
+                   "idle_lock_seconds": 300, "time_zone": null})
         );
+        // A time zone is taken by its shape only; null goes back to UTC.
+        p.apply(&json!({"time_zone": "Etc/GMT-2"})).unwrap();
+        assert_eq!(p.json()["time_zone"], "Etc/GMT-2");
+        for bad in ["", "/etc/passwd", "a/../b", "a b", "a/b/c/d", "x;y"] {
+            assert!(p.apply(&json!({"time_zone": bad})).is_err(), "{bad}");
+        }
+        assert!(p.apply(&json!({"time_zone": "z".repeat(65)})).is_err());
+        assert!(p.apply(&json!({"time_zone": 2})).is_err());
+        assert_eq!(p.time_zone.as_deref(), Some("Etc/GMT-2"));
+        assert_eq!(Prefs::parse(r#"{"time_zone": "../x"}"#).time_zone, None);
+        p.apply(&json!({"time_zone": null})).unwrap();
+        assert_eq!(p.time_zone, None);
         p.apply(&json!({"ui_scale": 1.5})).unwrap();
         assert_eq!(p.ui_scale, Some(150));
         assert_eq!(p.json()["ui_scale"], 1.5);

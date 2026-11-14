@@ -2035,6 +2035,7 @@ impl Live {
             // only the flows it has: two-step recovery code (T42).
             "features": features(),
             "prefs": lock(&self.prefs).json(),
+            "clock": clock_json(),
             "display": display::state_json(),
             // Never the session's address (plan, build note 3).
             "terminal": live_terminal::state_json(),
@@ -3609,6 +3610,7 @@ const FEATURES: &[&str] = &[
     "prefs",
     "idle_lock_pref",
     "media_files",
+    "clock",
 ];
 
 /// [`FEATURES`], plus `display_modes` when the image has `wlr-randr` and
@@ -3851,7 +3853,21 @@ fn connection_check() -> Value {
         })
         .unwrap_or_default();
     v["refused_requests"] = json!(refused);
+    v["clock"] = clock_json();
     v
+}
+
+/// `state.clock` (feature `clock`): the computer's time in seconds since
+/// 1970 (UTC) and whether it was set from the network. systemd-timesyncd
+/// touches this file on each successful synchronisation
+/// (systemd-timesyncd.service(8), FILES); /run is empty at every start.
+/// A clock that was not set this way can be hours off (a hardware clock
+/// kept in local time is read as UTC): the 0.2.5-test1 field report.
+fn clock_json() -> Value {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    json!({"now": now, "synced": Path::new("/run/systemd/timesync/synchronized").exists()})
 }
 
 #[cfg(test)]
@@ -4728,6 +4744,17 @@ mod tests {
         assert!(st["display"]["auto_scale"].is_number());
         let f = st["features"].as_array().unwrap();
         assert!(f.contains(&json!("prefs")) && f.contains(&json!("status_levels")));
+        // The clock: a plausible time and whether the network set it.
+        assert!(f.contains(&json!("clock")));
+        assert!(st["clock"]["now"].as_u64().unwrap() > 1_700_000_000);
+        assert!(st["clock"]["synced"].is_boolean());
+        assert_eq!(st["prefs"]["time_zone"], Value::Null);
+        let (s, r) = call(&l, "POST", "prefs", r#"{"time_zone": "Etc/GMT-2"}"#);
+        assert_eq!((s, &r["prefs"]["time_zone"]), (200, &json!("Etc/GMT-2")));
+        assert_eq!(
+            key(&call(&l, "POST", "prefs", r#"{"time_zone": "../x"}"#)),
+            (422, Some("prefs.invalid"))
+        );
         let (s, r) = call(&l, "POST", "prefs", r#"{"ui_scale": 1.25}"#);
         assert_eq!((s, &r["prefs"]["ui_scale"]), (200, &json!(1.25)));
         assert_eq!(prefs::Prefs::load_from(&l.prefs_file).ui_scale, Some(125));
