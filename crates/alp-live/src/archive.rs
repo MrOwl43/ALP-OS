@@ -49,6 +49,43 @@ pub fn set_setup_done() -> Result<(), String> {
 /// Forget it (reset everything: the next start is a first start).
 pub fn clear_setup_done() {
     let _ = fs::remove_file(SETUP_DONE);
+    let _ = fs::remove_file(SETUP_SKIPPED);
+}
+const SETUP_SKIPPED: &str = "/var/lib/alp/live/setup-skipped";
+/// The setup steps that can be put off (T09).
+pub const SETUP_STEPS: &[&str] = &["network", "password", "where", "recovery", "phone"];
+
+/// A list of skipped setup steps, checked: known names only, each once,
+/// in the order of the steps. `None` when a name is unknown.
+pub fn setup_steps_of<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<Vec<&'static str>> {
+    let mut seen = [false; SETUP_STEPS.len()];
+    for n in names {
+        seen[SETUP_STEPS.iter().position(|s| *s == n)?] = true;
+    }
+    Some(
+        SETUP_STEPS
+            .iter()
+            .zip(seen)
+            .filter(|(_, on)| *on)
+            .map(|(s, _)| *s)
+            .collect(),
+    )
+}
+
+/// The setup steps put off on this stick. A missing or damaged file is an
+/// empty list: the steps are then simply offered again.
+pub fn setup_skipped() -> Vec<&'static str> {
+    fs::read_to_string(SETUP_SKIPPED)
+        .ok()
+        .and_then(|t| setup_steps_of(t.lines().filter(|l| !l.is_empty())))
+        .unwrap_or_default()
+}
+
+/// Keep the list (written atomically, synced).
+pub fn set_setup_skipped(steps: &[&str]) -> Result<(), String> {
+    let mut text = steps.join("\n");
+    text.push('\n');
+    write_atomic(SETUP_SKIPPED, &text)
 }
 const HOST_MNT: &str = "/run/alp/host";
 const PROBE_MNT: &str = "/run/alp/probe";
