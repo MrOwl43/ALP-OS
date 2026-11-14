@@ -4,6 +4,13 @@
 Status: contract for UX and QA, 2026-10-19 (lead developer). Changes are
 listed here, newest first, before the code changes.
 
+- 2026-11-14 (T62, security review S1; additive): the identity at
+  `/.well-known/alparchive/identity` and in `pair/v1/status` (approved)
+  gains `seq` (the CA's number on this stick, from 1, one more for every
+  new CA) and `endorsement2`: K_id's Ed25519 signature (base64) over
+  `"alparchive-ca-endorsement-v2\n<id>\n<ca>\n<seq>\n"`. `v` stays 1 and
+  `endorsement` (v1) stays while phones with the first app are in use. A
+  phone keeps the highest `seq` it has seen and refuses a lower one.
 - 2026-11-14 (T63, security review B3; no API change): once a day, while
   the clock was set from the network (`clock.synced`), alpd signs out phone
   sessions the photo service has not seen for 60 days and writes each
