@@ -4,6 +4,16 @@
 Status: contract for UX and QA, 2026-10-19 (lead developer). Changes are
 listed here, newest first, before the code changes.
 
+- 2026-11-14 (T09, the rest; additive, feature `setup_progress`):
+  `POST setup/progress {complete?: true, skipped?: [..]}` answers
+  `{setup}`. `skipped` replaces the kept list; each name is one of
+  `network`, `password`, `where`, `recovery`, `phone` (anything else:
+  `422 setup.invalid`, nothing changes). `complete: true` is the same as
+  `setup/finish`; it cannot be taken back except by Start over. `state.setup`
+  becomes `{finished, complete, skipped}` (`complete` equals `finished`). The
+  list is kept on the stick in `/var/lib/alp/live/setup-skipped` (written
+  atomically, checked again when read); Start over removes it. Allowed
+  exactly where `setup/finish` is allowed.
 - 2026-11-14 (T62, security review S1; additive): the identity at
   `/.well-known/alparchive/identity` and in `pair/v1/status` (approved)
   gains `seq` (the CA's number on this stick, from 1, one more for every
