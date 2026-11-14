@@ -602,12 +602,16 @@
   function welcome() {
     show("welcome", (card) => {
       const list = h("ul", { class: "checks" }), notes = h("div", { class: "notes" }), tech = h("dl", { class: "specs" }), net0 = S.net.online + "|" + S.net.kind;
+      let netRow = null;
       S.hw.checks.forEach((c, i) => {
         const k = c.id || slug(c.item), name = T["hw.item." + k] ? t("hw.item." + k) : c.item, delay = "animation-delay:" + (0.25 + i * 0.25) + "s";
         tech.append(h("dt", {}, name), h("dd", {}, [c.status, c.value].filter(Boolean).join(" · ")));
         if (k === "wired_network" || k === "network") {
-          const n = netCheck(S);
-          list.append(h("li", { style: delay }, legendIcon(n.level), iconEl(n.icon), h("span", { class: "name" }, h("span", {}, name), h("span", { class: "fine" }, n.sub)), h("span", { class: "state" }, n.value)));
+          // Owner, 0.2.5-test1: the network line comes last; with no network it offers Wi-Fi right there
+          // (the next step is the network screen while there is none).
+          const n = netCheck(S), delayN = "animation-delay:" + (0.25 + (S.hw.checks.length - 1) * 0.25) + "s";
+          const join = !S.net.online && S.net.wifiPresent ? h("button", { class: "secondary", type: "button", "data-ico": "wifi", onclick: () => { L.welcomed = true; L.skip.network = false; goNext(); } }, t("hw.net.connect")) : null;
+          netRow = h("li", { style: delayN }, legendIcon(n.level), iconEl(n.icon), h("span", { class: "name" }, h("span", {}, name), h("span", { class: "fine" }, n.sub)), join || h("span", { class: "state" }, n.value));
           return;
         }
         list.append(h("li", { style: delay },
@@ -615,6 +619,7 @@
           h("span", { class: "state" }, c.status !== "ok" && c.value && c.value.length < 14 ? c.value : t("hw." + c.status))));
         if (c.status === "note") notes.append(h("p", {}, T["hw.note." + k] ? t("hw.note." + k) : c.advice || ""));
       });
+      if (netRow) list.append(netRow);
       // alpd answers before its hardware check is done (T28): show that it runs, then redraw.
       const pending = S.hw.pending;
       if (pending) list.append(h("li", {}, iconEl("refresh"), h("span", { class: "name" }, t("hw.checking"))));

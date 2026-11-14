@@ -445,6 +445,9 @@ body[data-kind=full] .card > .hero, body[data-kind=full] .card .actions { margin
 body[data-view=home] .card { text-align: center; } body[data-view=home] .card .actions, body[data-view=home] .menu { align-items: center; justify-content: center; }
 body[data-kind=full] .sub { margin-inline: 0; }
 body[data-view=home] .sub { margin-inline: auto; }
+/* Photos without a gallery to show (not ready, starting, off): one centred message, like the home screen. */
+body[data-kind=full] .card.galempty .sub { margin-inline: auto; }
+body[data-kind=full] .card.galempty .actions, body[data-kind=full] .card.galempty .hero { align-items: center; margin-inline: auto; }
 
 /* settings: sidebar 260px + content */
 .settings { display: grid; grid-template-columns: 260px 1fr; gap: 32px; align-items: start; margin: calc(-1 * var(--gut)); min-block-size: calc(calc(100 * var(--vh)) - var(--bar)); }
