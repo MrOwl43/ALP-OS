@@ -1,6 +1,6 @@
 {
   "URLBlocklist": ["*"],
-  "URLAllowlist": ["http://127.0.0.1:8411", "http://localhost:8412", "http://127.0.0.1:2283", "http://127.0.0.1:8413"],
+  "URLAllowlist": ["http://127.0.0.1:8411", "http://127.0.0.1:8412", "http://127.0.0.1:8413"],
   "DeveloperToolsAvailability": 2,
   "DownloadRestrictions": 3,
   "AllowFileSelectionDialogs": false,

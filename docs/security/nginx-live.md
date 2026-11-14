@@ -139,3 +139,28 @@ If the beta serves Immich's web UI to the kiosk through nginx, add a second
 server block `listen 127.0.0.1:8412; listen [::1]:8412;` without TLS, with
 the same `$alp_deny` guard and `location /` proxied. Not added now because
 alpd may own 8412, and a port clash would stop nginx and phone backup.
+
+## The console's gallery on 127.0.0.1:8412 (0.2.6)
+
+- A second server in the same nginx, bound to loopback only; nftables drops
+  8412 from the network and from the Terminal user.
+- Its own origin: pages of the photo service's web gallery can never call
+  the console API on 8411 (alpd refuses `Sec-Fetch-Site: same-site`).
+- The same delete guard as on 443; the page's own sign-in and sign-out
+  routes are refused.
+- No credential in the browser. For each `/api/` request nginx asks alpd
+  (`auth_request` to `GET gallery/gate`) with the console's cookie; while
+  the console is signed in alpd answers with the family account's key and
+  nginx adds it as `x-api-key`. Everything the page sends that could choose
+  another account (cookies, bearer, session and share headers) is dropped,
+  and the photo service's `Set-Cookie` is hidden.
+- alpd refuses the gate to every browser request (`Sec-Fetch-Site` or
+  `Origin` present), so a page cannot read the key from alpd either.
+- Locking the console (or the idle lock) closes the gallery at once; there
+  is no session to end and no file to remove.
+- The kiosk can no longer open the photo service's own port 2283 (URL
+  allow-list and `frame-src`), which passed by the delete guard.
+- Test: T-GAL-01 in `tests/vm/t-immich-01.sh`.
+- Open for the security review: the earlier condition asked for a session
+  token in an HttpOnly cookie; this design keeps the credential out of the
+  browser entirely and uses the family account's existing key instead.
