@@ -205,6 +205,9 @@ pair02() { # base, immich token
     [[ $san == *"IPAddress:$sip"* && $san == *'conn="ok":true'* ]] \
         || { echo "FAIL: T-PAIR-SAN: the certificate sent does not name $sip, or phone/connection is not ok ($san)" >&2; return 1; }
     echo "ok:   T-PAIR-SAN: a stale nginx certificate is replaced before the QR; it names $sip"
+    [[ $san == *" back=yes "* ]] \
+        || { echo "FAIL: T-PAIR-CLOCK: the CA or the certificate sent does not start a day back ($san)" >&2; return 1; }
+    echo "ok:   T-PAIR-CLOCK: the CA and the server certificate start a day before the computer's time"
 }
 export -f pair02
 export -f hook
@@ -252,7 +255,13 @@ opened=\$(c -X POST \$A/pair/open -d '{}' | grep -c '"uri"')
 after=\$(leaf | fp)
 names=\$(leaf | openssl x509 -noout -ext subjectAltName 2>/dev/null | tr -d ' \n')
 conn=\$(c \$A/phone/connection | tr -d ' \n' | grep -o '"ok":[a-z]*' | head -n 1)
-say "SAN ip=\$ip file=\$file stale=\$stale after=\$after opened=\$opened conn=\$conn names=\$names"
+# T-PAIR-CLOCK (0.2.5-test1 field report): a computer clock ahead of the
+# phone's made the certificates "not valid yet" there. Both must start at
+# least 23 hours before the guest's own time.
+age() { echo \$(( \$(date +%s) - \$(date -d "\$(openssl x509 -noout -startdate 2>/dev/null | cut -d= -f2)" +%s) )); }
+back=no
+[ "\$(age <\$tls/ca.crt)" -ge 82800 ] && [ "\$(leaf | age)" -ge 82800 ] && back=yes
+say "SAN ip=\$ip file=\$file stale=\$stale after=\$after opened=\$opened conn=\$conn back=\$back names=\$names"
 AGENT
 agent_b64=$(base64 -w0 <<<"$agent")
 
