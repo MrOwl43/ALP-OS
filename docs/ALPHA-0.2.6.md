@@ -24,6 +24,9 @@ items of the phone security backlog.
   itself. The browser holds no password or key: nginx asks alpd for every
   request, and alpd answers only while the console is signed in. Signing in,
   signing out and changing the password through the gallery are blocked.
+- **"My phone cannot connect" checks the connection.** It shows, in plain
+  lines, the computer's address, whether the part that answers phones runs,
+  whether the certificate matches each address, and the state of the clock.
 - **Skipped setup steps are remembered.** A step put off in setup stays put
   off after a restart, and its reminder stays on the home screen.
 - **Phone sign-ins not used for 60 days are removed**, once a day, and the

@@ -698,3 +698,10 @@ body[data-view=home] .lv .lv-ico, body[data-view=home] .tbtn.lvb .lv-action .lv-
 .fmtcol { max-inline-size: 720px; margin-inline: auto; text-align: start; } .fmtcol .hero { margin-inline: 0; } .fmtcol .fmt-rescue { justify-content: flex-start; }
 .fmtcol .field { margin-inline: 0; } .fmtcol .actions { justify-content: flex-start; }
 .homelv { margin-block-end: 12px; } .homelv .lv { gap: 8px; }
+
+/* Connection check lines under "My phone cannot connect" (0.2.6). */
+.connlines { list-style: none; margin: .7rem 0 0; padding: 0; display: grid; gap: .35rem; font-size: .92em; }
+.connlines li { display: flex; gap: .5rem; align-items: flex-start; }
+.connlines .ico { flex: none; inline-size: 1.15rem; block-size: 1.15rem; margin-block-start: .1rem; }
+.connlines li.ok .ico { color: var(--ok, #1a7f4b); }
+.connlines li.bad .ico.bang { color: var(--bad, #b3261e); font-weight: 700; text-align: center; line-height: 1.15rem; }
