@@ -4,6 +4,19 @@
 Status: contract for UX and QA, 2026-10-19 (lead developer). Changes are
 listed here, newest first, before the code changes.
 
+- 2026-11-14 (0.2.5-test1 field report: the computer's clock ran ahead of
+  the phone's, so its new certificates were "not valid yet" there; additive,
+  feature `clock`):
+  1. `state.clock` is `{now, synced}`: `now` is the computer's time in
+     seconds since 1970 (UTC); `synced` is true once the clock was set from
+     the network in this start (systemd-timesyncd). `GET phone/connection`
+     carries the same `clock` block.
+  2. `state.prefs.time_zone` is a tz database name or `null` (UTC), set
+     through `POST live/prefs`. Only the console shows times in it; the
+     system clock and everything stored stay in UTC. A value that is not
+     shaped like a zone name gets `422 prefs.invalid`.
+  3. `alp-live-tls` starts the CA and the server certificate one day before
+     the computer's time (no API change).
 - 2026-11-08 (0.2.5 field report: phone refused the certificate; additive):
   1. `POST pair/open` refuses with `pair.certificate_not_served` (plain
      message) while nginx does not yet send a certificate naming every
