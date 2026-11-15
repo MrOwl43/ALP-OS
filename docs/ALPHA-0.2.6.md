@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-# ALP-OS Live alpha 0.2.6 (draft, not released yet)
+# ALP-OS Live alpha 0.2.6 (2026-11-15)
 
 File: `ALP-OS-Live-alpha-0.2.6.img.xz` on the GitHub pre-release
 `alpha-0.2.6`, built by CI from `live-alpha`. The SHA-256 is in the

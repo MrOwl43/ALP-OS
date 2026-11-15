@@ -31,7 +31,7 @@
         graphics: [{ vendor: "Intel", pci_id: "8086:46a3" }],
         network: [{ name: "wlan0", kind: "wifi", driver: "iwlwifi", usb: false, working: true }, { name: "enx00e04c680001", kind: "wired", driver: "r8152", usb: true, working: true }],
         tpm: "2.0", uefi: true, secure_boot: false, battery: { model: "L20M4PC1", health_percent: 91 } } },
-    system: { release: "ALP-OS Live alpha 0.2.6", build: "0650152a1b2c 2026-10-30", battery: p.get("battery") === "none" ? null : p.get("battery") === "low" ? { percent: 12, charging: false } : { percent: 76, charging: p.get("battery") === "charging" } },
+    system: { release: "ALP-OS Live alpha 0.2.61", build: "0650152a1b2c 2026-10-30", battery: p.get("battery") === "none" ? null : p.get("battery") === "low" ? { percent: 12, charging: false } : { percent: 76, charging: p.get("battery") === "charging" } },
     power: { state: "on", job: null },
     lock: { state: "open", retry_after_seconds: 0, tpm: "on", protection: p.get("protection") || "password" },
     console: { state: "open", idle_lock_seconds: p.get("idle") ? +p.get("idle") : 300 },

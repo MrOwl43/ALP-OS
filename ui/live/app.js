@@ -70,6 +70,7 @@
     print: SV('<path d="M7 9V3.5h10V9"/><rect x="3.5" y="9" width="17" height="7.5" rx="2"/><path d="M7 14h10v6.5H7z"/>'),
     eye: SV('<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
     chip: SV('<rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx=".8"/><path d="M9 2.5V6M15 2.5V6M9 18v3.5M15 18v3.5M2.5 9H6M2.5 15H6M18 9h3.5M18 15h3.5"/>'),
+    clock: SV('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/>'),
     screen: SV('<rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8.5 21h7M12 17v4"/>'),
     wrench: SV('<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3.5 17.5l3 3 5.8-5.8a4 4 0 0 0 5.4-5.4l-2.4 2.4-2.4-.6-.6-2.4z"/>'),
     folder: SV('<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H10l2 2.5h7.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/>'),
@@ -633,6 +634,10 @@
           h("span", { class: "state" }, c.status !== "ok" && c.value && c.value.length < 14 ? c.value : t("hw." + c.status))));
         if (c.status === "note") notes.append(h("p", {}, T["hw.note." + k] ? t("hw.note." + k) : c.advice || ""));
       });
+      // Owner, 0.2.6 field test: the time and its zone are set right at the start of setup.
+      if (has("clock") && S.clock && has("prefs")) list.append(h("li", { class: "clockrow" }, legendIcon(S.clock.synced ? "ok" : "note"), iconEl("clock"),
+        h("span", { class: "name" }, h("span", {}, t("set.clock")), h("span", { class: "fine" }, clockText(S, true) + (S.clock.synced ? "" : " · " + t("clock.unsure")))),
+        zoneMenu(() => route(true), (e) => Errs.add({ level: "warn", text: t("err.generic"), code: e.code, key: e.key }))));
       if (netRow) list.append(netRow);
       // alpd answers before its hardware check is done (T28): show that it runs, then redraw.
       const pending = S.hw.pending;
@@ -1904,7 +1909,7 @@
   // two grey lines that say what it does for the person now, and one control.
   function deviceLine(d) { return [d.name || t("dev.unknown"), d.os].filter(Boolean).join(" · "); }
   const SET_CATS = [["phones", "phone", "blue"], ["password", "key", "red"], ["disk", "disk", "green"], ["chain", "elephant", "gold"], ["network", "wifi", "sky"],
-    ["display", "screen", "purple"], ["power", "power", "grey"], ["about", "logo", "black"], ["advanced", "wrench", "slate"]];
+    ["display", "screen", "purple"], ["time", "clock", "teal"], ["power", "power", "grey"], ["about", "logo", "black"], ["advanced", "wrench", "slate"]];
   function openSettings(cat) { L.setCat = cat; if (current && current.name === "settings") route(true); else navigate("settings"); }
   // T26: Advanced asks for the ALP password once; the permission ends after 10 minutes without use.
   let advancedUntil = 0;
@@ -2010,16 +2015,19 @@
               choiceMenu(t("set.lockafter"), [60, 300, 900, 1800].map((v) => ({ value: v, text: t("set.lockafter.min", { n: v / 60 }) })), S.console.idle,
                 async (v) => { try { await alp.setPrefs({ idle_lock_seconds: v }); await refresh(); openSettings("display"); } catch (e) { fail(e); } }))
               : row(t("set.lockafter"), t("set.lockafter.d", { n: Math.round(S.console.idle / 60) })),
-            // Feature clock: the time as the computer has it, whether the network set it, and the zone times are shown in.
-            has("clock") && S.clock ? row(t("set.clock"), clockText(S, true) + ". " + t(S.clock.synced ? "set.clock.synced" : "set.clock.unsure"),
-              choiceMenu(t("set.zone"), zoneOptions(), S.prefs.timeZone,
-                async (v) => { try { await alp.setPrefs({ time_zone: v }); await refresh(); openSettings("display"); } catch (e) { fail(e); } })) : null,
             has("natural_scrolling") ? row(t("set.natural"), t("set.natural.d"), sw(S.prefs.naturalScrolling !== false, t("set.natural"), async (i) => { try { await alp.setPrefs({ natural_scrolling: i.checked }); await refresh(); } catch (e) { i.checked = !i.checked; fail(e); } })) : null,
             row([iconEl("textsize"), t("set.size")], t("set.size.d"), size),
             modes ? row([iconEl("screen"), t("set.res")], t("set.res.d"), modes) : null,
             // T53: the home background picker; only the default until the curated pictures ship in the image.
             row([iconEl("gallery"), t("set.homebg")], t("set.homebg.d"), h("div", { class: "bgpick", role: "radiogroup", "aria-label": t("set.homebg") },
               h("button", { type: "button", role: "radio", "aria-checked": "true", class: "bgthumb on", title: t("bg.blue") }, h("span", { class: "bgsw blue" }), h("span", {}, t("bg.blue"))))))];
+        },
+        // Owner, 0.2.6 field test: time has its own category, with the language (English only for now).
+        time() {
+          return [group(
+            has("clock") && S.clock ? row([iconEl("clock"), t("set.clock")], clockText(S, true) + ". " + t(S.clock.synced ? "set.clock.synced" : "set.clock.unsure")) : null,
+            has("clock") ? row(t("set.zone"), t("set.zone.d"), zoneMenu(() => openSettings("time"), fail)) : null),
+            group(row(t("set.lang"), t("set.lang.d"), h("span", { class: "state" }, t("lang.en"))))];
         },
         power() {
           const b = S.sys.battery;
@@ -2089,6 +2097,11 @@
     try { names = Intl.supportedValuesOf("timeZone"); } catch { names = []; }
     const off = (z) => { try { return new Intl.DateTimeFormat("en", { timeZone: z, timeZoneName: "shortOffset" }).formatToParts(new Date(S.clock.now * 1000)).find((x) => x.type === "timeZoneName").value.replace("GMT", "UTC"); } catch { return ""; } };
     return [{ value: null, text: "UTC" }].concat(names.map((z) => ({ value: z, text: z.replace(/_/g, " "), hint: off(z) })));
+  }
+  // The time zone picker (Settings > Time & Language, and the first setup screen).
+  function zoneMenu(done, fail) {
+    return choiceMenu(t("set.zone"), zoneOptions(), S.prefs.timeZone,
+      async (v) => { try { await alp.setPrefs({ time_zone: v }); await refresh(); done(); } catch (e) { fail(e); } });
   }
   function choiceMenu(label, options, value, onPick) {
     const cur = () => options.find((o) => o.value === value) || options[0] || { text: "" };

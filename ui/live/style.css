@@ -705,3 +705,7 @@ body[data-view=home] .lv .lv-ico, body[data-view=home] .tbtn.lvb .lv-action .lv-
 .connlines .ico { flex: none; inline-size: 1.15rem; block-size: 1.15rem; margin-block-start: .1rem; }
 .connlines li.ok .ico { color: var(--ok, #1a7f4b); }
 .connlines li.bad .ico.bang { color: var(--bad, #b3261e); font-weight: 700; text-align: center; line-height: 1.15rem; }
+
+/* Time & Language (0.2.61). */
+.sq-teal { background: #0f9d94; }
+.checks li.clockrow .choicemenu { margin-inline-start: auto; }
