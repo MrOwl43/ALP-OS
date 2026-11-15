@@ -12,7 +12,7 @@
   if (p.get("shot")) document.write('<img src="/__slow" alt="" hidden>');   // QA only: delays the load event so a headless screenshot waits for the screen
   const sl = (ms) => new Promise((r) => setTimeout(r, fast ? 30 : ms));
   const GB = 1e9;
-  const ALL_FEATURES = ["setup_progress", "recovery_commit", "password_change", "events", "gallery_session", "media_import", "natural_scrolling", "media_files", "terminal", "disks", "disk_check", "disk_eject", "status_levels", "prefs", "display_modes", "idle_lock_pref", "clock", "connection_check"];
+  const ALL_FEATURES = ["setup_progress", "recovery_commit", "password_change", "events", "gallery_session", "media_import", "natural_scrolling", "media_files", "terminal", "disks", "disk_check", "disk_eject", "status_levels", "prefs", "display_modes", "idle_lock_pref", "clock", "connection_check", "clock_sync", "clock_base", "lock_hide"];
   const FEATURES = p.get("features") === "none" ? [] : p.get("features") ? p.get("features").split(",") : ALL_FEATURES;
   let failOnce = p.get("fail");
   const E = (key, message, status, extra) => new ApiError(key, message, null, status || 400, extra);
@@ -41,7 +41,7 @@
     immich: { state: "off", error: null, detail: null, seconds_starting: null, console_url: null },
     phone: { server_url: null, account: null, paired: false, phones: 0, photos: 0, last_upload: null, devices: [] },
     chain: { state: "none", chain_id: null, role: null, since: null },
-    features: FEATURES, setup: { complete: false, skipped: [] }, events: [], media: [], import_job: null, prefs: { natural_scrolling: true, ui_scale: null, home_background: "blue", time_zone: null }, clock: { now: 1794650400, synced: !new URLSearchParams(location.search).has("noclock") }, display: { width_mm: 309, height_mm: 174, auto_scale: 1.25 }, alerts: [], status: null,
+    features: FEATURES, setup: { complete: false, skipped: [] }, events: [], media: [], import_job: null, prefs: { natural_scrolling: true, ui_scale: null, home_background: "blue", time_zone: null, lock_hide: (new URLSearchParams(location.search).get("hide") || "").split(",").filter(Boolean) }, clock: { now: 1794650400, synced: !new URLSearchParams(location.search).has("noclock"), synced_at: new URLSearchParams(location.search).has("noclock") ? null : 1794650000, base: null }, display: { width_mm: 309, height_mm: 174, auto_scale: 1.25 }, alerts: [], status: null,
   });
   const W = base();
   const online = (kind) => { W.network.online = true; W.network.address = "192.168.1.23";
@@ -185,7 +185,15 @@
       switch (method + " " + path) {
         case "GET live/state":
           if (offStart && Date.now() - offStart > (fast ? 900 : 9000)) throw new ApiError("api.unreachable", "", null, 0);
-          return JSON.parse(JSON.stringify(W));
+          { const v = JSON.parse(JSON.stringify(W));
+            if (v.console.state === "locked") {   // like alpd's locked view: what the person hides is not sent at all
+              const hd = v.prefs.lock_hide || []; v.console.hidden = hd;
+              if (hd.includes("phones")) { v.phone.devices = []; v.phone.phones = 0; }
+              if (hd.includes("network")) ((v.network || {}).ports || []).forEach((x) => { x.ssid = null; });
+              if (hd.includes("space")) { v.archive.free_bytes = null; v.archive.size_bytes = null; }
+              if (hd.includes("backup")) { v.phone.photos = 0; v.phone.last_upload = null; }
+            }
+            return v; }
         case "GET live/wifi/networks": await sl(900); return { networks: [
           { ssid: "Home-Fiber-5G", security: "psk", signal: 4, connected: false }, { ssid: "Neighbor-2.4G", security: "psk", signal: 3, connected: false },
           { ssid: "Neighbour_2.4", security: "psk", signal: 2, connected: false }, { ssid: "Cafe Guest", security: "open", signal: 1, connected: false },
@@ -287,7 +295,16 @@
           if ("ui_scale" in body) W.prefs.ui_scale = body.ui_scale;
           if ("idle_lock_seconds" in body) W.console.idle_lock_seconds = body.idle_lock_seconds;
           if ("time_zone" in body) W.prefs.time_zone = body.time_zone;
+          if ("lock_hide" in body) W.prefs.lock_hide = body.lock_hide;
           return { prefs: W.prefs };
+        case "POST live/clock/sync": await sl(300);
+          if (p.get("sync") !== "fail") setTimeout(() => { W.clock.synced = true; W.clock.synced_at = (W.clock.synced_at || W.clock.now) + 60; W.clock.base = null; }, fast ? 60 : 1500);
+          return { clock: W.clock };
+        case "POST live/clock/base":
+          if (W.clock.synced) throw E("clock.synced", "The clock is already set from the internet.", 409);
+          if (body.local && !W.prefs.time_zone) throw E("clock.no_zone", "Choose a time zone first.", 409);
+          W.clock.base = body.local ? "local" : "utc"; (window.__clockBase = window.__clockBase || []).push(!!body.local);
+          return { clock: W.clock, prefs: W.prefs };
         case "GET live/display/modes": await sl(200); return { modes: MODES };
         case "POST live/display/mode": MODES.forEach((m) => (m.current = m.id === body.id)); return { revert_in: 15 };
         case "POST live/display/mode/keep": return {};

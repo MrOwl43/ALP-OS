@@ -23,7 +23,7 @@ used = set(re.findall(r'\bt\("([a-z0-9_.]+)"', src))
 used |= set(re.findall(r'(?:Key|key|reason|hint|slowKey)\s*\(?\s*"([a-z][a-z0-9_]*\.[a-z0-9_.]+)"', src))
 # Keys built from a prefix at run time: every value must exist.
 dynamic = {
-    "cat.": ["phones", "password", "disk", "chain", "network", "display", "power", "about", "advanced"],
+    "cat.": ["phones", "password", "disk", "chain", "network", "display", "time", "power", "about", "advanced"],
     "bar.": ["gallery", "settings", "computer", "disks", "admin", "import", "format"],
     "step.": [str(i) for i in range(1, 8)],
     "about.protection.": ["none", "console", "password", "strong"],
@@ -34,6 +34,8 @@ dynamic = {
     "lv.": ["ok", "note", "action", "now", "critical"],
     "lv.word.": ["action", "now", "critical"],
     "crit.paused.what.": ["import", "delete"],
+    "lock.what.": ["phones", "network", "space", "backup"],
+    "set.lockshow.": ["phones", "network", "space", "backup", "phones.d", "network.d", "space.d", "backup.d"],
 }
 for pre, vals in dynamic.items():
     used |= {pre + v for v in vals}
