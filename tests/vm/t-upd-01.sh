@@ -2,10 +2,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # T-UPD-01: the stick's layout for updates in place (ADR 0026, step 1 of
 # docs/plans/live-update.md). Two first starts:
-#   a 32 GiB stick gets two empty root slots (with their verity slots) before
-#   the index, and the system it was written with is untouched;
-#   an 8 GiB stick gets no slots: all its room stays for the index.
-# Also says whether systemd-sysupdate is in the image (the next step needs it).
+#   a 32 GiB stick gets two empty root slots (with their verity slots) and the
+#   alp-boot partition (FAT, for the start files of new versions) before the
+#   index, and the system it was written with is untouched;
+#   an 8 GiB stick gets none of them: all its room stays for the index.
+# Also: systemd-sysupdate is in the image, its timers are off, the image
+# knows its version, and an image without the project's update key accepts
+# no update.
 #
 # Usage: tests/vm/t-upd-01.sh <disk-image>
 set -euo pipefail
@@ -20,9 +23,9 @@ trap 'rm -rf "$work"' EXIT
 origin=http://127.0.0.1:8411
 probe="-/bin/bash -c 'exec 3<>/dev/tcp/127.0.0.1/8411 && echo API-LISTENING || echo API-NOT-LISTENING'
 $(QA_HTTP_TIMEOUT=120 qa_http_probe SETUP POST /api/v1/live/password/setup "$origin" '{"password":"alpha-test-password-4"}')
--/bin/bash -c 'echo PARTS-BEGIN; lsblk -rno PARTLABEL,SIZE,PARTTYPE \$(lsblk -rno PKNAME \$(findmnt -no SOURCE /var/lib/alp) | head -n 1); echo PARTS-END'
--/bin/bash -c 'ls /usr/lib/systemd/systemd-sysupdate >/dev/null 2>&1 && echo SYSUPDATE-yes || echo SYSUPDATE-no; systemctl is-system-running; findmnt -no SOURCE /'"
-
+-/bin/bash -c 'echo PARTS-BEGIN; lsblk -rno PARTLABEL,SIZE,FSTYPE /dev/\$(lsblk -rno PKNAME \$(findmnt -no SOURCE /var/lib/alp) | head -n 1); echo PARTS-END'
+-/bin/bash -c 'ls /usr/lib/systemd/systemd-sysupdate /usr/lib/systemd/systemd-pull >/dev/null 2>&1 && echo SYSUPDATE-yes || echo SYSUPDATE-no; echo TIMERS-\$(systemctl is-enabled systemd-sysupdate.timer systemd-sysupdate-reboot.timer systemd-bless-boot.service 2>&1 | paste -sd- -); echo \$(grep ^IMAGE_VERSION= /usr/lib/os-release || echo IMAGE_VERSION=none); echo KEYRING-\$(stat -c %s /usr/lib/systemd/import-pubring.gpg)'
+-/bin/bash -c 'echo CHECK-BEGIN; alpctl live update check 2>&1 | tail -n 5; echo CHECK-END'"
 fail=0
 for size in 32G 8G; do
     status=0
@@ -35,16 +38,34 @@ for size in 32G 8G; do
     grep -o 'SYSUPDATE-[a-z]*' <<<"$out" | head -n 1
     empty=$(grep -c '^_empty ' <<<"$parts" || true)
     index=$(grep -c '^alp-index ' <<<"$parts" || true)
+    boot=$(grep -c '^alp-boot 1G vfat' <<<"$parts" || true)
     want=0; [[ $size == 32G ]] && want=4
-    if [[ $empty == "$want" && $index == 1 ]]; then
-        echo "ok:   $size stick: $empty empty update slots and the index"
+    if [[ $empty == "$want" && $index == 1 && $boot == $(( want / 4 )) ]]; then
+        echo "ok:   $size stick: $empty empty update slots, $boot alp-boot partition and the index"
     else
-        echo "FAIL: $size stick: $empty empty slots (want $want), $index index partitions (want 1)" >&2; fail=1
+        echo "FAIL: $size stick: $empty empty slots (want $want), $boot alp-boot (want $(( want / 4 ))), $index index partitions (want 1)" >&2; fail=1
     fi
+    check=$(sed -n '/CHECK-BEGIN/,/CHECK-END/p' <<<"$out" | tr -d '\r')
     if [[ $size == 32G ]]; then
         # Two 6 GiB root slots and two 96 MiB verity slots.
-        [[ $(grep -c '^_empty 6G ' <<<"$parts" || true) == 2 && $(grep -c '^_empty 96M ' <<<"$parts" || true) == 2 ]] \
+        [[ $(grep -c '^_empty 6G' <<<"$parts" || true) == 2 && $(grep -c '^_empty 96M' <<<"$parts" || true) == 2 ]] \
             || { echo "FAIL: the update slots do not have the planned sizes" >&2; fail=1; }
+        grep -q 'SYSUPDATE-yes' <<<"$out" || { echo "FAIL: systemd-sysupdate or systemd-pull is not in the image" >&2; fail=1; }
+        grep -q 'TIMERS-masked-masked-masked' <<<"$out" \
+            || { echo "FAIL: systemd's own update timers or bless service are not masked: $(grep -o 'TIMERS-[a-z-]*' <<<"$out" | head -n 1)" >&2; fail=1; }
+        grep -Eq 'IMAGE_VERSION="?[0-9]+\.[0-9]+\.[0-9]{2}"?' <<<"$out" \
+            || { echo "FAIL: the image does not know its version: $(grep -o 'IMAGE_VERSION=[^ ]*' <<<"$out" | head -n 1)" >&2; fail=1; }
+        # No update key in the image (KEYRING-0): the signature cannot be checked, so nothing is offered.
+        if grep -q 'KEYRING-0' <<<"$out"; then
+            if grep -q '^running ' <<<"$check"; then
+                echo "FAIL: an image without the update key listed updates: $check" >&2; fail=1
+            else
+                echo "ok:   without the project's update key no update is accepted"
+            fi
+        fi
+    else
+        grep -q 'no room for a new version' <<<"$check" \
+            || { echo "FAIL: the 8G stick did not say it cannot be updated in place: $check" >&2; fail=1; }
     fi
 done
 (( fail == 0 )) || { echo "FAIL: T-UPD-01" >&2; exit 1; }

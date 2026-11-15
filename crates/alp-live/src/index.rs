@@ -784,10 +784,10 @@ pub fn lock_state() -> &'static str {
 }
 
 /// A stick partition: kernel name, PARTUUID, type UUID.
-type StickPart = (String, String, String);
+pub(crate) type StickPart = (String, String, String);
 
 /// The stick (system disk) and its partitions.
-fn stick() -> Result<(String, Vec<StickPart>), String> {
+pub(crate) fn stick() -> Result<(String, Vec<StickPart>), String> {
     let r = inspect::inspect(&inspect::Roots::system());
     let d = r
         .disks

@@ -9,7 +9,15 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   codecs) for the second beta.
 - (1) written: `crates/alp-live/src/immich_restore.rs`, ADR 0025, T-IMMICH-02. Uses Immich's own restore
   flow and `immich-admin reset-admin-password`. Only CI can prove it (needs the photo service in a VM).
-- Next: (1) green in CI, then the format test set, then (2), then (3).
+- (1) green in CI. Format test set part 1 done (`docs/qa/formats.md`); camera RAW needs a session on the
+  "ALP-OS" cloud environment (raw.pixls.us allowed there).
+- (2) ADR 0026, `docs/plans/live-update.md`: layout (slots + `alp-boot`), sysupdate transfer files,
+  `crates/alp-live/src/update.rs` (`alpctl live update bless|check|apply`), `tools/update-files.sh`,
+  T-UPD-01/02 in the CI group "update" (builds a second image as version 9.9.90). Still to do: release job
+  (rolling release tag `updates`, signing with the Actions secret `UPDATE_SIGNING_KEY`; the owner adds the
+  secret and the public key goes to `image/keys/update-signing.asc`), alpd API + Settings UI, reboot on an
+  unhealthy counted start, T-UPD-03..05, bump `image/extra/usr/lib/alp/release` to 0.2.7 at release.
+- Next: (2) green in CI and finished, then (3).
 
 ## Alpha 0.2.61 (2026-11-15, branch claude/project-thread-o9ostf off live-alpha)
 

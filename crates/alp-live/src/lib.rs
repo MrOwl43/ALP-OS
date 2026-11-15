@@ -23,6 +23,7 @@ pub mod prefs;
 pub mod qr;
 pub mod recovery;
 pub mod tls;
+pub mod update;
 pub mod vault;
 pub mod wifi;
 pub mod wipe;

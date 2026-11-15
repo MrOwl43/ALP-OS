@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# T-UPD-02: a new version without erasing the stick (ADR 0026, steps 2 to 4
+# of docs/plans/live-update.md), with the real parts: systemd-sysupdate,
+# systemd-boot's boot counting and the dm-verity root of the new version.
+#
+#   start 1  a stick written with <image>: the ALP password is chosen; the
+#            update files of <next-image> are offered by a local web server
+#            and signed with a key made for this test; `alpctl live update`
+#            finds the new version, writes it and says it is installed.
+#   start 2  the same stick starts the new version by itself, the start is
+#            marked good (the boot counter is gone), and the index opens
+#            with the ALP password chosen before the update.
+#
+# The image is not changed for the test: its update source and (empty)
+# keyring are covered inside the guest by bind mounts made as root.
+#
+# Usage: tests/vm/t-upd-02.sh <image> <next-image> <next-version>
+set -euo pipefail
+here=$(dirname "$(realpath "$0")")
+# shellcheck disable=SC1091
+. "$here/../lib/qa.sh"
+image=${1:?usage: t-upd-02.sh <image> <next-image> <next-version>}
+next=${2:?usage: t-upd-02.sh <image> <next-image> <next-version>}
+version=${3:?usage: t-upd-02.sh <image> <next-image> <next-version>}
+for f in "$image" "$next"; do [[ -f $f ]] || { echo "FAIL: image not found: $f" >&2; exit 2; }; done
+
+work=$(mktemp -d)
+srv_pid=
+trap '[[ -z $srv_pid ]] || kill "$srv_pid" 2>/dev/null; rm -rf "$work"' EXIT
+origin=http://127.0.0.1:8411
+pw=alpha-test-password-4
+port=$(qa_free_port)
+
+# The update files of the next version, signed with a key that exists only here.
+mkdir -m 700 "$work/gnupg"
+mkdir "$work/srv"
+"$here/../../tools/update-files.sh" "$next" "$version" "$work/srv" >/dev/null
+export GNUPGHOME="$work/gnupg"
+gpg --batch --quiet --passphrase '' --quick-generate-key 'T-UPD-02 test key' ed25519 sign never
+gpg --batch --yes --detach-sign -o "$work/srv/SHA256SUMS.gpg" "$work/srv/SHA256SUMS"
+pubring=$(gpg --export | base64 -w0)
+gpgconf --kill all 2>/dev/null || true
+unset GNUPGHOME
+(cd "$work/srv" && exec python3 -I -m http.server "$port" --bind 127.0.0.1 >/dev/null 2>&1) &
+srv_pid=$!
+
+# Inside the guest: this test's key and web server instead of the project's.
+testsrc="-/bin/bash -c 'mkdir -p /run/alp-test/d && echo $pubring | base64 -d > /run/alp-test/pubring.gpg && for f in /usr/lib/sysupdate.d/*.transfer; do sed \"s|^Path=https://.*|Path=http://10.0.2.2:$port/|\" \$f > /run/alp-test/d/\$(basename \$f); done && mount --bind /run/alp-test/pubring.gpg /usr/lib/systemd/import-pubring.gpg && mount --bind /run/alp-test/d /usr/lib/sysupdate.d && echo TESTSRC-ok'"
+check() { printf '%s' "-/bin/bash -c 'echo $1-BEGIN; alpctl live update check 2>&1 | tail -n 8; echo $1-END'"; }
+between() { sed -n "/$1-BEGIN/,/$1-END/p" <<<"$out" | tr -d '\r'; }
+boot() { # probe, seconds
+    local status=0
+    out=$(ALP_OVERLAY="$work/stick.qcow2" ALP_OVERLAY_SIZE=32G ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$1" ALP_PROBE_DELAY=15 \
+        ALP_QEMU_ARGS="-nic user,model=virtio-net-pci" "$here/run-vm.sh" "$image" "$2") || status=$?
+    (( status == 0 )) || { echo "$out" | tail -n 60 | cut -c1-300; echo "FAIL: T-UPD-02 (VM run failed)" >&2; exit 1; }
+}
+fail() { echo "FAIL: T-UPD-02: $*" >&2; exit 1; }
+
+# Start 1: choose the password, find the update, write it.
+boot "$(QA_HTTP_TIMEOUT=120 qa_http_probe SETUP POST /api/v1/live/password/setup "$origin" "{\"password\":\"$pw\"}")
+$testsrc
+-/bin/bash -c 'echo \$(grep ^IMAGE_VERSION= /usr/lib/os-release || echo IMAGE_VERSION=none)'
+$(check CHECK1)
+-/bin/bash -c 'echo APPLY-BEGIN; alpctl live update apply $version 2>&1 | tail -n 15; echo APPLY-END'
+$(check CHECK2)
+-/bin/bash -c 'echo PARTS-BEGIN; lsblk -rno PARTLABEL /dev/\$(lsblk -rno PKNAME \$(findmnt -no SOURCE /var/lib/alp) | head -n 1); echo PARTS-END'" 1800
+grep -q 'TESTSRC-ok' <<<"$out" || qa_skip "T-UPD-02: the update tools are not in this image yet"
+old=$(grep -o 'IMAGE_VERSION="\?[0-9.]*' <<<"$out" | head -n 1 | tr -d '"' | cut -d= -f2)
+[[ -n $old && $old != "$version" ]] || fail "the written image has no version of its own: '$old'"
+between CHECK1 | grep -q "^newer $version available" || fail "the new version was not found: $(between CHECK1)"
+echo "ok:   $old finds version $version (signature checked)"
+between APPLY | grep -q "^written $version" || fail "the update was not written: $(between APPLY)"
+between CHECK2 | grep -q "^newer $version installed" || fail "the written version is not seen as installed: $(between CHECK2)"
+between CHECK2 | grep -q "^start-file alp-os_$version+3-0.efi" || fail "the new start file has no boot counter of three tries: $(between CHECK2)"
+parts=$(between PARTS)
+if ! grep -q "^alp-root-$version\$" <<<"$parts" || ! grep -q "^alp-verity-$version\$" <<<"$parts"; then fail "the slots do not carry the new version: $parts"; fi
+[[ $(grep -c '^_empty$' <<<"$parts") == 2 && $(grep -c '^root-x86-64$' <<<"$parts") == 1 ]] || fail "the other slots or the written root changed: $parts"
+echo "ok:   version $version is written to a free slot; the written system is untouched"
+
+# Start 2: the stick starts the new version, marks it good, and the index opens.
+boot "$testsrc
+-/bin/bash -c 'for i in \$(seq 90); do systemctl is-active -q alp-live-bless.service && break; sleep 2; done; echo BLESS-\$(systemctl is-active alp-live-bless.service)'
+-/bin/bash -c 'echo \$(grep ^IMAGE_VERSION= /usr/lib/os-release || echo IMAGE_VERSION=none)'
+$(QA_HTTP_TIMEOUT=90 qa_http_probe UNLOCK POST /api/v1/live/unlock "$origin" "{\"password\":\"$pw\"}")
+$(check CHECK3)" 600
+now=$(grep -o 'IMAGE_VERSION="\?[0-9.]*' <<<"$out" | head -n 1 | tr -d '"' | cut -d= -f2)
+[[ $now == "$version" ]] || fail "the second start runs '$now', not $version"
+echo "ok:   the second start runs version $version"
+grep -q 'BLESS-active' <<<"$out" || fail "the healthy start was not marked good: $(grep -o 'BLESS-[a-z]*' <<<"$out" | head -n 1)"
+between CHECK3 | grep -q "^start-file alp-os_$version.efi" || fail "the start file still has its boot counter: $(between CHECK3)"
+between CHECK3 | grep -q "^newer none" || fail "version $version is still offered after it started: $(between CHECK3)"
+echo "ok:   the start is marked good (no boot counter left)"
+between UNLOCK | grep -q '^HTTP/1.1 200' || fail "the index does not open with the password chosen before the update: $(between UNLOCK | head -n 3)"
+echo "ok:   the index opens with the ALP password chosen before the update"
+echo "PASS: T-UPD-02"
