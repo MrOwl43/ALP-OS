@@ -65,6 +65,7 @@ else
     echo "note: no kiosk unit in this image; kiosk check skipped"
 fi
 expect "report has a verdict" 'This computer (can|cannot) run ALPArchive'
+expect "report names the release" 'ALP-OS Live alpha [0-9]+\.[0-9]+'
 expect "stick is recognised" 'vda .*this stick \(ALP-OS\)'
 expect "internal disk is listed as read-only" 'vdb .*internal, read-only'
 expect "home network has an address (DHCP)" 'Home network: connected on .*address 10\.0\.2\.15|"address": ?"10\.0\.2\.15"'
