@@ -68,8 +68,8 @@ hook() {
     echo "ok:   $(grep -vc '^refused ' "$T_WORK/ids.txt") of $(wc -l <"$T_WORK/ids.txt") files taken"
     # The gallery works through them in the background: ask until nothing
     # changes any more (at most 8 minutes).
-    local round done_n last=-1 still=0
-    for round in $(seq 48); do
+    local _round done_n last=-1 still=0
+    for _round in $(seq 48); do
         done_n=0
         while read -r id name; do
             [[ $id == refused ]] && continue
