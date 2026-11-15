@@ -28,6 +28,27 @@ listed here, newest first, before the code changes.
   the clock was set from the network (`clock.synced`), alpd signs out phone
   sessions the photo service has not seen for 60 days and writes each
   removal to the journal. The phone signs in again with the ALP password.
+- 2026-11-15 (0.2.6 field report; additive; ADR 0024):
+  1. Feature `clock_sync`: `state.clock.synced_at` is the time (seconds
+     since 1970) the network last set the clock, or `null`. `POST
+     clock/sync` (`{}`) asks a time server again and answers `202` with the
+     `clock` block; a new `synced_at` in the state is the result.
+  2. Feature `clock_base`: `POST clock/base` with `{"local": true}` says the
+     computer's hardware clock holds local time in `prefs.time_zone`
+     (`false`: UTC). alpd moves the system clock to match and answers
+     `{clock, prefs}`; `prefs.clock_local` keeps the answer for the next
+     start and cannot be set through `prefs`. `state.clock.base` is
+     `"local"`, `"utc"` or `null` (not answered since this start).
+     `409 clock.synced` once the network set the clock, `409 clock.no_zone`
+     for `local` without a time zone.
+  3. Feature `lock_hide`: `prefs.lock_hide` is a list out of `phones`,
+     `network`, `space`, `backup`. A locked console does not get those
+     details at all (devices and their number; the Wi-Fi name; free and
+     total room; photo count and last upload), and `state.console.hidden`
+     repeats the list so the lock screen can say what is hidden.
+  4. `state.immich.state` stays `ready` for up to ten minutes while the
+     photo service is running but too busy to answer (a video backup on a
+     slow disk); a stopped or failed service still shows at once.
 - 2026-11-14 (0.2.5-test1 field report: Photos could not be shown on the
   console; the gallery layer of the 0.2.4 plan was never built; additive,
   feature `gallery_session`):

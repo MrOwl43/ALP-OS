@@ -14,6 +14,8 @@ use std::io::{Read, Write};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
@@ -62,18 +64,49 @@ pub enum State {
     Failed(String),
 }
 
+/// Does the photo service answer? At most [`PING_SECS`]: this runs inside
+/// the console's state answer, and a busy service must not hold that up.
 pub fn ping() -> bool {
-    http::request(API, "GET", "/api/server/ping", &[], None)
+    http::request_within(PING_SECS, API, "GET", "/api/server/ping", &[], None)
         .ok()
         .and_then(|r| r.json())
         .is_some_and(|v| v["res"] == "pong")
 }
 
+/// How long a photo service that answered before may stay silent and
+/// still count as ready. While it takes in videos from a phone on a slow
+/// disk it can miss a ping for minutes (alpha 0.2.6 field report: the
+/// gallery left the computer's screen with "still starting" during a video
+/// backup). A service that really stopped shows as failed below, at once.
+const PING_SECS: u64 = 5;
+const BUSY_GRACE: Duration = Duration::from_secs(600);
+
+/// When the photo service last answered a ping.
+static LAST_PONG: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// Ready when it answers now, or answered within `grace` and is only busy.
+fn ready_now(pong: bool, last: &mut Option<Instant>, now: Instant, grace: Duration) -> bool {
+    if pong {
+        *last = Some(now);
+        return true;
+    }
+    last.is_some_and(|t| now.duration_since(t) < grace)
+}
+
 pub fn state() -> State {
+    // Never held across the ping or a command: the console's state answer
+    // comes through here from several threads.
+    let last = || {
+        LAST_PONG
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    };
     if !crate::index::is_open() || !crate::archive::is_open() {
+        *last() = None;
         return State::Off;
     }
     if ping() {
+        ready_now(true, &mut last(), Instant::now(), BUSY_GRACE);
         return State::Ready;
     }
     let is_failed = |args: &[&str]| {
@@ -93,6 +126,7 @@ pub fn state() -> State {
             "immich-valkey.service",
         ]);
     if failed {
+        *last() = None;
         return State::Failed(
             "The photo service did not start. Restart the computer; if this stays, save a diagnosis for help."
                 .into(),
@@ -105,6 +139,11 @@ pub fn state() -> State {
             "The photo service could not start because the archive was not ready. Restart the computer."
                 .into(),
         );
+    }
+    // Only busy, not stopped: a unit that is not running gets started
+    // again by alpd, which needs to see "starting".
+    if !unit_inactive() && ready_now(false, &mut last(), Instant::now(), BUSY_GRACE) {
+        return State::Ready;
     }
     State::Starting
 }
@@ -1056,6 +1095,43 @@ pub fn cli(args: &[&str]) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    /// A photo service that answered a moment ago and is busy with a video
+    /// backup stays ready; one that never answered, or is silent for
+    /// longer than the grace, does not.
+    #[test]
+    fn a_busy_service_stays_ready_for_a_while() {
+        use std::time::{Duration, Instant};
+        let grace = Duration::from_secs(600);
+        let t0 = Instant::now();
+        let mut last = None;
+        assert!(!super::ready_now(false, &mut last, t0, grace));
+        assert!(super::ready_now(true, &mut last, t0, grace));
+        assert!(super::ready_now(
+            false,
+            &mut last,
+            t0 + Duration::from_secs(599),
+            grace
+        ));
+        assert!(!super::ready_now(
+            false,
+            &mut last,
+            t0 + Duration::from_secs(600),
+            grace
+        ));
+        assert!(super::ready_now(
+            true,
+            &mut last,
+            t0 + Duration::from_secs(700),
+            grace
+        ));
+        assert!(super::ready_now(
+            false,
+            &mut last,
+            t0 + Duration::from_secs(900),
+            grace
+        ));
+    }
+
     #[test]
     fn only_a_plain_key_goes_into_a_header() {
         assert!(super::header_safe("AbC-12_3+/="));

@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use alp_live::fail::Fail;
 use alp_live::{
-    admin, archive, chain, disks, display, events, format, immich, index, job, live, pairing,
-    prefs, qr, recovery, wifi,
+    admin, archive, chain, clock, disks, display, events, format, immich, index, job, live,
+    pairing, prefs, qr, recovery, wifi,
 };
 use serde_json::{Value, json};
 
@@ -289,6 +289,9 @@ pub struct Live {
     /// Console preferences (T56), kept in `prefs_file` on the stick.
     prefs: Mutex<prefs::Prefs>,
     prefs_file: std::path::PathBuf,
+    /// Moves the system clock for `clock/base` (`clock::set_base`;
+    /// replaced in unit tests).
+    clock_set: fn(Option<&str>) -> Result<(), String>,
     /// An unconfirmed screen mode change (T56).
     display_pending: Mutex<Option<DisplayPending>>,
     /// Runs `wlr-randr` (`display::randr`; replaced in unit tests).
@@ -373,6 +376,8 @@ fn status_for(key: &str) -> u16 {
         "disk.open" => 409,
         "prefs.invalid" | "setup.invalid" => 422,
         "display.busy" | "display.no_pending" => 409,
+        "clock.synced" | "clock.no_zone" => 409,
+        "clock.sync" | "clock.not_set" => 500,
         "display.not_found" => 404,
         "display.unavailable" => 503,
         "display.failed" => 500,
@@ -664,6 +669,7 @@ impl Live {
             pairing: Mutex::new(pairing::Pairing::default()),
             prefs: Mutex::new(prefs::Prefs::load_from(Path::new(prefs::PATH))),
             prefs_file: prefs::PATH.into(),
+            clock_set: clock::set_base,
             display_pending: Mutex::new(None),
             randr: display::randr,
             revert_after: Duration::from_secs(15),
@@ -1277,6 +1283,13 @@ impl Live {
     /// after the photo service started, a new address from the router), and
     /// what nginx really sends is checked (0.2.5 field report; cheap when
     /// nothing changed). The device allowlist is rewritten every 12 hours.
+    /// At start: the person's kept answer about the hardware clock
+    /// (`clock/base`) is applied again while the network has not set it.
+    pub fn clock_start(&self) {
+        let p = lock(&self.prefs);
+        clock::apply_kept(p.clock_local, p.time_zone.as_deref());
+    }
+
     /// Idle phone sessions are removed once a day (T63).
     pub fn watch_certificate(self: &Arc<Self>) {
         std::thread::spawn(|| {
@@ -1630,6 +1643,14 @@ impl Live {
             "events" if get => Ok(Response::json(200, &events::recent_json())),
             "disks/eject" if post => self.disks_eject(req),
             "prefs" if post => self.prefs_set(req),
+            "clock/sync" if post => body(req).and_then(|_| {
+                clock::sync_now().map_err(|e| {
+                    eprintln!("alpd: clock: {e}");
+                    Fail::new("clock.sync", "The time service could not be asked. Please try again.")
+                })?;
+                Ok(Response::json(202, &json!({"clock": clock_json()})))
+            }),
+            "clock/base" if post => self.clock_base(req),
             "display/modes" if get => self.display_modes(),
             "display/mode" if post => self.display_mode(req),
             "display/mode/keep" if post => self.display_keep(req),
@@ -1766,6 +1787,8 @@ impl Live {
             | "events"
             | "disks/eject"
             | "prefs"
+            | "clock/sync"
+            | "clock/base"
             | "display/modes"
             | "display/mode"
             | "display/mode/keep"
@@ -1829,11 +1852,55 @@ impl Live {
         v["status"] = status_of(&list);
         v["alerts"] = Value::Array(list);
         if !open {
-            locked_view(&mut v);
+            locked_view(&mut v, &lock(&self.prefs).lock_hide);
         }
         // External disks for Files (stage F): only for a signed-in console.
         v["media"] = if open { live_media::state() } else { json!([]) };
         v
+    }
+
+    /// `POST clock/base` (feature `clock_base`): `{"local": true}` says the
+    /// computer's hardware clock holds local time in the chosen time zone
+    /// (a computer that also runs Windows), `false` that it holds UTC. The
+    /// system clock is moved to match and the answer is kept on the stick
+    /// for the next start. Refused once the network set the clock: then
+    /// there is nothing to correct.
+    fn clock_base(&self, req: &Request) -> Result<Response, Fail> {
+        let b = body(req)?;
+        let local = field(&b, "local")?
+            .as_bool()
+            .ok_or_else(|| Fail::new("request.json", "\"local\" must be true or false."))?;
+        if clock::synced() {
+            return Err(Fail::new(
+                "clock.synced",
+                "The clock is already set from the internet.",
+            ));
+        }
+        let mut p = lock(&self.prefs);
+        let zone = p.time_zone.clone();
+        if local && zone.is_none() {
+            return Err(Fail::new("clock.no_zone", "Choose a time zone first."));
+        }
+        (self.clock_set)(if local { zone.as_deref() } else { None }).map_err(|e| {
+            eprintln!("alpd: clock: {e}");
+            Fail::new(
+                "clock.not_set",
+                "The clock could not be changed. Please try again.",
+            )
+        })?;
+        let mut next = p.clone();
+        next.clock_local = local;
+        if self.require_index && archive::state_ready().is_err() {
+            // The clock is right for now; only the answer is not kept.
+            eprintln!("alpd: clock: answer not kept (the stick's storage is not ready)");
+        } else if let Err(e) = next.save_to(&self.prefs_file) {
+            eprintln!("alpd: prefs not saved: {e}");
+        }
+        *p = next;
+        Ok(Response::json(
+            200,
+            &json!({"clock": clock_json(), "prefs": p.json()}),
+        ))
     }
 
     /// `POST prefs` (T56): any subset of the known settings; answers the
@@ -3710,6 +3777,9 @@ const FEATURES: &[&str] = &[
     "media_files",
     "clock",
     "gallery_session",
+    "clock_sync",
+    "clock_base",
+    "lock_hide",
 ];
 
 /// [`FEATURES`], plus `display_modes` when the image has `wlr-randr` and
@@ -3877,8 +3947,38 @@ fn uploads_pause(on: bool) -> bool {
     true
 }
 
-fn locked_view(v: &mut Value) {
+/// What a locked console gets. Names are always shortened; what the
+/// person chose to hide on the lock screen (`prefs.lock_hide`) is not sent
+/// at all, and `console.hidden` says which items those are so the screen
+/// can say so.
+fn locked_view(v: &mut Value, hide: &[&str]) {
     v["console"]["state"] = "locked".into();
+    v["console"]["hidden"] = json!(hide);
+    let hidden = |k: &str| hide.contains(&k);
+    if hidden("phones") {
+        v["phone"]["devices"] = json!([]);
+        v["phone"]["phones"] = json!(0);
+    }
+    if hidden("network")
+        && let Some(ports) = v["network"]["ports"].as_array_mut()
+    {
+        for p in ports {
+            p["ssid"] = Value::Null;
+        }
+    }
+    if hidden("space") {
+        for part in ["archive", "index"] {
+            for k in ["free_bytes", "size_bytes"] {
+                if !v[part][k].is_null() {
+                    v[part][k] = Value::Null;
+                }
+            }
+        }
+    }
+    if hidden("backup") {
+        v["phone"]["photos"] = json!(0);
+        v["phone"]["last_upload"] = Value::Null;
+    }
     v["hardware"]["report_file"] = Value::Null;
     if let Some(place) = v["archive"]["place"].as_object_mut() {
         for k in ["name", "label"] {
@@ -3957,16 +4057,19 @@ fn connection_check() -> Value {
 }
 
 /// `state.clock` (feature `clock`): the computer's time in seconds since
-/// 1970 (UTC) and whether it was set from the network. systemd-timesyncd
-/// touches this file on each successful synchronisation
-/// (systemd-timesyncd.service(8), FILES); /run is empty at every start.
-/// A clock that was not set this way can be hours off (a hardware clock
-/// kept in local time is read as UTC): the 0.2.5-test1 field report.
+/// 1970 (UTC), whether it was set from the network and when
+/// (`synced_at`, feature `clock_sync`), and what the person said about the
+/// hardware clock since this start (`base`: "local", "utc" or null;
+/// feature `clock_base`). A clock that was not set from the network can
+/// be hours off (a hardware clock kept in local time is read as UTC): the
+/// 0.2.5-test1 field report.
 fn clock_json() -> Value {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-    json!({"now": now, "synced": Path::new("/run/systemd/timesync/synchronized").exists()})
+    json!({
+        "now": clock::now(),
+        "synced": clock::synced(),
+        "synced_at": clock::synced_at(),
+        "base": clock::base().map(|local| if local { "local" } else { "utc" }),
+    })
 }
 
 #[cfg(test)]
@@ -3994,9 +4097,18 @@ mod tests {
             prefs_file: std::env::temp_dir()
                 .join(format!("alpd-prefs-{name}-{}.json", std::process::id())),
             randr: fake_randr,
+            clock_set: fake_clock_set,
             revert_after: Duration::from_millis(300),
             ..Arc::try_unwrap(l).ok().unwrap()
         })
+    }
+
+    /// What `clock/base` asked for (the test machine's clock is not moved).
+    static CLOCK_CALLS: Mutex<Vec<Option<String>>> = Mutex::new(Vec::new());
+
+    fn fake_clock_set(zone: Option<&str>) -> Result<(), String> {
+        lock(&CLOCK_CALLS).push(zone.map(str::to_string));
+        Ok(())
     }
 
     /// The `wlr-randr` calls the display tests made (no screen here).
@@ -4041,7 +4153,7 @@ mod tests {
             "network": {"ports": [{"ssid": "Home"}, {"ssid": null}]},
             "phone": {"server_url": "https://x", "account": "family@x", "photos": 3},
             "chain": {"chain_id": "ab"}});
-        locked_view(&mut v);
+        locked_view(&mut v, &[]);
         assert_eq!(v["console"]["state"], "locked");
         assert_eq!(v["archive"]["place"]["label"], "M••••••••");
         assert_eq!(v["archive"]["place"]["name"], "s•••");
@@ -4925,6 +5037,90 @@ mod tests {
         assert_eq!(l.state(true)["prefs"]["ui_scale"], 1.25);
         assert_eq!(call(&l, "GET", "prefs", "").0, 405);
         let _ = std::fs::remove_file(&l.prefs_file);
+    }
+
+    /// `clock/base`: the answer about the hardware clock moves the clock
+    /// through `clock_set` and is kept; never once the network set it.
+    #[test]
+    fn the_hardware_clock_answer_is_applied_and_kept() {
+        let l = live("clockbase");
+        let _ = std::fs::remove_file(&l.prefs_file);
+        let f = l.state(true)["features"].clone();
+        for name in ["clock_sync", "clock_base", "lock_hide"] {
+            assert!(f.as_array().unwrap().contains(&json!(name)), "{name}");
+        }
+        assert_eq!(call(&l, "GET", "clock/base", "").0, 405);
+        assert_eq!(call(&l, "GET", "clock/sync", "").0, 405);
+        assert_eq!(
+            key(&call(&l, "POST", "clock/base", r#"{"local": "yes"}"#)),
+            (400, Some("request.json"))
+        );
+        if clock::synced() {
+            // A test machine whose own clock is set from the network.
+            assert_eq!(
+                key(&call(&l, "POST", "clock/base", r#"{"local": true}"#)),
+                (409, Some("clock.synced"))
+            );
+            return;
+        }
+        assert_eq!(
+            key(&call(&l, "POST", "clock/base", r#"{"local": true}"#)),
+            (409, Some("clock.no_zone"))
+        );
+        call(&l, "POST", "prefs", r#"{"time_zone": "Etc/GMT-7"}"#);
+        lock(&CLOCK_CALLS).clear();
+        let (s, r) = call(&l, "POST", "clock/base", r#"{"local": true}"#);
+        assert_eq!((s, &r["prefs"]["clock_local"]), (200, &json!(true)));
+        assert!(prefs::Prefs::load_from(&l.prefs_file).clock_local);
+        let (s, r) = call(&l, "POST", "clock/base", r#"{"local": false}"#);
+        assert_eq!((s, &r["prefs"]["clock_local"]), (200, &json!(false)));
+        assert_eq!(
+            *lock(&CLOCK_CALLS),
+            vec![Some("Etc/GMT-7".to_string()), None]
+        );
+        let _ = std::fs::remove_file(&l.prefs_file);
+    }
+
+    /// What the person chose to hide on the lock screen is not sent to a
+    /// locked console, and the screen is told which items those are.
+    #[test]
+    fn hidden_lock_screen_items_are_not_sent() {
+        let full = || {
+            json!({"console": {"state": "open"}, "hardware": {},
+            "archive": {"free_bytes": 5, "size_bytes": 9, "space": "ok"},
+            "index": {"free_bytes": 2, "size_bytes": 3, "space": "ok"},
+            "network": {"ports": [{"ssid": "Home"}]},
+            "phone": {"photos": 3, "phones": 2, "last_upload": "2026-11-01T00:00:00Z",
+                      "devices": [{"id": "a", "name": "Blue phone"}]},
+            "chain": {}})
+        };
+        let mut v = full();
+        locked_view(&mut v, &[]);
+        assert_eq!(v["console"]["hidden"], json!([]));
+        assert_eq!(
+            (&v["phone"]["photos"], &v["phone"]["phones"]),
+            (&json!(3), &json!(2))
+        );
+        assert_eq!(v["archive"]["free_bytes"], 5);
+        let mut v = full();
+        locked_view(&mut v, &["phones", "network", "space", "backup"]);
+        assert_eq!(
+            v["console"]["hidden"],
+            json!(["phones", "network", "space", "backup"])
+        );
+        assert_eq!(v["phone"]["devices"], json!([]));
+        assert_eq!(
+            (&v["phone"]["photos"], &v["phone"]["phones"]),
+            (&json!(0), &json!(0))
+        );
+        assert_eq!(v["phone"]["last_upload"], Value::Null);
+        assert_eq!(v["network"]["ports"][0]["ssid"], Value::Null);
+        assert_eq!(v["archive"]["free_bytes"], Value::Null);
+        assert_eq!(v["index"]["size_bytes"], Value::Null);
+        // The level stays: the lock screen still says when room runs out.
+        assert_eq!(v["archive"]["space"], "ok");
+        let text = v.to_string();
+        assert!(!text.contains("Home") && !text.contains("Blue"));
     }
 
     #[test]
