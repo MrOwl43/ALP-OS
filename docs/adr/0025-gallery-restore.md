@@ -57,7 +57,7 @@ source).
    photos and videos changed and then stood still for a minute, at most
    every 10 minutes, and once more before turning off (waiting up to 30 s
    for the file).
-5. **The small pictures are made again** (`PUT /api/queues/
+5. **The small pictures are made again** (`PUT /api/jobs/
    thumbnailGeneration`, `videoConversion`, `force: true`: the restored database still lists
    the old files, so "only the missing ones" finds nothing); they were in
    the old index. On a large gallery this runs for hours in the

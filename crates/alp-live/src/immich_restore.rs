@@ -283,7 +283,9 @@ fn adopt() -> Result<(), Fail> {
     for queue in ["thumbnailGeneration", "videoConversion"] {
         let r = immich::call(
             "PUT",
-            &format!("/queues/{queue}"),
+            // `PUT /queues/<name>` only pauses a queue; this one runs it
+            // (job.controller.ts, v3.3.3).
+            &format!("/jobs/{queue}"),
             &auth,
             // All of them: the database still lists the old files.
             Some(&json!({"command": "start", "force": true})),
