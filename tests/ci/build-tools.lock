@@ -41,3 +41,5 @@ util-linux=2.41.3-3ubuntu2.2
 # format test set; ffmpeg for every codec, heif-enc for HEIC).
 ffmpeg=7:8.0.1-3ubuntu2
 libheif-examples=1.21.2-3ubuntu0.7
+# heif-enc's HEVC encoder (CI run 43749705600: "No HEVC encoder available").
+libheif-plugin-x265=1.21.2-3ubuntu0.7
