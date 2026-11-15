@@ -34,12 +34,20 @@ pw=alpha-test-password-2
 pwjson() { printf '{"password":"%s"}' "$1"; }
 origin=http://127.0.0.1:8411
 
+# Photos: real 32x32 PNG pictures with random pixels, so every file is unique
+# and the photo service can make a small picture of each.
 mkdir -p "$work/photos"
-tiny='/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA='
-for i in 1 2 3; do
-    { printf '\xff\xd8'; printf '\xff\xfe\x20\x02'; head -c 512 /dev/urandom; base64 -d <<<"$tiny" | tail -c +3; } >"$work/photos/IMG_000$i.jpg"
-done
-( cd "$work/photos" && sha256sum ./*.jpg >../hashes.txt )
+python3 -I - "$work/photos" <<'PNG'
+import os, struct, sys, zlib
+def chunk(kind, data):
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+for i in (1, 2, 3):
+    rows = b"".join(b"\0" + os.urandom(32 * 3) for _ in range(32))
+    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 32, 32, 8, 2, 0, 0, 0)) \
+        + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+    open(os.path.join(sys.argv[1], f"IMG_000{i}.png"), "wb").write(png)
+PNG
+( cd "$work/photos" && sha256sum ./*.png >../hashes.txt )
 
 # Runs on the host once the guest is up (ALP_HOST_HOOK).
 # shellcheck disable=SC2153
@@ -50,6 +58,15 @@ hook() {
         for ((i = 0; i < $2; i++)); do
             grep -a "RESTAGENT $1" "$ALP_SERIAL_LOG" 2>/dev/null | tail -n 1 | tr -d '\r' | grep . && return 0
             sleep 1
+        done
+        return 1
+    }
+    small() { # base, token, id: wait for the asset's small picture; sets code
+        local _t
+        for _t in $(seq 48); do
+            code=$(curl -sk -m 60 -H "Authorization: Bearer $2" -o /dev/null -w '%{http_code}' "$1/api/assets/$3/thumbnail")
+            [[ $code == 200 ]] && return 0
+            sleep 5
         done
         return 1
     }
@@ -77,7 +94,7 @@ hook() {
     echo "ok:   phone login works (round $ROUND)"
     local f id n=0
     if [[ $ROUND == 1 ]]; then
-        for f in "$T_WORK"/photos/*.jpg; do
+        for f in "$T_WORK"/photos/*.png; do
             id=$($c -H "Authorization: Bearer $token" -F deviceAssetId="$(basename "$f")" -F deviceId=alp-qa \
                 -F fileCreatedAt=2026-01-01T00:00:00.000Z -F fileModifiedAt=2026-01-01T00:00:00.000Z \
                 -F assetData=@"$f" "$base/api/assets" | jq -r .id)
@@ -85,6 +102,9 @@ hook() {
             echo "$id $(basename "$f")" >>"$T_WORK/ids.txt"; n=$((n + 1))
         done
         echo "ok:   $n photos uploaded"
+        id=$(head -n1 "$T_WORK/ids.txt" | cut -d' ' -f1)
+        small "$base" "$token" "$id" || { echo "FAIL: the first stick made no small picture (answer $code)" >&2; return 1; }
+        echo "ok:   the first stick made the small pictures"
         local dump
         dump=$(mark DUMP 420) || { echo "FAIL: no backup of the gallery's database on the disk after 7 minutes" >&2; return 1; }
         echo "ok:   alpd asked for a backup after the upload (${dump#*DUMP })"
@@ -102,12 +122,7 @@ hook() {
     [[ $n == 3 ]] || { echo "FAIL: the gallery holds $n photos, not 3 (uploaded again, or lost)" >&2; return 1; }
     echo "ok:   3 photos, none twice"
     id=$(head -n1 "$T_WORK/ids.txt" | cut -d' ' -f1)
-    for _try in $(seq 36); do
-        code=$($c -H "Authorization: Bearer $token" -o /dev/null -w '%{http_code}' "$base/api/assets/$id/thumbnail")
-        [[ $code == 200 ]] && break
-        sleep 5
-    done
-    [[ $code == 200 ]] || { echo "FAIL: no small picture after 3 minutes (answer $code)" >&2; return 1; }
+    small "$base" "$token" "$id" || { echo "FAIL: no small picture after 4 minutes (answer $code)" >&2; return 1; }
     echo "ok:   the small pictures are made again"
 }
 export -f hook
