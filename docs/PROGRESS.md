@@ -2,6 +2,15 @@
 
 Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
 
+## Alpha 0.2.7 (started 2026-11-15, same branch, on top of 0.2.61)
+
+- Owner's choice: one version with (1) the gallery back on a new stick, (2) a new version without erasing
+  the stick, (3) remote access through our own relay; plus a format test set (RAW of many makers, video
+  codecs) for the second beta.
+- (1) written: `crates/alp-live/src/immich_restore.rs`, ADR 0025, T-IMMICH-02. Uses Immich's own restore
+  flow and `immich-admin reset-admin-password`. Only CI can prove it (needs the photo service in a VM).
+- Next: (1) green in CI, then the format test set, then (2), then (3).
+
 ## Alpha 0.2.61 (2026-11-15, branch claude/project-thread-o9ostf off live-alpha)
 
 - On the branch, no PR yet (needs the owner's OK): the phone's own certificate dated back; name lookup

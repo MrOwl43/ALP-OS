@@ -1222,3 +1222,9 @@ the computer usually helps.").
 - **`POST live/display/mode/keep {}`** → `{}`. The mode is kept, and set again each time the kiosk starts, but only on the same screen (a hash of its EDID identity). Nothing waiting: `409 display.no_pending`.
 - `display_modes` is listed in `features` only when the image has `wlr-randr`.
 - **Lock after (feature `idle_lock_pref`).** `state.prefs.idle_lock_seconds` is 60, 300 (default), 900 or 1800, set through `POST live/prefs`. There is no "never" (Security, 2026-11-08); anything else gets `422 prefs.invalid`. alpd's own idle lock and `console.idle_lock_seconds` follow it.
+
+## 0.2.7 (2026-11-15): the gallery on a new stick (ADR 0025)
+
+- **`state.immich.restoring`** (bool): the gallery's database is being put back from the backup disk after the disk was opened with a new stick. `state.immich.state` is `starting` meanwhile, and `detail` says "Bringing your gallery back from the backup disk. This can take some minutes." No new call: it starts by itself.
+- While it runs, calls that need the photo service's owner answer `immich.starting` as during a normal start.
+- Turning off: the `immich` step of the `power.off` job may take up to 30 s longer (one more backup of the gallery's database when photos came in since the last one).

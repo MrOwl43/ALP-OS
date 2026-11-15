@@ -105,9 +105,16 @@ pub fn state() -> State {
         *last() = None;
         return State::Off;
     }
+    // The gallery is being brought back from the archive's own backup:
+    // nothing may use the photo service until that ended.
+    let restoring = crate::immich_restore::pending();
     if ping() {
         ready_now(true, &mut last(), Instant::now(), BUSY_GRACE);
-        return State::Ready;
+        return if restoring {
+            State::Starting
+        } else {
+            State::Ready
+        };
     }
     let is_failed = |args: &[&str]| {
         Command::new("systemctl")
@@ -142,7 +149,7 @@ pub fn state() -> State {
     }
     // Only busy, not stopped: a unit that is not running gets started
     // again by alpd, which needs to see "starting".
-    if !unit_inactive() && ready_now(false, &mut last(), Instant::now(), BUSY_GRACE) {
+    if !restoring && !unit_inactive() && ready_now(false, &mut last(), Instant::now(), BUSY_GRACE) {
         return State::Ready;
     }
     State::Starting
@@ -480,7 +487,7 @@ pub fn remove_device(id: &str) -> Result<(), Fail> {
     })
 }
 
-fn failed(msg: impl Into<String>) -> Fail {
+pub(crate) fn failed(msg: impl Into<String>) -> Fail {
     Fail::new("immich.failed", msg)
 }
 
@@ -494,7 +501,7 @@ fn random_bytes<const N: usize>() -> Result<Zeroizing<[u8; N]>, Fail> {
 
 /// A long random password for the admin account nobody types (its
 /// password is thrown away; only the API key is kept).
-fn admin_password() -> Result<Zeroizing<String>, Fail> {
+pub(crate) fn admin_password() -> Result<Zeroizing<String>, Fail> {
     let b = random_bytes::<24>()?;
     Ok(Zeroizing::new(
         b.iter().map(|x| format!("{x:02x}")).collect(),
@@ -505,7 +512,7 @@ fn key_path() -> PathBuf {
     Path::new(SECRETS).join("admin-api-key")
 }
 
-fn write_secret(path: &Path, value: &str) -> Result<(), Fail> {
+pub(crate) fn write_secret(path: &Path, value: &str) -> Result<(), Fail> {
     let io = |e: std::io::Error| failed(format!("Could not store a secret: {e}"));
     let dir = path.parent().unwrap_or(Path::new("/"));
     fs::create_dir_all(dir).map_err(io)?;
@@ -524,7 +531,7 @@ fn write_secret(path: &Path, value: &str) -> Result<(), Fail> {
     fs::rename(&tmp, path).map_err(io)
 }
 
-fn call(
+pub(crate) fn call(
     method: &str,
     path: &str,
     auth: &str,
@@ -579,7 +586,7 @@ fn header_safe(k: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'+' | b'/' | b'='))
 }
 
-fn api_key_header(key: &str) -> String {
+pub(crate) fn api_key_header(key: &str) -> String {
     format!("x-api-key: {key}")
 }
 
@@ -587,6 +594,14 @@ fn api_key_header(key: &str) -> String {
 /// is random and thrown away: only the API key (on the archive) remains,
 /// as in docs/contracts/api-access.md.
 pub fn admin_key() -> Result<Zeroizing<String>, Fail> {
+    // Never make a new owner while the old gallery is being brought back:
+    // the restore needs a photo service that nobody has set up.
+    if crate::immich_restore::pending() {
+        return Err(Fail::new(
+            "immich.starting",
+            "Your gallery is being brought back from the backup disk. Please wait a moment.",
+        ));
+    }
     if let Ok(k) = fs::read_to_string(key_path()) {
         let k = Zeroizing::new(k.trim().to_string());
         let r = call("GET", "/users/me", &api_key_header(&k), None)?;
@@ -606,33 +621,41 @@ pub fn admin_key() -> Result<Zeroizing<String>, Fail> {
             "The photo service already has an owner that this stick does not know. Code for help: immich admin.",
         ));
     }
-    let r = call(
-        "POST",
-        "/auth/login",
-        "",
-        Some(&json!({"email": ADMIN_EMAIL, "password": password.as_str()})),
-    )?;
-    let token = r
-        .json()
-        .and_then(|v| v["accessToken"].as_str().map(str::to_string))
-        .map(Zeroizing::new)
-        .ok_or_else(|| failed("The photo service did not let ALPArchive sign in."))?;
-    let bearer = format!("Authorization: Bearer {}", token.as_str());
-    let r = call(
-        "POST",
-        "/api-keys",
-        &bearer,
-        Some(&json!({"name": "alpd", "permissions": ["all"]})),
-    )?;
-    let key = r
+    key_as_admin(&password)
+}
+
+/// Sign in as the admin with `password`, make alpd's API key (older keys
+/// of alpd are deleted: after a restore the index no longer has them) and
+/// keep it in the index. The session is signed out again.
+pub(crate) fn key_as_admin(password: &str) -> Result<Zeroizing<String>, Fail> {
+    let key = signed_in(ADMIN_EMAIL, password, |bearer| {
+        let old: Vec<String> = call("GET", "/api-keys", bearer, None)?
+            .json()
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter(|k| k["name"] == ADMIN_KEY_NAME)
+            .filter_map(|k| k["id"].as_str().map(str::to_string))
+            .collect();
+        for id in old {
+            let _ = call("DELETE", &format!("/api-keys/{id}"), bearer, None);
+        }
+        call(
+            "POST",
+            "/api-keys",
+            bearer,
+            Some(&json!({"name": ADMIN_KEY_NAME, "permissions": ["all"]})),
+        )?
         .json()
         .and_then(|v| v["secret"].as_str().map(str::to_string))
         .map(Zeroizing::new)
-        .ok_or_else(|| failed("The photo service did not give ALPArchive a key."))?;
+        .ok_or_else(|| failed("The photo service did not give ALPArchive a key."))
+    })?;
     write_secret(&key_path(), &key)?;
-    let _ = call("POST", "/auth/logout", &bearer, Some(&json!({})));
     Ok(key)
 }
+
+const ADMIN_KEY_NAME: &str = "alpd";
 
 fn family_id(key: &str) -> Result<Option<String>, Fail> {
     let r = call("GET", "/admin/users", &api_key_header(key), None)?;
@@ -1001,6 +1024,9 @@ pub fn prepare() -> Result<(), String> {
     let pg = data.join("postgres");
     let pg_new = !pg.exists();
     ensure_dir(&pg, 0o700, UID, UID, false)?;
+    // A new index on an archive that already holds a gallery: its backup is
+    // put back once the photo service runs (ADR 0025).
+    let restore = pg_new;
     if pg_new {
         // No copy-on-write for the database on btrfs (fewer writes on the
         // stick; Postgres has its own checksums). Best effort.
@@ -1034,6 +1060,9 @@ pub fn prepare() -> Result<(), String> {
         let _ = fs::set_permissions(status, fs::Permissions::from_mode(0o644));
     }
     bind(ORIGINALS, ORIGINALS_BIND)?;
+    if restore {
+        crate::immich_restore::mark_if_backup();
+    }
     // Database password: random once, kept in the index; the file the
     // units read is in RAM, readable only by the immich user.
     let pw = db_password()?;

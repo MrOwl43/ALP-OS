@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use alp_live::fail::Fail;
 use alp_live::{
-    admin, archive, chain, clock, disks, display, events, format, immich, index, job, live,
-    pairing, prefs, qr, recovery, wifi,
+    admin, archive, chain, clock, disks, display, events, format, immich, immich_restore, index,
+    job, live, pairing, prefs, qr, recovery, wifi,
 };
 use serde_json::{Value, json};
 
@@ -855,7 +855,9 @@ impl Live {
                 if lock(&fam.pending).is_none() {
                     break;
                 }
-                if immich::ping() {
+                // Not while the gallery is being put back (ADR 0025): the
+                // family account comes back with it.
+                if immich::ping() && !immich_restore::pending() {
                     if let Some(pw) = lock(&fam.pending).take() {
                         match fam.apply(&pw) {
                             Ok(()) => eprintln!("alpd: phones now sign in with the main password"),
@@ -1337,6 +1339,15 @@ impl Live {
             loop {
                 me.refresh_immich();
                 std::thread::sleep(Duration::from_secs(2));
+            }
+        });
+        // Its own thread: these wait for the photo service, the state
+        // above must not (ADR 0025).
+        std::thread::spawn(|| {
+            loop {
+                std::thread::sleep(Duration::from_secs(5));
+                immich_restore::tick();
+                immich_restore::backup_tick();
             }
         });
     }
@@ -2309,9 +2320,17 @@ impl Live {
                 ("failed", fail_json(&Fail::new("immich.failed", m.clone())))
             }
         };
+        // The gallery of an archive opened with a new stick is being put
+        // back (ADR 0025): say so instead of "still starting".
+        let restoring = st == immich::State::Starting && immich_restore::pending();
         c.state = json!({
             "state": word, "error": error,
-            "detail": secs.map(immich::detail),
+            "restoring": restoring,
+            "detail": if restoring {
+                Some("Bringing your gallery back from the backup disk. This can take some minutes.".to_string())
+            } else {
+                secs.map(immich::detail)
+            },
             "seconds_starting": secs,
             "console_url": (st == immich::State::Ready).then_some(immich::CONSOLE_URL),
             // Feature gallery_session: set once the gallery proxy can answer.
@@ -3396,7 +3415,12 @@ impl Live {
             }
         };
         let stop = |unit: &str, secs: u64| bounded("systemctl", &["stop", unit], secs);
+        // Photos came in since the last backup of the gallery's database:
+        // one more, so that a new stick can bring the gallery back.
         step(self, "immich", "Stopping the photo service…", 10, &|| {
+            if !immich_restore::backup_now(Duration::from_secs(30)) {
+                eprintln!("alpd: gallery: no new backup of its database before turning off");
+            }
             stop(immich::UNIT, IMMICH_STOP_SECS) || {
                 // The pod did not stop in time: end it, the database
                 // recovers from its own log at the next start.

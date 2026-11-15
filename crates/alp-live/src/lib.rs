@@ -13,6 +13,7 @@ pub mod fail;
 pub mod format;
 pub mod http;
 pub mod immich;
+pub mod immich_restore;
 pub mod index;
 pub mod job;
 pub mod live;
