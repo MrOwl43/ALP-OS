@@ -84,6 +84,7 @@ test-vm-base:
     tests/vm/t-boot-03.sh {{image}}
     tests/vm/t-live-01.sh {{image}}
     tests/vm/t-live-02.sh {{image}}
+    tests/vm/t-upd-01.sh {{image}}
 
 test-vm-ui:
     tests/vm/t-api-01.sh {{image}}
