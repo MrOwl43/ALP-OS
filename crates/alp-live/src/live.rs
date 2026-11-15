@@ -380,6 +380,29 @@ fn tag(s: Status, color: bool) -> String {
 /// The report, as text (`color` = false, saved to the file) or for the
 /// screen (`color` = true: ANSI colours and box lines from the console
 /// font's character set).
+/// The name of this build for the report's header: the image's release
+/// name (`/usr/lib/alp/release`, "ALP-OS Live alpha 0.2.6"), or the
+/// program's own version outside an image.
+fn release_name() -> String {
+    release_name_of(
+        std::fs::read_to_string("/usr/lib/alp/release")
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn release_name_of(file: Option<&str>) -> String {
+    file.and_then(|t| t.lines().next())
+        .map(str::trim)
+        .filter(|l| {
+            !l.is_empty() && l.len() <= 60 && l.chars().all(|c| c.is_ascii_graphic() || c == ' ')
+        })
+        .map_or_else(
+            || format!("ALP-OS Live {}", env!("CARGO_PKG_VERSION")),
+            str::to_string,
+        )
+}
+
 pub fn render(r: &HwReport, checks: &[Check], now: &str, color: bool) -> String {
     let mut o = String::new();
     let width = 74;
@@ -390,16 +413,12 @@ pub fn render(r: &HwReport, checks: &[Check], now: &str, color: bool) -> String 
         let _ = writeln!(
             o,
             " │ {:<w$}│",
-            format!("ALP-OS Live {}  ·  {now}", env!("CARGO_PKG_VERSION")),
+            format!("{}  ·  {now}", release_name()),
             w = width - 1
         );
         let _ = writeln!(o, " └{}┘", "─".repeat(width));
     } else {
-        let _ = writeln!(
-            o,
-            "{title}\nALP-OS Live {}  ·  {now}\n",
-            env!("CARGO_PKG_VERSION")
-        );
+        let _ = writeln!(o, "{title}\n{}  ·  {now}\n", release_name());
     }
     let worst = checks
         .iter()
@@ -1049,6 +1068,18 @@ fn now_utc() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn release_name_comes_from_the_image() {
+        assert_eq!(
+            release_name_of(Some("ALP-OS Live alpha 0.2.6\n")),
+            "ALP-OS Live alpha 0.2.6"
+        );
+        let own = format!("ALP-OS Live {}", env!("CARGO_PKG_VERSION"));
+        assert_eq!(release_name_of(None), own);
+        assert_eq!(release_name_of(Some("\n")), own);
+        assert_eq!(release_name_of(Some("bad\x1b[31m name")), own);
+    }
 
     #[test]
     fn reads_minimums_from_the_profile() {
