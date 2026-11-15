@@ -35,6 +35,7 @@ probe='/usr/sbin/blockdev --getro /dev/vdb
 /usr/bin/ls /mnt
 /usr/sbin/nft list chain inet alp input
 /usr/bin/sh -c "ls /usr/lib/firmware/iwlwifi-*.ucode* | head -1"
+-/usr/bin/sh -c "echo DNS=$(systemctl is-active systemd-resolved.service) STUB=$(grep -c 127.0.0.53 /etc/resolv.conf) RTC=$(tail -n 1 /etc/adjtime) ZONE=$(TZ=Etc/GMT-2 date -d @0 +%z) NTPSYNC=$(test -e /run/systemd/timesync/synchronized && echo yes || echo no)"
 -/usr/bin/sh -c "echo PROTECTRUNS=$(systemctl list-units --all --no-legend --plain alp-live-protect-disk@* | wc -l) PROTECTFAILED=$(systemctl list-units --failed --no-legend --plain alp-live-protect-disk@* | wc -l) PROTECTERR=$(journalctl -b --no-pager | grep -c could.not.make)"'
 
 probe+=$'\n'"$(qa_http_probe NETSTATE GET /api/v1/live/state)"
@@ -70,6 +71,13 @@ expect "stick is recognised" 'vda .*this stick \(ALP-OS\)'
 expect "internal disk is listed as read-only" 'vdb .*internal, read-only'
 expect "home network has an address (DHCP)" 'Home network: connected on .*address 10\.0\.2\.15|"address": ?"10\.0\.2\.15"'
 expect "firewall drops unrequested traffic" 'policy drop'
+# 0.2.61: names can be looked up (the time servers), the hardware clock is
+# never written (LOCAL: systemd-timesyncd then leaves it alone), and the
+# time zone rules are there for the clock correction by hand.
+expect "name lookup runs on the loopback stub" 'DNS=active STUB=[1-9]'
+expect "the hardware clock is never written by time sync" 'RTC=LOCAL'
+expect "time zone rules are in the image" 'ZONE=\+0200'
+grep -q 'NTPSYNC=yes' <<<"$out" && echo "ok:   the clock was set from the network" || echo "note: the clock was not set from the network in this run"
 expect "Wi-Fi firmware is in the image" '/usr/lib/firmware/iwlwifi-'
 # The udev rule starts alp-live-protect-disk@ for each disk; none may fail
 # (0.2.4: the rule's own run failed on every disk).
