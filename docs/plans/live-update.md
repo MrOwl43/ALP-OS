@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Plan: a new version without erasing the stick (alpha 0.2.7, spec block 2 for Live)
 
-Status: plan, 2026-11-15. Nothing built yet. Two owner decisions are open
+Status: plan, 2026-11-15. Nothing built yet. One owner decision is open
 (marked **DECISION**).
 
 ## Why
@@ -40,7 +40,9 @@ One root slot, sized to fit exactly: nothing can be written beside it.
    in the image); `InstancesMax=2`.
 4. **Release** (`ci.yml` release job): besides the stick image, publish
    `alp-os_<version>.root.raw.xz`, `.verity.raw.xz`, `.efi`, `SHA256SUMS`
-   and `SHA256SUMS.gpg`. **DECISION 1: where the signing key lives.**
+   and `SHA256SUMS.gpg`. **Decision 1 (owner, 2026-11-15): the signing key is a GitHub Actions
+   secret and signs every release by itself. Before the public release it
+   moves offline, with a rotation and revocation plan.**
 5. **alpd + UI**: `GET live/update` (current version, newer version if
    any, last result), `POST live/update/check`, `POST live/update/apply`
    (job with progress; then asks to restart). Settings, "About and
