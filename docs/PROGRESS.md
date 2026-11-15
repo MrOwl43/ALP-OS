@@ -2,6 +2,17 @@
 
 Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
 
+## Alpha 0.2.61 (2026-11-15, branch claude/project-thread-o9ostf off live-alpha)
+
+- On the branch, no PR yet (needs the owner's OK): the phone's own certificate dated back; name lookup
+  (systemd-resolved) so the clock is set from the network; the hardware clock is never written
+  (`/etc/adjtime` LOCAL); `clock/sync`, `clock/base`, `prefs.lock_hide` (ADR 0024,
+  `docs/plans/live-alpha-api.md`); the time zone window; lock screen options; the gallery stays during a
+  video backup; Time & Language; gallery link cleanup; field-log fixes. Notes: `docs/ALPHA-0.2.61.md`.
+- Open: security review of ADR 0024 and of the 0.2.6 gallery / T62 / T63 before the beta; hardware test by
+  the owner; T67 (Wi-Fi rules file at early start).
+- Next after 0.2.61: remote access through our own relay, then backup between homes.
+
 ## Live UI 0.2.5 owner feedback (2026-11-08, branch claude/project-thread-ptxu5r off stream-a/live-alpha)
 
 - T53-T59 and the one-QR phone step, UI side: `docs/plans/live-ui-0.2.5-feedback.md`. New server calls are
