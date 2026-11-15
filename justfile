@@ -22,7 +22,7 @@ check:
     tests/contracts/check-install-layout.sh
     tests/e2e/t-e2e-01.sh --self-test
     tests/ci/check-snapshot-epoch.sh image/mkosi.conf
-    ALP_LOCK_SKIP='^(qemu-system-x86|qemu-utils|ovmf|swtpm|socat|ffmpeg|libheif-examples)$' tests/ci/check-build-tools.sh tests/ci/build-tools.lock
+    ALP_LOCK_SKIP='^(qemu-system-x86|qemu-utils|ovmf|swtpm|socat|ffmpeg|libheif-examples|libheif-plugin-x265)$' tests/ci/check-build-tools.sh tests/ci/build-tools.lock
 
 # Build the OS disk image into out/ and write out/SHA256SUMS
 build-image: (_build out)
