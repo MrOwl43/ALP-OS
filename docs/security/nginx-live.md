@@ -164,3 +164,16 @@ alpd may own 8412, and a port clash would stop nginx and phone backup.
 - Open for the security review: the earlier condition asked for a session
   token in an HttpOnly cookie; this design keeps the credential out of the
   browser entirely and uses the family account's existing key instead.
+
+### Console stylesheet for the gallery (alpha 0.2.61)
+
+nginx adds one stylesheet link to the gallery's pages on `127.0.0.1:8412`
+(`sub_filter`, `/alp-gallery.css` from `/usr/share/alp/immich/gallery.css`).
+It hides links to parts that have no use on the console: sharing, shared
+links, account settings, administration, purchase, utilities, workflows, the
+locked folder and the sign-in page. It is tidiness, not a control: every
+refusal stays in nginx (`$alp_deny`, the blocked sign-in routes) and in
+alpd's gate. Pages are fetched uncompressed from the photo service so the
+link can be added. The file is static, read-only in the image, and holds no
+script.
+

@@ -17,6 +17,9 @@ Wi-Fi-only laptop.
 - **Videos on the computer's screen.** The gallery no longer copies a video
   into memory while the player is paused, which could stop the part that
   serves the gallery.
+- **Tidier gallery.** Links to parts that have no use on the computer's
+  screen are hidden: sharing, account settings, administration, purchase,
+  utilities, workflows and the locked folder (it cannot work here yet).
 - **Faster start without a network.** The start no longer waits two minutes
   for a network on a computer where no Wi-Fi was picked yet.
 - **Hardware check.** The page shows the release name instead of "0.0.0".
@@ -37,6 +40,7 @@ Wi-Fi-only laptop.
 
 - The ALPArchive app could not connect in the 0.2.6 field test (cause not
   known yet).
-- The gallery still shows the photo service's full interface; parts that do
-  not apply here are not hidden yet, and the locked folder is not verified.
+- The gallery hides links by their address only; the account menu (sign out)
+  is still shown and does nothing. The locked folder is hidden until the
+  console can open it.
 - The Wi-Fi rules file is not found at early start (T67).
