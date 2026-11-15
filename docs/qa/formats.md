@@ -20,6 +20,12 @@ CI run is the current truth.
 | Pictures | JPEG, PNG, WebP, TIFF, BMP, GIF, JPEG 2000, JPEG XL, AVIF, HEIC |
 | Video (container, codec) | MP4 H.264; MP4 H.265; MOV H.265 10-bit; MP4 AV1; WebM VP9; MOV ProRes; MOV Motion JPEG; MKV H.264; AVI MPEG-4; MPG MPEG-2; MTS H.264; 3GP H.264; WMV; FLV; MXF MPEG-2 |
 
+## Result (CI run 43751701211, 2026-11-15, Immich v3.3.3)
+
+All 25 files were taken and came back byte for byte. 24 of 25 got a preview
+and every video was served for playing. The one without a preview:
+**JPEG 2000** (`.jp2`): kept, no picture in the gallery.
+
 ## Not in the set yet: camera RAW
 
 RAW files cannot be made from a test pattern; they need real files from
