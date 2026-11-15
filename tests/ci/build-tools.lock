@@ -37,3 +37,7 @@ systemd-ukify=259.9-0ubuntu0.1
 # cannot conflict with the pinned systemd again (run 40853097606).
 systemd-sysv=259.9-0ubuntu0.1
 util-linux=2.41.3-3ubuntu2.2
+# T-FORMAT-01 makes its sample pictures and clips with these (0.2.7: the
+# format test set; ffmpeg for every codec, heif-enc for HEIC).
+ffmpeg=7:8.0.1-3ubuntu2
+libheif-examples=1.21.2-3ubuntu0.7
