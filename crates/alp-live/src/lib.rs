@@ -5,6 +5,7 @@
 pub mod admin;
 pub mod archive;
 pub mod chain;
+pub mod clock;
 pub mod disks;
 pub mod display;
 pub mod events;

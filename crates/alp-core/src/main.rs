@@ -25,6 +25,8 @@ fn main() {
     let live = Live::new(alp_live::chain::Store::live());
     // Everything slow (hardware check, battery, TPM unlock) runs in the
     // background: the console answers at once (T28).
+    // First: certificates and tokens made later carry the corrected time.
+    live.clock_start();
     live.watch_hardware();
     live.watch_space();
     live.watch_status();
