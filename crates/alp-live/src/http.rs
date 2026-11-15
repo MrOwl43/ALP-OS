@@ -10,12 +10,24 @@ use std::time::Duration;
 #[derive(Debug)]
 pub struct Response {
     pub status: u16,
+    /// Header lines as sent: lower-case name, trimmed value.
+    pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
 }
 
 impl Response {
     pub fn json(&self) -> Option<serde_json::Value> {
         serde_json::from_slice(&self.body).ok()
+    }
+
+    /// The value of the cookie `name` among the `Set-Cookie` headers.
+    pub fn cookie(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .filter(|(k, _)| k == "set-cookie")
+            .filter_map(|(_, v)| v.split(';').next()?.split_once('='))
+            .find(|(k, _)| k.trim() == name)
+            .map(|(_, v)| v.trim())
     }
 }
 
@@ -79,9 +91,11 @@ pub fn parse(raw: &[u8]) -> Option<Response> {
     let status = lines.next()?.split_whitespace().nth(1)?.parse().ok()?;
     let mut chunked = false;
     let mut len = None;
+    let mut headers = Vec::new();
     for l in lines {
         let (k, v) = l.split_once(':')?;
         let (k, v) = (k.trim().to_ascii_lowercase(), v.trim());
+        headers.push((k.clone(), v.to_string()));
         if k == "transfer-encoding" && v.eq_ignore_ascii_case("chunked") {
             chunked = true;
         } else if k == "content-length" {
@@ -96,7 +110,11 @@ pub fn parse(raw: &[u8]) -> Option<Response> {
     } else {
         rest.to_vec()
     };
-    Some(Response { status, body })
+    Some(Response {
+        status,
+        headers,
+        body,
+    })
 }
 
 fn dechunk(mut b: &[u8]) -> Option<Vec<u8>> {

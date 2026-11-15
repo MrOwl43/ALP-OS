@@ -92,9 +92,11 @@ test-vm-ui:
     tests/vm/t-pair-01.sh {{image}}
     tests/vm/t-term-01.sh {{image}}
 
-# T-IMMICH-01 (with T-PAIR-02) and T-LIVE-03 need the photo service.
+# T-IMMICH-01 (with T-PAIR-02), T-IMMICH-02 (the gallery on a new stick)
+# and T-LIVE-03 need the photo service.
 test-vm-immich:
     tests/vm/t-immich-01.sh {{image}}
+    tests/vm/t-immich-02.sh {{image}}
     tests/vm/t-live-03.sh {{image}}
 
 # T-LIVE-04 (reset, cancel, real wipe), T-LIVE-05 (T49 quick and secure
