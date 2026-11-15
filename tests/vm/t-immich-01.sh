@@ -210,7 +210,7 @@ pair02() { # base, immich token
     echo "ok:   T-PAIR-CLOCK: the CA and the server certificate start a day before the computer's time"
     local gal
     gal=$(mark GAL 180) || { echo "FAIL: T-GAL-01: no result from the guest" >&2; return 1; }
-    [[ $gal == *"GAL gu=1 page=200 me=1 leak=0 anon=401 gate=401 del=403 out=403 locked=401 end"* ]] \
+    [[ $gal == *"GAL gu=1 page=200 css=1 cssf=1 me=1 leak=0 anon=401 gate=401 del=403 out=403 locked=401 end"* ]] \
         || { echo "FAIL: T-GAL-01: the console gallery on 8412 is not as expected (${gal#*PAIRAGENT })" >&2; return 1; }
     echo "ok:   T-GAL-01: the gallery answers on 8412 only while the console is signed in; no delete, no key in the browser"
 }
@@ -276,6 +276,10 @@ code() { curl -s -m 30 -o /dev/null -w '%{http_code}' "\$@"; }
 c -X POST \$A/console/signin -d '{"password":"$pw"}' >/dev/null
 gu=\$(c \$A/state | tr -d '\n' | grep -c '"gallery_url": *"http://127.0.0.1:8412/"')
 page=\$(code \$G/)
+# The pages carry the console's stylesheet, also when the browser asks for a
+# compressed answer, and the stylesheet is served.
+css=\$(curl -s -m 30 --compressed -H 'Accept-Encoding: gzip, br' \$G/ | grep -c 'href="/alp-gallery.css"')
+cssf=\$(curl -s -m 30 \$G/alp-gallery.css | grep -c 'a\[href="/user-settings"\]')
 me=\$(curl -s -m 30 -b /run/pa-jar \$G/api/users/me | grep -c 'family@alparchive.local')
 leak=\$(curl -s -m 30 -D - -o /dev/null -b /run/pa-jar \$G/api/users/me | grep -ci 'x-alp-gallery-key')
 anon=\$(code \$G/api/users/me)
@@ -284,7 +288,7 @@ del=\$(code -b /run/pa-jar -X DELETE \$G/api/assets)
 out=\$(code -b /run/pa-jar -X POST \$G/api/auth/logout)
 c -X POST \$A/console/lock -d '{}' >/dev/null
 locked=\$(code -b /run/pa-jar \$G/api/users/me)
-say "GAL gu=\$gu page=\$page me=\$me leak=\$leak anon=\$anon gate=\$gate del=\$del out=\$out locked=\$locked end"
+say "GAL gu=\$gu page=\$page css=\$css cssf=\$cssf me=\$me leak=\$leak anon=\$anon gate=\$gate del=\$del out=\$out locked=\$locked end"
 AGENT
 agent_b64=$(base64 -w0 <<<"$agent")
 

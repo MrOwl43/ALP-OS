@@ -1,0 +1,20 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* The console's gallery (nginx on 127.0.0.1:8412 adds this file to the web
+   gallery's pages). It hides links to parts that have no use on this
+   screen or cannot work here: the console signs in for the family account,
+   so there are no accounts, shares or server settings to manage, and the
+   locked folder needs a PIN session the console does not have yet.
+   Paths are the photo service's own routes (v3.3.3, web/src/lib/route.ts).
+   Hiding a link is only tidiness: what must not happen is refused by nginx
+   and alpd, not by this file. */
+a[href="/sharing"], a[href^="/sharing/"],
+a[href="/shared-links"], a[href^="/shared-links/"],
+a[href="/user-settings"], a[href^="/user-settings"],
+a[href^="/admin"],
+a[href="/buy"], a[href^="/buy?"],
+a[href="/utilities"], a[href^="/utilities/"],
+a[href="/workflows"], a[href^="/workflows/"],
+a[href="/locked"], a[href^="/locked/"],
+a[href="/auth/login"], a[href^="/auth/"] {
+  display: none !important;
+}
