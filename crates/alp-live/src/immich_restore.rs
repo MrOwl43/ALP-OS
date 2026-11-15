@@ -285,7 +285,8 @@ fn adopt() -> Result<(), Fail> {
             "PUT",
             &format!("/queues/{queue}"),
             &auth,
-            Some(&json!({"command": "start", "force": false})),
+            // All of them: the database still lists the old files.
+            Some(&json!({"command": "start", "force": true})),
         );
         if !r.is_ok_and(|r| (200..300).contains(&r.status)) {
             eprintln!("alpd: gallery: {queue} not started; Immich does it at night");
