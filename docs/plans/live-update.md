@@ -1,8 +1,9 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Plan: a new version without erasing the stick (alpha 0.2.7, spec block 2 for Live)
 
-Status: plan, 2026-11-15. Nothing built yet. One owner decision is open
-(marked **DECISION**).
+Status: 2026-11-15: steps 1 to 3 built, the tool for step 4 built
+(`tools/update-files.sh`); the release job, alpd + UI and T-UPD-03..05
+are next. Details of what changed while building: ADR 0026.
 
 ## Why
 
@@ -36,7 +37,7 @@ One root slot, sized to fit exactly: nothing can be written beside it.
 2. **Boot**: UKIs named by version on the ESP with boot counting (`+3`),
    `systemd-bless-boot` after `alp-healthy.target`. Already in the image for
    the installed layout (T-BOOT tests); check it holds on the Live layout.
-3. **Transfer files** (`image/sysupdate.d`): root, verity, UKI from one
+3. **Transfer files** (`image/extra/usr/lib/sysupdate.d`): root, verity, UKI from one
    HTTPS folder; `Verify=yes` (signed `SHA256SUMS`, the project's public key
    in the image); `InstancesMax=2`.
 4. **Release** (`ci.yml` release job): besides the stick image, publish

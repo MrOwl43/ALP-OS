@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Updates in place (ADR 0026): the start file (UKI: kernel, initrd and the
+# root hash) of a new version. It goes to the alp-boot partition (XBOOTLDR,
+# which alpd mounts at /boot for the update), with a boot counter: three
+# tries. A start that reaches alp-healthy.target is marked good
+# (alp-live-bless.service) and loses the counter; one that never does is
+# skipped by systemd-boot after the third try, and the version before it
+# starts again.
+[Transfer]
+Verify=yes
+ProtectVersion=%A
+
+[Source]
+Type=url-file
+Path=https://github.com/MrOwl43/ALP-OS/releases/download/updates/
+MatchPattern=alp-os_@v.efi
+
+[Target]
+Type=regular-file
+Path=/EFI/Linux
+PathRelativeTo=boot
+MatchPattern=alp-os_@v+@l-@d.efi \
+             alp-os_@v+@l.efi \
+             alp-os_@v.efi
+Mode=0444
+TriesLeft=3
+TriesDone=0
+InstancesMax=2

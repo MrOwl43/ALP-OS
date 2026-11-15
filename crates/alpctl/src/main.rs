@@ -19,9 +19,10 @@ fn main() {
         ["live", "index", rest @ ..] => index::cli(rest),
         ["live", "immich", rest @ ..] => immich::cli(rest),
         ["live", "pair", rest @ ..] => alp_live::pairing::cli(rest),
+        ["live", "update", rest @ ..] => alp_live::update::cli(rest),
         _ => {
             eprintln!(
-                "usage: alpctl live report | screen | splash | protect-disks | diag | bootlog | term-logs | archive … | index … | immich …"
+                "usage: alpctl live report | screen | splash | protect-disks | diag | bootlog | term-logs | archive … | index … | immich … | update …"
             );
             2
         }

@@ -40,7 +40,7 @@ _build dir: _stage
     mkdir -p {{dir}}
     # Each output directory has its own package cache, so repro builds start clean.
     # At most one image build at a time on this machine (tests/lib/locks.sh).
-    tests/lib/locks.sh image-build mkosi -C image --output-directory={{dir}} --package-cache-dir={{dir}}/pkgcache -f build
+    tests/lib/locks.sh image-build mkosi -C image --image-version="${ALP_IMAGE_VERSION:-$(tools/update-version.sh)}" --output-directory={{dir}} --package-cache-dir={{dir}}/pkgcache -f build
     # Hash only build artifacts (test results such as budget.json are not artifacts).
     cd {{dir}} && rm -f budget.json && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS
 
@@ -61,6 +61,12 @@ _stage:
     cp -r --no-preserve=mode,ownership ui/live target/alp-image-tree/usr/share/alp/ui/live
     rm -f target/alp-image-tree/usr/share/alp/ui/live/mock.js
     install -D -m 0644 profiles/generic-x86_64.toml target/alp-image-tree/usr/share/alp/profiles/generic-x86_64.toml
+    # The update key's public half (image/keys/README.md, ADR 0026) as the
+    # keyring systemd-sysupdate checks signatures with; without the key an
+    # empty keyring, which accepts nothing (and replaces the distribution
+    # keys that systemd-container ships there).
+    mkdir -p target/alp-image-tree/usr/lib/systemd
+    if [ -f image/keys/update-signing.asc ]; then gpg --batch --no-options --dearmor <image/keys/update-signing.asc >target/alp-image-tree/usr/lib/systemd/import-pubring.gpg; else : >target/alp-image-tree/usr/lib/systemd/import-pubring.gpg; fi
     # ttyd for the Terminal (image/terminal/ttyd.lock): upstream's static
     # release, checksum-pinned (Debian trixie has no ttyd package).
     image/terminal/fetch.sh {{out}}/ttyd target/alp-image-tree
@@ -75,7 +81,7 @@ _stage:
 # T-BOOT-03 tampered root, T-LIVE-01 hardware report and read-only disks,
 # T-LIVE-02 encrypted archive, T-API-01 console API, T-IMMICH-01 phone backup,
 # T-UI-01 kiosk screen, T-UI-02 second start, T-PAIR-01 phone pairing, T-TERM-01 Terminal. ALP_QA_STRICT=1 turns skips into failures.
-test-vm: test-vm-base test-vm-ui test-vm-immich test-vm-storage
+test-vm: test-vm-base test-vm-ui test-vm-immich test-vm-storage test-vm-update
 
 # The same scenarios in three groups that each fit CI's hour (they run as
 # parallel jobs there; owner, 2026-10-30).
@@ -84,7 +90,6 @@ test-vm-base:
     tests/vm/t-boot-03.sh {{image}}
     tests/vm/t-live-01.sh {{image}}
     tests/vm/t-live-02.sh {{image}}
-    tests/vm/t-upd-01.sh {{image}}
 
 test-vm-ui:
     tests/vm/t-api-01.sh {{image}}
@@ -100,6 +105,14 @@ test-vm-immich:
     tests/vm/t-immich-02.sh {{image}}
     tests/vm/t-format-01.sh {{image}}
     tests/vm/t-live-03.sh {{image}}
+
+# Updates in place (ADR 0026): T-UPD-01 (the stick's layout) and T-UPD-02 (a
+# full update: a second image of this commit with a higher version is built,
+# offered as update files and started). Its own CI job: two image builds.
+test-vm-update:
+    tests/vm/t-upd-01.sh {{image}}
+    ALP_IMAGE_VERSION=9.9.90 just _build {{out}}/next
+    tests/vm/t-upd-02.sh {{image}} {{out}}/next/alp-os.raw 9.9.90
 
 # T-LIVE-04 (reset, cancel, real wipe), T-LIVE-05 (T49 quick and secure
 # format) and T-LIVE-06 (read-only Files): external disks, in their own CI job.
