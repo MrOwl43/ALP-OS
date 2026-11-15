@@ -79,6 +79,10 @@ sed -n 's/.*"certificate": *"\([^"]*\)".*/\1/p' <<<"$s" | sed 's/\\n/\n/g' >phon
 openssl verify -CAfile ca.pem phone.crt >/dev/null 2>&1 && ok "device certificate chains to the endorsed CA" || bad "device certificate does not chain"
 openssl x509 -in phone.crt -noout -ext extendedKeyUsage 2>/dev/null | grep -q "Client Authentication" && ok "device certificate is for client authentication" || bad "no clientAuth"
 [ "$(openssl x509 -in phone.crt -noout -pubkey)" = "$(openssl pkey -in phone.key -pubout)" ] && ok "certificate is for the phone's own key" || bad "certificate key differs"
+# The device certificate starts a day back, like the server's (a computer
+# clock that runs ahead must not make it "not valid yet" on the phone).
+nb=$(date -u -d "$(openssl x509 -in phone.crt -noout -startdate | cut -d= -f2)" +%s 2>/dev/null || echo 0)
+[ "$nb" -gt 0 ] && [ $(( $(date -u +%s) - nb )) -ge 82800 ] && ok "device certificate starts a day back" || bad "device certificate starts now ($nb)"
 grep -qx "$serial 1;" /run/alp/devices-map.conf && ok "device is on the nginx allowlist" || bad "device not on the allowlist"
 grep -q "\"serial\":\"$serial\"" /var/lib/alp-index/alp/tls/devices.jsonl && ok "device is in the signed register" || bad "device not in the register"
 # Rejected on the console.

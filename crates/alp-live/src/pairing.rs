@@ -394,8 +394,39 @@ pub fn p256_key_text(text: &str) -> bool {
             .any(|l| l.trim().starts_with("Public-Key: (256 bit)"))
 }
 
-/// Sign a device certificate (clientAuth, 90 days) with the CA; the
-/// subject is ours, not the phone's.
+/// `date -u -d <when>` as `openssl ca` wants it (YYYYMMDDHHMMSSZ).
+fn openssl_date(when: &str) -> Result<String, String> {
+    let out = std::process::Command::new("date")
+        .args(["-u", "-d", when, "+%Y%m%d%H%M%SZ"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if out.status.success() && text.len() == 15 && text.ends_with('Z') {
+        Ok(text)
+    } else {
+        Err("the date could not be read".into())
+    }
+}
+
+/// The throwaway configuration for `openssl ca` in directory `w`: its
+/// bookkeeping files live there, and `[dev]` holds the device
+/// certificate's extensions.
+fn device_ca_config(w: &str) -> String {
+    format!(
+        "[ca]\ndefault_ca = alp\n[alp]\ndatabase = {w}/index\nnew_certs_dir = {w}\nserial = {w}/serial\n\
+         default_md = sha256\npolicy = any\nunique_subject = no\ncopy_extensions = none\n\
+         [any]\norganizationName = optional\ncommonName = supplied\n\
+         [dev]\nbasicConstraints = critical,CA:FALSE\nkeyUsage = critical,digitalSignature\n\
+         extendedKeyUsage = clientAuth\nsubjectKeyIdentifier = hash\nauthorityKeyIdentifier = keyid\n"
+    )
+}
+
+/// Sign a device certificate (clientAuth) with the CA; the subject is ours,
+/// not the phone's. Like the server's certificates (`alp-live-tls`), it
+/// starts one day back: the computer's clock can be hours ahead of the
+/// phone's, and the phone refuses a certificate that is "not valid yet"
+/// (alpha 0.2.6 field report). `openssl ca` is used because it takes an
+/// explicit start date; its bookkeeping files are thrown away.
 fn sign_device(csr: &str, serial: &str) -> Result<String, Fail> {
     let failed = |e: String| {
         Fail::new(
@@ -404,37 +435,50 @@ fn sign_device(csr: &str, serial: &str) -> Result<String, Fail> {
         )
     };
     let dir = Path::new(TLS_DIR);
-    let ext = dir.join("device.ext");
-    fs::write(
-        &ext,
-        "basicConstraints = critical,CA:FALSE\nkeyUsage = critical,digitalSignature\nextendedKeyUsage = clientAuth\nsubjectKeyIdentifier = hash\nauthorityKeyIdentifier = keyid\n",
-    )
-    .map_err(|e| failed(e.to_string()))?;
-    let res = run_in(
-        "openssl",
-        &[
-            "x509",
-            "-req",
-            "-in",
-            "/dev/stdin",
-            "-CA",
-            &dir.join("ca.crt").to_string_lossy(),
-            "-CAkey",
-            &dir.join("ca.key").to_string_lossy(),
-            "-set_serial",
-            &format!("0x{serial}"),
-            "-days",
-            DEVICE_DAYS,
-            "-sha256",
-            "-subj",
-            &format!("/O=ALPArchive/CN=alp-device-{}", &serial[..8]),
-            "-extfile",
-            &ext.to_string_lossy(),
-        ],
-        csr,
-    );
-    let _ = fs::remove_file(&ext);
-    res.map_err(failed)
+    let w = dir.join(format!("sign-{}", &serial[..8]));
+    let _ = fs::remove_dir_all(&w);
+    let made = (|| -> Result<String, String> {
+        let ws = w.to_string_lossy().to_string();
+        fs::create_dir(&w).map_err(|e| e.to_string())?;
+        fs::write(w.join("index"), "").map_err(|e| e.to_string())?;
+        fs::write(w.join("serial"), format!("{serial}\n")).map_err(|e| e.to_string())?;
+        let cnf = w.join("ca.cnf");
+        fs::write(&cnf, device_ca_config(&ws)).map_err(|e| e.to_string())?;
+        let start = openssl_date("1 day ago")?;
+        let end = openssl_date(&format!("{DEVICE_DAYS} days"))?;
+        run_in(
+            "openssl",
+            &[
+                "ca",
+                "-batch",
+                "-notext",
+                "-config",
+                &cnf.to_string_lossy(),
+                "-startdate",
+                &start,
+                "-enddate",
+                &end,
+                "-cert",
+                &dir.join("ca.crt").to_string_lossy(),
+                "-keyfile",
+                &dir.join("ca.key").to_string_lossy(),
+                "-subj",
+                &format!("/O=ALPArchive/CN=alp-device-{}", &serial[..8]),
+                "-extensions",
+                "dev",
+                "-in",
+                "/dev/stdin",
+            ],
+            csr,
+        )
+    })();
+    let _ = fs::remove_dir_all(&w);
+    let pem = made.map_err(failed)?;
+    if pem.contains("-----BEGIN CERTIFICATE-----") {
+        Ok(pem)
+    } else {
+        Err(failed("no certificate came back".into()))
+    }
 }
 
 /// A paired device, as kept in the register.
