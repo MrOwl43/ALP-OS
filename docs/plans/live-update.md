@@ -1,9 +1,10 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Plan: a new version without erasing the stick (alpha 0.2.7, spec block 2 for Live)
 
-Status: 2026-11-15: steps 1 to 3 built, the tool for step 4 built
-(`tools/update-files.sh`); the release job, alpd + UI and T-UPD-03..05
-are next. Details of what changed while building: ADR 0026.
+Status: 2026-11-16: steps 1 to 5 built (T-UPD-01, T-UPD-02 and the UI smoke
+test pass); the release job signs once the project's key exists. Next:
+reboot on an unhealthy counted start and T-UPD-03..05. What changed while
+building: ADR 0026.
 
 ## Why
 

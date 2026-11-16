@@ -28,6 +28,22 @@ listed here, newest first, before the code changes.
   the clock was set from the network (`clock.synced`), alpd signs out phone
   sessions the photo service has not seen for 60 days and writes each
   removal to the journal. The phone signs in again with the ALP password.
+- 2026-11-16 (0.2.7; additive; ADR 0026): feature `update`, a new version
+  without writing the stick again. `state.update` is `{supported, current,
+  checked, newer, error, job}`: `supported` is false on a stick without
+  update slots (under 28 GiB, or first started before 0.2.7); `current` is
+  the running version as people read it (`0.2.7`); `newer` is `null` or
+  `{version, state}` with `state` `available` (on the server), `installed`
+  (on the stick, the next start uses it) or `failed` (it was tried three
+  times and never became healthy; the stick stays on `current`); `error`
+  is the last failure (`update.offline`, `update.bad_signature`,
+  `update.failed`). `POST update/check` (`{}`) asks the update server and
+  `POST update/apply` (`{}`) downloads and writes the version the last check
+  found; both answer `202 {job}` (`update.check`, `update.apply`, with
+  `percent` while writing) and are followed in `state.update`. `409
+  update.busy`, `409 update.unsupported`, `409 update.none` (nothing to
+  install), `409 archive.busy` (a disk job runs). The running system is
+  never changed; `power/off` with `restart` starts the new version.
 - 2026-11-15 (0.2.6 field report; additive; ADR 0024):
   1. Feature `clock_sync`: `state.clock.synced_at` is the time (seconds
      since 1970) the network last set the clock, or `null`. `POST

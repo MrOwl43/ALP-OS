@@ -47,6 +47,24 @@ srv_pid=$!
 
 # Inside the guest: this test's key and web server instead of the project's.
 testsrc="-/bin/bash -c 'mkdir -p /run/alp-test/d && echo $pubring | base64 -d > /run/alp-test/pubring.gpg && for f in /usr/lib/sysupdate.d/*.transfer; do sed \"s|^Path=https://.*|Path=http://10.0.2.2:$port/|\" \$f > /run/alp-test/d/\$(basename \$f); done && mount --bind /run/alp-test/pubring.gpg /usr/lib/systemd/import-pubring.gpg && mount --bind /run/alp-test/d /usr/lib/sysupdate.d && echo TESTSRC-ok'"
+# The same steps the Settings screen takes, through alpd's API (feature
+# update), as a script run in the guest: look for updates, install, and
+# follow state.update until the version is on the stick.
+api_script=$(base64 -w0 <<'SCRIPT'
+api() { curl -s -m 20 -H "Origin: http://127.0.0.1:8411" -H "Cookie: $(cat /run/qa-cookie)" "$@"; }
+post() { api -X POST -H "Content-Type: application/json" -d "{}" "http://127.0.0.1:8411/api/v1/live/update/$1" | head -c 300; echo; }
+newer() { api http://127.0.0.1:8411/api/v1/live/state | grep -o '"newer":{[^}]*}' | head -n 1; }
+wait_for() { # state word, tries of 2 s
+    for _ in $(seq "$2"); do
+        n=$(newer); case $n in *"\"state\":\"$1\""*) break ;; esac; sleep 2
+    done
+    echo "API-$1 $n"
+}
+echo "API-POST-check $(post check)"; wait_for available 60
+echo "API-POST-apply $(post apply)"; wait_for installed 800
+api http://127.0.0.1:8411/api/v1/live/state | grep -o '"update":{.*' | head -c 600; echo
+SCRIPT
+)
 check() { printf '%s' "-/bin/bash -c 'echo $1-BEGIN; alpctl live update check 2>&1 | tail -n 8; echo $1-END'"; }
 between() { sed -n "/$1-BEGIN/,/$1-END/p" <<<"$out" | tr -d '\r'; }
 boot() { # probe, seconds
@@ -62,7 +80,7 @@ boot "$(QA_HTTP_TIMEOUT=120 qa_http_probe SETUP POST /api/v1/live/password/setup
 $testsrc
 -/bin/bash -c 'echo \$(grep ^IMAGE_VERSION= /usr/lib/os-release || echo IMAGE_VERSION=none)'
 $(check CHECK1)
--/bin/bash -c 'echo APPLY-BEGIN; alpctl live update apply $version 2>&1 | tail -n 15; echo APPLY-END'
+-/bin/bash -c 'echo APPLY-BEGIN; echo $api_script | base64 -d > /run/alp-test/api.sh; bash /run/alp-test/api.sh 2>&1; echo APPLY-END'
 $(check CHECK2)
 -/bin/bash -c 'echo PARTS-BEGIN; lsblk -rno PARTLABEL /dev/\$(lsblk -rno PKNAME \$(findmnt -no SOURCE /var/lib/alp) | head -n 1); echo PARTS-END'" 1800
 grep -q 'TESTSRC-ok' <<<"$out" || qa_skip "T-UPD-02: the update tools are not in this image yet"
@@ -70,7 +88,10 @@ old=$(grep -o 'IMAGE_VERSION="\?[0-9.]*' <<<"$out" | head -n 1 | tr -d '"' | cut
 [[ -n $old && $old != "$version" ]] || fail "the written image has no version of its own: '$old'"
 between CHECK1 | grep -q "^newer $version available" || fail "the new version was not found: $(between CHECK1)"
 echo "ok:   $old finds version $version (signature checked)"
-between APPLY | grep -q "^written $version" || fail "the update was not written: $(between APPLY)"
+shown=${version%0}   # what people see: 9.9.90 is shown as 9.9.9
+between APPLY | grep -q "^API-available .*\"version\":\"$shown\"" || fail "alpd did not find the new version: $(between APPLY)"
+between APPLY | grep -q "^API-installed .*\"state\":\"installed\"" || fail "alpd did not write the update: $(between APPLY)"
+echo "ok:   alpd's update API finds and installs the version (as the Settings screen does)"
 between CHECK2 | grep -q "^newer $version installed" || fail "the written version is not seen as installed: $(between CHECK2)"
 between CHECK2 | grep -q "^start-file alp-os_$version+3-0.efi" || fail "the new start file has no boot counter of three tries: $(between CHECK2)"
 parts=$(between PARTS)

@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use alp_live::fail::Fail;
 use alp_live::{
     admin, archive, chain, clock, disks, display, events, format, immich, immich_restore, index,
-    job, live, pairing, prefs, qr, recovery, wifi,
+    job, live, pairing, prefs, qr, recovery, update, wifi,
 };
 use serde_json::{Value, json};
 
@@ -244,6 +244,9 @@ pub struct Live {
     chain: chain::Store,
     wifi_job: Mutex<Option<Job>>,
     archive_job: Mutex<Option<Job>>,
+    /// Updates in place (ADR 0026): what the last check found, and the job
+    /// of a check or of writing a new version.
+    update: Mutex<UpdateCache>,
     networks: Mutex<Vec<wifi::Network>>,
     immich: Mutex<ImmichCache>,
     tries: Mutex<Tries>,
@@ -367,6 +370,9 @@ fn status_for(key: &str) -> u16 {
         | "setup.busy"
         | "archive.not_creating"
         | "archive.not_open"
+        | "update.busy"
+        | "update.unsupported"
+        | "update.none"
         | "network.offline" => 409,
         "archive.refused" => 422,
         "archive.forget" | "format.confirm_stale" | "archive.critical" => 409,
@@ -405,6 +411,30 @@ fn status_for(key: &str) -> u16 {
         "index.failed" => 500,
         "internal" | "immich.failed" | "reset.failed" => 500,
         _ => 400,
+    }
+}
+
+/// What the last update check found (ADR 0026).
+#[derive(Default)]
+struct UpdateCache {
+    checked: bool,
+    newer: Option<update::Newer>,
+    error: Option<Fail>,
+    job: Option<Job>,
+}
+
+/// [`update::supported`], asked at most every 30 seconds (it reads the
+/// stick's partition table; the state is polled every second).
+fn update_supported() -> bool {
+    static CACHE: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
+    let mut c = lock(&CACHE);
+    match *c {
+        Some((at, v)) if v || at.elapsed() < Duration::from_secs(30) => v,
+        _ => {
+            let v = update::supported();
+            *c = Some((Instant::now(), v));
+            v
+        }
     }
 }
 
@@ -646,6 +676,7 @@ impl Live {
             chain,
             wifi_job: Mutex::new(None),
             archive_job: Mutex::new(None),
+            update: Mutex::new(UpdateCache::default()),
             networks: Mutex::new(Vec::new()),
             immich: Mutex::new(ImmichCache::default()),
             tries: Mutex::new(Tries::default()),
@@ -1662,6 +1693,8 @@ impl Live {
                 Ok(Response::json(202, &json!({"clock": clock_json()})))
             }),
             "clock/base" if post => self.clock_base(req),
+            "update/check" if post => body(req).and_then(|_| self.update_check()),
+            "update/apply" if post => self.update_apply(req),
             "display/modes" if get => self.display_modes(),
             "display/mode" if post => self.display_mode(req),
             "display/mode/keep" if post => self.display_keep(req),
@@ -1800,6 +1833,8 @@ impl Live {
             | "prefs"
             | "clock/sync"
             | "clock/base"
+            | "update/check"
+            | "update/apply"
             | "display/modes"
             | "display/mode"
             | "display/mode/keep"
@@ -1876,6 +1911,133 @@ impl Live {
     /// system clock is moved to match and the answer is kept on the stick
     /// for the next start. Refused once the network set the clock: then
     /// there is nothing to correct.
+    /// `state.update` (feature `update`, ADR 0026): whether this stick can
+    /// take a new version in place, the running version, what the last
+    /// check found and the job of a check or of writing.
+    fn update_json(&self) -> Value {
+        let u = lock(&self.update);
+        json!({
+            "supported": update_supported(),
+            "current": update::running().map(|v| update::display(&v)),
+            "checked": u.checked,
+            "newer": u.newer.as_ref().map(|n| json!({
+                "version": update::display(&n.version),
+                "state": n.state.as_str(),
+            })),
+            "error": u.error.as_ref().map(fail_json),
+            "job": u.job.as_ref().map(Job::json),
+        })
+    }
+
+    /// One update job at a time; nothing while a disk job runs (both write
+    /// a lot, and the stick is the slow one).
+    fn update_start(&self, id: &'static str, message: &str) -> Result<Job, Fail> {
+        // Asked fresh (not the state's 30 second memory): the slots are
+        // made when the password is chosen.
+        if !update::supported() {
+            return Err(Fail::new(
+                "update.unsupported",
+                "This stick has no room for a new version. Write the new version to the stick instead.",
+            ));
+        }
+        if Job::running(&lock(&self.archive_job)) {
+            return Err(busy());
+        }
+        let mut u = lock(&self.update);
+        if Job::running(&u.job) {
+            return Err(Fail::new(
+                "update.busy",
+                "An update is already being checked or written.",
+            ));
+        }
+        let job = Job::start(id, "update", message, None);
+        u.job = Some(job.clone());
+        u.error = None;
+        Ok(job)
+    }
+
+    fn update_end(&self, r: Result<&str, Fail>) {
+        let mut u = lock(&self.update);
+        if let Some(j) = u.job.as_mut() {
+            match &r {
+                Ok(message) => {
+                    j.state = "done";
+                    j.step = "done".into();
+                    j.message = (*message).into();
+                    j.percent = Some(100);
+                }
+                Err(e) => {
+                    j.state = "failed";
+                    j.message.clone_from(&e.message);
+                    j.error = Some(e.clone());
+                }
+            }
+        }
+        u.error = r.err();
+    }
+
+    /// `POST update/check`: ask the update server (in the background; the
+    /// result is `state.update`).
+    fn update_check(self: &Arc<Self>) -> Result<Response, Fail> {
+        let job = self.update_start("update.check", "Looking for a new version…")?;
+        let me = Arc::clone(self);
+        std::thread::spawn(move || match update::check() {
+            Ok(status) => {
+                {
+                    let mut u = lock(&me.update);
+                    u.checked = true;
+                    u.newer = status.newer;
+                }
+                me.update_end(Ok("Checked."));
+            }
+            Err(e) => {
+                eprintln!("alpd: update check: {}", e.message);
+                me.update_end(Err(e));
+            }
+        });
+        Ok(Response::json(202, &json!({"job": job.json()})))
+    }
+
+    /// `POST update/apply`: download and write the version the last check
+    /// found. The running system is not touched; a restart starts the new
+    /// version.
+    fn update_apply(self: &Arc<Self>, req: &Request) -> Result<Response, Fail> {
+        body(req)?;
+        let version = match lock(&self.update).newer.as_ref() {
+            Some(n) if n.state == update::NewerState::Available => n.version.clone(),
+            _ => {
+                return Err(Fail::new(
+                    "update.none",
+                    "There is no new version to install. Look for updates first.",
+                ));
+            }
+        };
+        let shown = update::display(&version);
+        let job = self.update_start("update.apply", &format!("Downloading version {shown}…"))?;
+        let me = Arc::clone(self);
+        std::thread::spawn(move || {
+            let r = update::apply(&version, &mut |percent| {
+                if let Some(j) = lock(&me.update).job.as_mut() {
+                    j.percent = Some(percent);
+                    j.moved = Instant::now();
+                }
+            });
+            match r {
+                Ok(()) => {
+                    if let Some(n) = lock(&me.update).newer.as_mut() {
+                        n.state = update::NewerState::Installed;
+                    }
+                    me.update_end(Ok("The new version is ready. Restart to use it."));
+                }
+                Err(e) => {
+                    eprintln!("alpd: update apply: {}", e.message);
+                    me.update_end(Err(e));
+                }
+            }
+        });
+        Ok(Response::json(202, &json!({"job": job.json()})))
+    }
+
     fn clock_base(&self, req: &Request) -> Result<Response, Fail> {
         let b = body(req)?;
         let local = field(&b, "local")?
@@ -2207,6 +2369,7 @@ impl Live {
             "features": features(),
             "prefs": lock(&self.prefs).json(),
             "clock": clock_json(),
+            "update": self.update_json(),
             "display": display::state_json(),
             // Never the session's address (plan, build note 3).
             "terminal": live_terminal::state_json(),
@@ -3804,6 +3967,7 @@ const FEATURES: &[&str] = &[
     "clock_sync",
     "clock_base",
     "lock_hide",
+    "update",
 ];
 
 /// [`FEATURES`], plus `display_modes` when the image has `wlr-randr` and
