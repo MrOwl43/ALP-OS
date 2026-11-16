@@ -77,8 +77,22 @@ source).
 - A disk whose archive never got a backup file (alpha 0.2.6 and older ran
   no backup while the computer was off at night) has nothing to restore:
   the gallery starts empty as before. The photos are on the disk.
-- The restore trusts the backup file on the archive. Someone who can
-  write to the open archive can already replace the photos themselves.
-- The restore never touches the photos. If it fails, the behaviour is the
-  one before this ADR.
+- The restore trusts the backup file on the archive. On an encrypted
+  archive only someone with the key can write it. **Open (security
+  review, 2026-11-16, owner's decision):** on an archive that is not
+  encrypted, someone who had the disk in their hands can put a prepared
+  backup file there. It is read as the database's administrator when a
+  new stick opens the disk, which is more than replacing photos: it can
+  add accounts or links the attacker knows, and run commands inside the
+  database's container. Proposed: on an archive that is not encrypted,
+  ask the person before the gallery is put back.
+- The restore never touches the photos. A restore that fails is tried
+  again, three times; then the behaviour is the one before this ADR.
+  The backup the restore starts from is first copied to
+  `backups/alp-kept/` (security review, 2026-11-16): Immich keeps only
+  its 14 newest backups, and an empty gallery after a failed restore
+  would push the real one out within hours. The gallery is taken over
+  without a restore only when Immich itself says it has an owner
+  (`GET /api/server/config`, `isInitialized`), not on any refusal.
+  Folders and files that are links are not used for this.
 - Test: T-IMMICH-02 (two sticks, one disk).

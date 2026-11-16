@@ -14,6 +14,11 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
 - (2) ADR 0026, `docs/plans/live-update.md`: layout (slots + `alp-boot`), sysupdate transfer files,
   `crates/alp-live/src/update.rs` (`alpctl live update bless|check|apply`), `tools/update-files.sh`,
   T-UPD-01/02 in the CI group "update" (builds a second image as version 9.9.90; green 2026-11-16),
+  Security review 2026-11-16 (clock, gallery restore, updates): fixed in code: signing key in the
+  environment `release` (main only), unknown-key test, restore retries and keeps its backup aside,
+  bless waits for the lock, no switch-off while writing, version names. Open: owner's decision on
+  restore from an archive that is not encrypted (ADR 0025); links on a plain archive (immich.rs
+  ensure_dir/bind follow them); clock set far ahead by the network (certificate dated in the future).
   alpd feature `update` (`state.update`, `update/check`, `update/apply`), Settings > About > Updates, release
   job step "Update files (signed)" (rolling release tag `updates`; skipped until the Actions secret
   `UPDATE_SIGNING_KEY` and `image/keys/update-signing.asc` exist: the owner needs steps for that). Still to

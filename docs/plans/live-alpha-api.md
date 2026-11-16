@@ -42,7 +42,8 @@ listed here, newest first, before the code changes.
   found; both answer `202 {job}` (`update.check`, `update.apply`, with
   `percent` while writing) and are followed in `state.update`. `409
   update.busy`, `409 update.unsupported`, `409 update.none` (nothing to
-  install), `409 archive.busy` (a disk job runs). The running system is
+  install), `409 archive.busy` (a disk job runs), `409 update.running`
+  (`power/off` while a version is being written). The running system is
   never changed; `power/off` with `restart` starts the new version.
 - 2026-11-15 (0.2.6 field report; additive; ADR 0024):
   1. Feature `clock_sync`: `state.clock.synced_at` is the time (seconds

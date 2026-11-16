@@ -17,6 +17,9 @@
 # using one try of the boot counter; the fourth start is the old version
 # again, with its index, and it says that the new version did not start.
 #
+# Also in start 1, before the test's key is put in: the same files, signed
+# correctly by a key the image does not know, are refused (ADR 0026 item 7).
+#
 # T-UPD-05, in start 2: the update server offers a list of files that was
 # changed after it was signed; the stick refuses it.
 #
@@ -59,7 +62,10 @@ unset GNUPGHOME
 srv_pid=$!
 
 # Inside the guest: this test's key and web server instead of the project's.
-testsrc="-/bin/bash -c 'mkdir -p /run/alp-test/d && echo $pubring | base64 -d > /run/alp-test/pubring.gpg && for f in /usr/lib/sysupdate.d/*.transfer; do sed \"s|^Path=https://.*|Path=http://10.0.2.2:$port/|\" \$f > /run/alp-test/d/\$(basename \$f); done && mount --bind /run/alp-test/pubring.gpg /usr/lib/systemd/import-pubring.gpg && mount --bind /run/alp-test/d /usr/lib/sysupdate.d && echo TESTSRC-ok'"
+testdir="-/bin/bash -c 'mkdir -p /run/alp-test/d && for f in /usr/lib/sysupdate.d/*.transfer; do sed \"s|^Path=https://.*|Path=http://10.0.2.2:$port/|\" \$f > /run/alp-test/d/\$(basename \$f); done && mount --bind /run/alp-test/d /usr/lib/sysupdate.d && echo TESTDIR-ok'"
+testkey="-/bin/bash -c 'echo $pubring | base64 -d > /run/alp-test/pubring.gpg && mount --bind /run/alp-test/pubring.gpg /usr/lib/systemd/import-pubring.gpg && echo TESTSRC-ok'"
+testsrc="$testdir
+$testkey"
 # The same steps the Settings screen takes, through alpd's API (feature
 # update), as a script run in the guest: look for updates, install, and
 # follow state.update until the version is on the stick.
@@ -90,7 +96,9 @@ fail() { echo "FAIL: T-UPD-02: $*" >&2; exit 1; }
 
 # Start 1: choose the password, find the update, write it.
 boot "$(QA_HTTP_TIMEOUT=120 qa_http_probe SETUP POST /api/v1/live/password/setup "$origin" "{\"password\":\"$pw\"}")
-$testsrc
+$testdir
+$(check CHECK0)
+$testkey
 -/bin/bash -c 'echo \$(grep ^IMAGE_VERSION= /usr/lib/os-release || echo IMAGE_VERSION=none)'
 $(check CHECK1)
 -/bin/bash -c 'echo APPLY-BEGIN; echo $api_script | base64 -d > /run/alp-test/api.sh; bash /run/alp-test/api.sh 2>&1; echo APPLY-END'
@@ -100,6 +108,13 @@ $(check CHECK2)
 grep -q 'TESTSRC-ok' <<<"$out" || qa_skip "T-UPD-02: the update tools are not in this image yet"
 old=$(grep -o 'IMAGE_VERSION="\?[0-9.]*' <<<"$out" | head -n 1 | tr -d '"' | cut -d= -f2)
 [[ -n $old && $old != "$version" ]] || fail "the written image has no version of its own: '$old'"
+# With the image's own keyring (no key, or the project's key): files that
+# are signed correctly, but by another key, are refused.
+if between CHECK0 | grep -q 'not signed by the ALP-OS project' && ! between CHECK0 | grep -q '^newer '; then
+    echo "ok:   update files signed by a key the image does not trust are refused"
+else
+    fail "update files signed by an unknown key were not refused: $(between CHECK0)"
+fi
 between CHECK1 | grep -q "^newer $version available" || fail "the new version was not found: $(between CHECK1)"
 echo "ok:   $old finds version $version (signature checked)"
 shown=${version%0}   # what people see: 9.9.90 is shown as 9.9.9

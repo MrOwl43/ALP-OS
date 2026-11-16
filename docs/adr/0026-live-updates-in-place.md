@@ -35,6 +35,12 @@ writing the stick again, which empties the index.
    public release the key moves offline, with a rotation and revocation
    plan (spec `open-items.md`). The private key never enters the
    repository, a log, or a chat.
+   Security review, 2026-11-16: a plain repository secret can be read by
+   any workflow file on any branch, so by everyone who can push. The key
+   is therefore a secret of the GitHub **environment `release`**, which
+   the owner sets to "main branch only" with himself as required
+   reviewer; the release job names that environment and runs only on
+   main. A release with update files is made from main, after the merge.
 
 4. **Start files on their own partition** (found while building, 2026-11-15):
    one UKI is about 250 MiB and the ESP is 512 MiB, so the UKIs of updates
@@ -49,6 +55,9 @@ writing the stick again, which empties the index.
    (0.2.61 > 0.2.7). The image version (`IMAGE_VERSION`, update file names,
    partition labels) reads the third number as two digits: 0.2.7 is
    `0.2.70` (`tools/update-version.sh`); people see the short name.
+   A two-digit third number that starts or ends with 0 is not a release
+   name (0.2.10 would be the same version as 0.2.1); the tool and the
+   release job refuse it.
 6. **Update files** are cut out of the built stick image
    (`tools/update-files.sh`): the same root, hash partition and UKI a new
    stick has. The names carry the partition UUIDs (halves of the root
@@ -56,7 +65,9 @@ writing the stick again, which empties the index.
 7. **No test door in the product**: the image has one update source and one
    keyring (the project's public key, `image/keys/`; empty until the key
    exists, so nothing is accepted). T-UPD-02 covers both inside the guest
-   with bind mounts made as root.
+   with bind mounts made as root; before it puts its own key in, it
+   proves that correctly signed files from a key the image does not know
+   are refused.
 
 8. **An unhealthy new version restarts by itself** (contract
    `systemd-targets.md`, reboot on failure): `systemd-bless-boot.service`
@@ -68,6 +79,15 @@ writing the stick again, which empties the index.
    written system. Limit: a version whose root cannot be mounted at all
    stops in the initrd; switching the computer off and on uses a try, and
    after three the version before starts (T-UPD-03).
+   Limit (security review, 2026-11-16): "healthy" means that the system
+   started and alpd answers. The index is still locked at that moment
+   (it needs the person's password), so a new version whose photo
+   service or phone door is broken is marked good all the same; the
+   version before stays on the stick until the update after it.
+   Marking good waits up to four minutes for another update action
+   (someone pressed "Check"), so that a healthy start is not restarted
+   for it. The computer is not switched off from the screen while a
+   version is being written (`update.running`).
 
 ## Consequences
 
@@ -77,9 +97,9 @@ writing the stick again, which empties the index.
   reach `alp-healthy.target`.
 - New in the image: `systemd-container` (Debian's package for
   systemd-sysupdate and systemd-pull) and `dosfstools`.
-- Tests: T-UPD-01 (layout on a 32 GiB and an 8 GiB stick, no key means no
-  update), T-UPD-02 (a full update: found, written, started, marked good,
-  index opens). T-UPD-03 (a damaged new version: three
+- Tests: T-UPD-01 (layout on a 32 GiB and an 8 GiB stick), T-UPD-02 (files
+  signed by an unknown key are refused; a full update: found, written,
+  started, marked good, index opens). T-UPD-03 (a damaged new version: three
   failed tries, then the old version and its index). T-UPD-05 (a list of update
   files changed after signing is refused). T-UPD-04 follows (power cut; a bad signature and slot rotation were tried by hand with
   systemd-sysupdate 257 on a stick image, 2026-11-15).

@@ -41,6 +41,11 @@ pub fn sortable(name: &str) -> Option<String> {
     if parts.next().is_some() || !digits(a) || !digits(b) || !digits(c) || c.len() > 2 {
         return None;
     }
+    // 0.2.10 would be the same version as 0.2.1, and 0.2.05 would sort
+    // before it: such names are not release names.
+    if c.len() == 2 && (c.starts_with('0') || c.ends_with('0')) {
+        return None;
+    }
     let c = if c.len() == 1 {
         format!("{c}0")
     } else {
@@ -140,6 +145,13 @@ struct Boot {
 
 impl Boot {
     fn open() -> Result<Self, Fail> {
+        Self::open_within(std::time::Duration::ZERO)
+    }
+
+    /// As `open`, but waits up to `wait` for another update action to end
+    /// (marking a version good must not fail because someone pressed
+    /// "Check" at that moment).
+    fn open_within(wait: std::time::Duration) -> Result<Self, Fail> {
         let unsupported = || {
             Fail::new(
                 "update.unsupported",
@@ -151,12 +163,26 @@ impl Boot {
             |e: String| Fail::new("update.failed", format!("The update could not start: {e}."));
         let _ = fs::create_dir_all("/run/alp");
         let lock = fs::File::create(LOCK).map_err(|e| internal(e.to_string()))?;
-        lock.try_lock().map_err(|_| {
-            Fail::new(
-                "update.busy",
-                "An update is already being checked or written. Try again in a moment.",
-            )
-        })?;
+        let start = std::time::Instant::now();
+        while lock.try_lock().is_err() {
+            if start.elapsed() >= wait {
+                return Err(Fail::new(
+                    "update.busy",
+                    "An update is already being checked or written. Try again in a moment.",
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        // Left mounted by an action that was killed: with the lock held
+        // nobody else uses it, so it is taken off and mounted afresh.
+        let dev = format!("/dev/{part}");
+        let stale = run(
+            "findmnt",
+            &["-rn", "-t", "vfat", "-o", "SOURCE", "--mountpoint", BOOT],
+        );
+        if stale.is_ok_and(|src| src.lines().any(|l| l == dev)) {
+            let _ = run("umount", &[BOOT]);
+        }
         run(
             "mount",
             &[
@@ -164,7 +190,7 @@ impl Boot {
                 "vfat",
                 "-o",
                 "rw,nodev,nosuid,noexec,umask=0077",
-                &format!("/dev/{part}"),
+                &dev,
                 BOOT,
             ],
         )
@@ -387,7 +413,7 @@ pub fn apply(version: &str, say: &mut dyn FnMut(u8)) -> Result<(), Fail> {
 /// After a healthy start of a version with a boot counter: remove the
 /// counter (systemd-bless-boot good), so this version keeps starting.
 pub fn bless() -> Result<(), String> {
-    let _boot = Boot::open().map_err(|f| f.message)?;
+    let _boot = Boot::open_within(std::time::Duration::from_secs(240)).map_err(|f| f.message)?;
     run(BLESS, &["good"]).map(|_| ())
 }
 
@@ -470,6 +496,8 @@ mod tests {
         assert_eq!(sortable("0.2.61").as_deref(), Some("0.2.61"));
         assert_eq!(sortable("0.3").as_deref(), Some("0.3.00"));
         assert_eq!(sortable("0.2.100"), None);
+        assert_eq!(sortable("0.2.10"), None);
+        assert_eq!(sortable("0.2.05"), None);
         assert_eq!(sortable("0.2.x"), None);
         assert_eq!(sortable("0.2.7.1"), None);
         let order = [

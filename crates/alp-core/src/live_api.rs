@@ -373,6 +373,7 @@ fn status_for(key: &str) -> u16 {
         | "update.busy"
         | "update.unsupported"
         | "update.none"
+        | "update.running"
         | "network.offline" => 409,
         "archive.refused" => 422,
         "archive.forget" | "format.confirm_stale" | "archive.critical" => 409,
@@ -1819,6 +1820,20 @@ impl Live {
                 "encrypt.running",
                 "ALPArchive is being encrypted. Switch off when it is done, or the next start goes on with it.",
             )),
+            // A version half written is only thrown away, but the person
+            // would have to download it again.
+            "power/off"
+                if post
+                    && lock(&self.update)
+                        .job
+                        .as_ref()
+                        .is_some_and(|j| j.id == "update.apply" && j.state == "running") =>
+            {
+                Err(Fail::new(
+                    "update.running",
+                    "A new version is being written. Switch off when it is done.",
+                ))
+            }
             "power/off" if post => self.power_off(req),
             "state"
             | "password/setup"
@@ -1905,12 +1920,6 @@ impl Live {
         v
     }
 
-    /// `POST clock/base` (feature `clock_base`): `{"local": true}` says the
-    /// computer's hardware clock holds local time in the chosen time zone
-    /// (a computer that also runs Windows), `false` that it holds UTC. The
-    /// system clock is moved to match and the answer is kept on the stick
-    /// for the next start. Refused once the network set the clock: then
-    /// there is nothing to correct.
     /// `state.update` (feature `update`, ADR 0026): whether this stick can
     /// take a new version in place, the running version, what the last
     /// check found and the job of a check or of writing.
@@ -2038,6 +2047,12 @@ impl Live {
         Ok(Response::json(202, &json!({"job": job.json()})))
     }
 
+    /// `POST clock/base` (feature `clock_base`): `{"local": true}` says the
+    /// computer's hardware clock holds local time in the chosen time zone
+    /// (a computer that also runs Windows), `false` that it holds UTC. The
+    /// system clock is moved to match and the answer is kept on the stick
+    /// for the next start. Refused once the network set the clock: then
+    /// there is nothing to correct.
     fn clock_base(&self, req: &Request) -> Result<Response, Fail> {
         let b = body(req)?;
         let local = field(&b, "local")?
