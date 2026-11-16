@@ -7,7 +7,9 @@
 # of it, and (videos) does it play. Prints one FORMAT line per file.
 # Every file must be kept exactly. A format listed in $must must also get its
 # small picture and play; the others are reported only (the table in
-# docs/qa/formats.md says what the gallery shows).
+# docs/qa/formats.md says what the gallery shows). Camera RAW files
+# (raw-*, real files from tests/vm/formats/raw-samples.lock) are reported
+# only: whether a RAW file gets a preview depends on Immich's LibRaw.
 # Runs only with ALP_ALLOW_IMMICH=1, like T-IMMICH-01. Needs ffmpeg.
 #
 # Usage: tests/vm/t-format-01.sh <disk-image>

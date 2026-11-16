@@ -3,10 +3,14 @@
 # Make the format test set of T-FORMAT-01: one small picture or one-second
 # clip per format, all made here from a test pattern (no downloaded files,
 # nothing with a licence of its own). Camera RAW cannot be made this way: it
-# needs real files from real cameras (docs/qa/formats.md).
+# needs real files from real cameras, so those are downloaded with a pinned
+# SHA-256 each (raw-samples.lock, docs/qa/formats.md).
 #
 # Usage: tests/vm/formats/make-samples.sh <out-dir>
-# Needs ffmpeg; heif-enc (libheif-examples) for HEIC.
+# Needs ffmpeg; heif-enc (libheif-examples) for HEIC; curl for RAW.
+# ALP_RAW=0 leaves RAW out. ALP_RAW_CACHE=<dir> keeps the downloads between
+# runs (checked again each time). ALP_RAW_URL=<base> fetches from another
+# copy of the same files.
 set -euo pipefail
 out=${1:?usage: make-samples.sh <out-dir>}
 mkdir -p "$out"
@@ -51,4 +55,28 @@ clip -c:v libx264 -pix_fmt yuv420p "${aac[@]}" -f 3gp "$out/video-3gp-h264.3gp"
 clip -c:v wmv2 -c:a wmav2 "$out/video-wmv-wmv2.wmv"
 clip -c:v flv1 -c:a mp3 -ar 44100 "$out/video-flv-flv1.flv"
 clip -c:v mpeg2video -q:v 5 -c:a pcm_s16le -f mxf "$out/video-mxf-mpeg2.mxf"
+
+# Camera RAW: real files, downloaded, each checked against its pinned SHA-256.
+# A file that does not arrive is left out with a note; a file that arrives
+# changed stops the test (it is not the file the result is about).
+lock=$(dirname "$(realpath "$0")")/raw-samples.lock
+raw_url=${ALP_RAW_URL:-https://github.com/MrOwl43/ALP-OS/releases/download/test-raw-samples-1}
+cache=${ALP_RAW_CACHE:-$out/.raw-cache}
+if [[ ${ALP_RAW:-1} != 0 ]] && grep -qv '^#' "$lock"; then
+    mkdir -p "$cache"
+    while read -r sum name _camera; do
+        [[ -z $sum || $sum == \#* ]] && continue
+        [[ $name =~ ^raw-[a-z0-9-]+\.[a-z0-9]+$ ]] || { echo "make-samples: bad name in raw-samples.lock: $name" >&2; exit 1; }
+        if ! echo "$sum  $cache/$name" | sha256sum -c --status 2>/dev/null; then
+            rm -f "$cache/$name"
+            curl -fsSL --retry 3 --retry-delay 5 -m 300 -o "$cache/$name.part" "$raw_url/$name" \
+                && mv "$cache/$name.part" "$cache/$name" \
+                || { rm -f "$cache/$name.part"; echo "note: $name could not be downloaded; left out" >&2; continue; }
+            echo "$sum  $cache/$name" | sha256sum -c --status \
+                || { echo "make-samples: $name does not match its pinned SHA-256" >&2; exit 1; }
+        fi
+        cp "$cache/$name" "$out/$name"
+    done <"$lock"
+    [[ -n ${ALP_RAW_CACHE:-} ]] || rm -rf "$cache"
+fi
 find "$out" -type f | wc -l

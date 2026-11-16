@@ -26,15 +26,27 @@ All 25 files were taken and came back byte for byte. 24 of 25 got a preview
 and every video was served for playing. The one without a preview:
 **JPEG 2000** (`.jp2`): kept, no picture in the gallery.
 
-## Not in the set yet: camera RAW
+## Camera RAW (being added)
 
 RAW files cannot be made from a test pattern; they need real files from
 real cameras. Immich reads RAW with LibRaw (Canon CR2/CR3, Nikon NEF, Sony
 ARW, Fujifilm RAF, Panasonic RW2, Olympus ORF, Pentax PEF, Leica, Hasselblad,
 Phase One, Sigma, Samsung, DNG; list in Immich v3.3.3
-`server/src/utils/mime-types.ts`). Next step: a second set of real,
-freely licensed sample files (one per maker), fetched by the test with a
-pinned checksum each.
+`server/src/utils/mime-types.ts`).
+
+How the test gets them: `tests/vm/formats/raw-samples.lock` lists one
+sample per maker with its SHA-256. All come from raw.pixls.us and are CC0
+(public domain). They are never committed to the repository. The test
+downloads them from a copy in this repository's `test-raw-samples-1`
+release (made once by hand) and refuses a file that differs from its pinned
+SHA-256. A copy is used because raw.pixls.us asks automated tools not to
+download from it (its robots.txt), and so a test run never depends on a
+volunteer site. CI keeps the downloads in a cache keyed on the lock file.
+RAW files are reported, not required: their `FORMAT raw-...` lines say
+which show a preview.
+
+Status: the download and check are in place; the lock file is still empty
+until the sample files are chosen and the release copy exists.
 
 ## Known limits
 
