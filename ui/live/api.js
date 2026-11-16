@@ -188,6 +188,6 @@
     chainLeave: () => raw("POST", "live/chain/leave", {}),
     cancelArchive: () => raw("POST", "live/archive/cancel", {}),
     reset: (password) => raw("POST", "live/reset", { password }),     // 202 { job } (job "reset"); an older alpd answers 200
-    powerOff: () => raw("POST", "live/power/off", {}),   // 202 { job } (power.off); an older alpd answers {}
+    powerOff: (restart) => raw("POST", "live/power/off", restart === true ? { restart: true } : {}),   // 202 { job } (power.off); an older alpd answers {}
   };
 })();
