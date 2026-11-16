@@ -17,7 +17,8 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   alpd feature `update` (`state.update`, `update/check`, `update/apply`), Settings > About > Updates, release
   job step "Update files (signed)" (rolling release tag `updates`; skipped until the Actions secret
   `UPDATE_SIGNING_KEY` and `image/keys/update-signing.asc` exist: the owner needs steps for that). Still to
-  do: restart button after an update, reboot on an unhealthy counted start, T-UPD-03..05, bump
+  do: restart button after an update, T-UPD-04 (power cut; T-UPD-03 rollback and T-UPD-05 bad signature
+  pass in t-upd-02.sh, with the restart of an unhealthy counted start), bump
   `image/extra/usr/lib/alp/release` to 0.2.7 at release (the release job checks it).
 - Next: (2) green in CI and finished, then (3).
 
