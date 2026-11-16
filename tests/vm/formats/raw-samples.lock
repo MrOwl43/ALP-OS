@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Camera RAW samples of T-FORMAT-01 (docs/qa/formats.md): real files from
+# real cameras, one per maker, all CC0 (public domain) from raw.pixls.us.
+# They are never committed: tests/vm/formats/make-samples.sh downloads each
+# from $ALP_RAW_URL (default: the "test-raw-samples-1" release of this
+# repository, a copy made once by hand, so CI never loads the volunteer site
+# and a run never depends on it) and refuses any file whose SHA-256 differs.
+#
+# One line per file: <sha256> <file name> <camera, as named on raw.pixls.us>
+# The file name is raw-<maker>-<format>.<extension>.

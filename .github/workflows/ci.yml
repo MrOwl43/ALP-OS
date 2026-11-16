@@ -131,12 +131,20 @@ jobs:
         with:
           path: out/immich-images
           key: immich-images-${{ hashFiles('image/immich/images.lock') }}
+      # Camera RAW samples of T-FORMAT-01 (checked against their pinned
+      # SHA-256 on every run), so each run does not download them again.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: matrix.group == 'immich'
+        with:
+          path: out/raw-samples
+          key: raw-samples-${{ hashFiles('tests/vm/formats/raw-samples.lock') }}
       - run: just build-image
       - run: cat out/SHA256SUMS
       - run: just test-vm-${{ matrix.group }}
         env:
           # Immich runs only on hosted runners, never on the dev VM (owner).
           ALP_ALLOW_IMMICH: "1"
+          ALP_RAW_CACHE: ${{ github.workspace }}/out/raw-samples
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         # Also after a failed test, so the screenshots show what went wrong.
         if: always()
