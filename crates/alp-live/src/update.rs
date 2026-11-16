@@ -391,9 +391,42 @@ pub fn bless() -> Result<(), String> {
     run(BLESS, &["good"]).map(|_| ())
 }
 
-/// `alpctl live update bless | check | apply <version>`.
+/// Whether alpd answers on its API (`GET live/state` gives 200), asked for
+/// up to three minutes. A new version that cannot do this is not marked
+/// good.
+pub fn healthy() -> Result<(), String> {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::{Duration, Instant};
+    let ask = || -> Result<(), String> {
+        let mut s = TcpStream::connect("127.0.0.1:8411").map_err(|e| e.to_string())?;
+        let _ = s.set_read_timeout(Some(Duration::from_secs(10)));
+        s.write_all(b"GET /api/v1/live/state HTTP/1.0\r\nHost: 127.0.0.1:8411\r\n\r\n")
+            .map_err(|e| e.to_string())?;
+        let mut head = [0u8; 12];
+        s.read_exact(&mut head).map_err(|e| e.to_string())?;
+        if head.ends_with(b" 200") {
+            Ok(())
+        } else {
+            Err(format!("alpd answered {}", String::from_utf8_lossy(&head)))
+        }
+    };
+    let start = Instant::now();
+    loop {
+        match ask() {
+            Ok(()) => return Ok(()),
+            Err(e) if start.elapsed() > Duration::from_secs(180) => {
+                return Err(format!("alpd does not answer: {e}"));
+            }
+            Err(_) => std::thread::sleep(Duration::from_secs(2)),
+        }
+    }
+}
+
+/// `alpctl live update healthy | bless | check | apply <version>`.
 pub fn cli(args: &[&str]) -> i32 {
     let r = match args {
+        ["healthy"] => healthy(),
         ["bless"] => bless(),
         ["check"] => check().map_err(|f| f.message).map(|s| {
             println!("running {}", s.running.as_deref().unwrap_or("unknown"));
@@ -416,7 +449,7 @@ pub fn cli(args: &[&str]) -> i32 {
             .map_err(|f| f.message)
             .map(|()| println!("written {version}; restart to use it"))
         }
-        _ => Err("usage: alpctl live update bless | check | apply <version>".into()),
+        _ => Err("usage: alpctl live update healthy | bless | check | apply <version>".into()),
     };
     match r {
         Ok(()) => 0,
