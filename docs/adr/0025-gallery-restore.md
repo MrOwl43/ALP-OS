@@ -95,4 +95,7 @@ source).
   without a restore only when Immich itself says it has an owner
   (`GET /api/server/config`, `isInitialized`), not on any refusal.
   Folders and files that are links are not used for this.
+  The photo service's folders on the archive are refused when one of
+  them is a link (root would change the owner of, or mount, what it
+  points to).
 - Test: T-IMMICH-02 (two sticks, one disk).

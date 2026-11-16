@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Plan: reaching the archive away from home (alpha 0.2.7, one-week trial)
 
-Status: 2026-11-16. Trial step 1 done (two programs and our own relay on
+Status: 2026-11-16. **Paused by the owner (2026-11-16)** after trial step 1 (two programs and our own relay on
 one machine). Nothing in the product yet. Open owner decisions are marked
 **DECISION**.
 

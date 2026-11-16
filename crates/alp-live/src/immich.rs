@@ -931,6 +931,11 @@ pub fn db_env(password: &str) -> String {
 /// them (Postgres and valkey change their own data folder's owner).
 fn ensure_dir(path: &Path, mode: u32, uid: u32, gid: u32, force_owner: bool) -> Result<(), String> {
     let io = |e: std::io::Error| format!("{}: {e}", path.display());
+    // A link in place of a folder (a prepared backup disk) would make
+    // root change the owner of, or mount, whatever it points to.
+    if is_link(path) {
+        return Err(format!("{}: is a link, not a folder", path.display()));
+    }
     let new = !path.exists();
     if new {
         fs::create_dir_all(path).map_err(io)?;
@@ -952,6 +957,10 @@ fn ensure_dir(path: &Path, mode: u32, uid: u32, gid: u32, force_owner: bool) -> 
         }
     }
     Ok(())
+}
+
+fn is_link(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
 }
 
 fn bind(src: &str, dst: &str) -> Result<(), String> {
@@ -1042,6 +1051,9 @@ pub fn prepare() -> Result<(), String> {
     bind(DATA, HOME)?;
     // Archive: the originals, never anywhere else.
     let orig = Path::new(ORIGINALS);
+    if is_link(Path::new(ARCHIVE_FILES)) {
+        return Err(format!("{ARCHIVE_FILES}: is a link, not a folder"));
+    }
     ensure_dir(orig, 0o700, UID, UID, true)?;
     for d in ORIGINAL_DIRS {
         ensure_dir(&orig.join(d), 0o700, UID, UID, true)?;
@@ -1058,6 +1070,10 @@ pub fn prepare() -> Result<(), String> {
     if fs::write(status, "state=waiting\n").is_ok() {
         let _ = std::os::unix::fs::chown(status, Some(UID), Some(UID));
         let _ = fs::set_permissions(status, fs::Permissions::from_mode(0o644));
+    }
+    // Checked again right before the mount.
+    if is_link(orig) {
+        return Err(format!("{ORIGINALS}: is a link, not a folder"));
     }
     bind(ORIGINALS, ORIGINALS_BIND)?;
     if restore {
@@ -1124,6 +1140,26 @@ pub fn cli(args: &[&str]) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_link_in_place_of_a_folder_is_refused() {
+        use super::ensure_dir;
+        use std::fs;
+        use std::os::unix::fs::MetadataExt;
+        let dir = std::env::temp_dir().join(format!("alp-immich-link-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("target")).unwrap();
+        let me = fs::metadata(&dir).unwrap();
+        std::os::unix::fs::symlink(dir.join("target"), dir.join("link")).unwrap();
+        std::os::unix::fs::symlink(dir.join("nowhere"), dir.join("dangling")).unwrap();
+        for name in ["link", "dangling"] {
+            let r = ensure_dir(&dir.join(name), 0o700, me.uid(), me.gid(), true);
+            assert!(r.is_err_and(|e| e.contains("is a link")), "{name}");
+        }
+        assert!(!dir.join("nowhere").exists());
+        assert!(ensure_dir(&dir.join("real"), 0o700, me.uid(), me.gid(), true).is_ok());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     /// A photo service that answered a moment ago and is busy with a video
     /// backup stays ready; one that never answered, or is silent for
     /// longer than the grace, does not.
