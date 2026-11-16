@@ -32,4 +32,5 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStartPre=/usr/bin/alpctl live update healthy
 ExecStart=/usr/bin/alpctl live update bless
-TimeoutStartSec=5min
+# Up to 3 minutes for alpd, up to 4 for another update action to end.
+TimeoutStartSec=8min

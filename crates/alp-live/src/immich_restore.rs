@@ -20,8 +20,10 @@
 //!
 //! While a restore is pending the photo service counts as starting, and
 //! [`crate::immich::admin_key`] refuses: nobody may set up the empty
-//! gallery in between. A restore that fails leaves the gallery empty, as
-//! before this module; the photos are never touched.
+//! gallery in between. A restore that fails is tried again (three times);
+//! then the gallery starts empty, as before this module. The backup it
+//! started from is kept aside (`backups/alp-kept/`), where Immich's own
+//! rotation of old backups cannot remove it. The photos are never touched.
 //!
 //! [`backup_tick`] and [`backup_now`] ask Immich for a new backup after
 //! photos came in and before the computer turns off (Immich's own timer
@@ -61,6 +63,79 @@ fn count_path() -> PathBuf {
 
 fn backups_dir() -> PathBuf {
     Path::new(immich::ORIGINALS).join("backups")
+}
+
+/// The backup a restore starts from is copied here first. Immich keeps
+/// only its newest backups in `backups/`; a gallery that came up empty
+/// after a failed restore would push the real one out within hours. This
+/// folder is not Immich's, so nothing rotates it.
+fn kept_dir() -> PathBuf {
+    backups_dir().join("alp-kept")
+}
+
+/// A real folder (not a link someone put on the disk), made if missing.
+fn real_dir(dir: &Path) -> bool {
+    match fs::symlink_metadata(dir) {
+        Ok(m) => m.file_type().is_dir(),
+        Err(_) => fs::create_dir(dir).is_ok(),
+    }
+}
+
+/// A real, non-empty file (not a link).
+fn real_file(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file() && m.len() > 0)
+}
+
+/// Copy `name` from one folder to the other, through a temporary name.
+fn copy_backup(from: &Path, to: &Path, name: &str) -> bool {
+    if !backup_name_ok(name) || !real_file(&from.join(name)) || !real_dir(to) {
+        return false;
+    }
+    let tmp = to.join(format!(".{name}.alp-tmp"));
+    let _ = fs::remove_file(&tmp);
+    let ok = fs::copy(from.join(name), &tmp).is_ok() && fs::rename(&tmp, to.join(name)).is_ok();
+    if ok {
+        // The photo service reads its backups as its own user. A disk
+        // without owners (exFAT) refuses this and does not need it.
+        let _ = std::os::unix::fs::chown(to.join(name), Some(UID), Some(UID));
+    } else {
+        let _ = fs::remove_file(&tmp);
+    }
+    ok
+}
+
+/// Keep `name` outside Immich's rotation; older kept copies go.
+fn keep_copy(name: &str) {
+    let kept = kept_dir();
+    if real_file(&kept.join(name)) {
+        return;
+    }
+    if !copy_backup(&backups_dir(), &kept, name) {
+        eprintln!("ALP-OS Live: gallery: the backup could not be kept aside");
+        return;
+    }
+    for e in fs::read_dir(&kept).into_iter().flatten().flatten() {
+        let other = e.file_name();
+        if other
+            .to_str()
+            .is_some_and(|o| o != name && backup_name_ok(o))
+        {
+            let _ = fs::remove_file(e.path());
+        }
+    }
+}
+
+/// The backup the pending restore is for (noted in the marker), in
+/// `backups/` again if Immich rotated it away since.
+fn marked_backup() -> Option<String> {
+    let name = fs::read_to_string(mark_path()).ok()?.trim().to_string();
+    if !backup_name_ok(&name) {
+        return None;
+    }
+    if !real_file(&backups_dir().join(&name)) && !copy_backup(&kept_dir(), &backups_dir(), &name) {
+        return None;
+    }
+    Some(name)
 }
 
 /// Is a restore waiting or running?
@@ -109,6 +184,7 @@ pub fn mark_if_backup() {
     let Some(name) = newest_backup(&backups_dir()) else {
         return;
     };
+    keep_copy(&name);
     match immich::write_secret(&mark_path(), &format!("{name}\n")) {
         Ok(()) => eprintln!("ALP-OS Live: gallery: a backup is on the disk; it will be put back"),
         Err(e) => eprintln!("ALP-OS Live: gallery: restore not noted: {}", e.message),
@@ -116,14 +192,26 @@ pub fn mark_if_backup() {
 }
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
+/// Tries that failed since alpd started, and when the last one ended.
+static TRIES: Mutex<(u8, Option<Instant>)> = Mutex::new((0, None));
+/// A restore that failed is tried again, this often at most.
+const MAX_TRIES: u8 = 3;
+const TRY_AGAIN_AFTER: Duration = Duration::from_secs(60);
 
-/// Called by alpd every few seconds: run the pending restore, once, as soon
-/// as the photo service answers.
+/// Called by alpd every few seconds: run the pending restore as soon as
+/// the photo service answers. A restore that failed is tried again, up to
+/// [`MAX_TRIES`] times; then the gallery starts empty, and the backup it
+/// would have come from stays in [`kept_dir`].
 pub fn tick() {
     if !pending()
         || !crate::index::is_open()
         || !crate::archive::is_open()
         || RUNNING.load(Ordering::SeqCst)
+        || TRIES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .1
+            .is_some_and(|t| t.elapsed() < TRY_AGAIN_AFTER)
         || !immich::ping()
         || RUNNING.swap(true, Ordering::SeqCst)
     {
@@ -132,13 +220,38 @@ pub fn tick() {
     std::thread::spawn(|| {
         eprintln!("alpd: gallery: bringing it back from the backup disk");
         match run() {
-            Ok(name) => eprintln!("alpd: gallery: back ({name})"),
-            Err(e) => eprintln!("alpd: gallery: not brought back: {}", e.message),
+            Ok(name) => {
+                eprintln!("alpd: gallery: back ({name})");
+                let _ = fs::remove_file(mark_path());
+            }
+            Err(e) => {
+                let mut tries = TRIES
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                tries.0 = tries.0.saturating_add(1);
+                tries.1 = Some(Instant::now());
+                eprintln!(
+                    "alpd: gallery: not brought back (try {} of {MAX_TRIES}): {}",
+                    tries.0, e.message
+                );
+                if tries.0 >= MAX_TRIES {
+                    // Not for ever: the gallery starts empty. The backup
+                    // stays on the disk, outside Immich's rotation.
+                    let _ = fs::remove_file(mark_path());
+                }
+            }
         }
-        // Once only: a restore that failed is not tried for ever.
-        let _ = fs::remove_file(mark_path());
         RUNNING.store(false, Ordering::SeqCst);
     });
+}
+
+/// Does the photo service say it has an owner? `None`: no clear answer.
+fn has_owner() -> Option<bool> {
+    immich::call("GET", "/server/config", "", None)
+        .ok()
+        .filter(|r| r.status == 200)?
+        .json()?["isInitialized"]
+        .as_bool()
 }
 
 fn status(auth: &str) -> Option<Value> {
@@ -181,8 +294,8 @@ pub fn step_of(status: &Value) -> Step {
 }
 
 fn run() -> Result<String, Fail> {
-    let name = newest_backup(&backups_dir())
-        .ok_or_else(|| immich::failed("no backup of the gallery on the disk"))?;
+    let name =
+        marked_backup().ok_or_else(|| immich::failed("no backup of the gallery on the disk"))?;
     let r = immich::call(
         "POST",
         "/admin/database-backups/start-restore",
@@ -190,8 +303,16 @@ fn run() -> Result<String, Fail> {
         Some(&json!({})),
     )?;
     if !(200..300).contains(&r.status) {
-        // Immich allows this only while nobody set it up. It has an owner:
-        // an earlier restore was cut off after the database was back.
+        // Immich allows this only while nobody set it up. Only when it
+        // says itself that it has an owner (an earlier restore was cut off
+        // after the database was back) is the gallery taken over; any
+        // other refusal (still starting, an error) is tried again.
+        if has_owner() != Some(true) {
+            return Err(immich::failed(format!(
+                "the photo service did not start the restore (answer {})",
+                r.status
+            )));
+        }
         eprintln!(
             "alpd: gallery: the photo service is set up already (answer {}); taking it over",
             r.status
@@ -554,6 +675,34 @@ mod tests {
         assert_eq!(newest_backup(&dir).as_deref(), Some(new));
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(newest_backup(&dir), None);
+    }
+
+    #[test]
+    fn a_backup_is_kept_aside_and_links_are_refused() {
+        let dir = std::env::temp_dir().join(format!("alp-restore-keep-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let name = "immich-db-backup-20261115T101500-v3.3.3-pg14.19.sql.gz";
+        fs::write(dir.join(name), b"backup").unwrap();
+        let kept = dir.join("alp-kept");
+        assert!(copy_backup(&dir, &kept, name));
+        assert_eq!(fs::read(kept.join(name)).unwrap(), b"backup");
+        // And back, after Immich rotated it away.
+        fs::remove_file(dir.join(name)).unwrap();
+        assert!(copy_backup(&kept, &dir, name));
+        assert_eq!(fs::read(dir.join(name)).unwrap(), b"backup");
+        // A folder that is a link, a file that is a link, another name: no.
+        let elsewhere = dir.join("elsewhere");
+        fs::create_dir(&elsewhere).unwrap();
+        let link = dir.join("link");
+        std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
+        assert!(!copy_backup(&dir, &link, name));
+        assert!(fs::read_dir(&elsewhere).unwrap().next().is_none());
+        let linked = "immich-db-backup-20261116T101500-v3.3.3-pg14.19.sql.gz";
+        std::os::unix::fs::symlink(dir.join(name), dir.join(linked)).unwrap();
+        assert!(!copy_backup(&dir, &kept, linked));
+        assert!(!copy_backup(&dir, &kept, "../x"));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

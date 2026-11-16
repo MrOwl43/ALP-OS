@@ -6,9 +6,9 @@
 #   alp-boot partition (FAT, for the start files of new versions) before the
 #   index, and the system it was written with is untouched;
 #   an 8 GiB stick gets none of them: all its room stays for the index.
-# Also: systemd-sysupdate is in the image, its timers are off, the image
-# knows its version, and an image without the project's update key accepts
-# no update.
+# Also: systemd-sysupdate is in the image, its timers are off and the image
+# knows its version. (That files signed by an unknown key are refused is
+# proven in T-UPD-02, which has a network and an update server.)
 #
 # Usage: tests/vm/t-upd-01.sh <disk-image>
 set -euo pipefail
@@ -55,14 +55,6 @@ for size in 32G 8G; do
             || { echo "FAIL: systemd's own update timers are not masked: $(grep -o 'TIMERS-[a-z-]*' <<<"$out" | head -n 1)" >&2; fail=1; }
         grep -Eq 'IMAGE_VERSION="?[0-9]+\.[0-9]+\.[0-9]{2}"?' <<<"$out" \
             || { echo "FAIL: the image does not know its version: $(grep -o 'IMAGE_VERSION=[^ ]*' <<<"$out" | head -n 1)" >&2; fail=1; }
-        # No update key in the image (KEYRING-0): the signature cannot be checked, so nothing is offered.
-        if grep -q 'KEYRING-0' <<<"$out"; then
-            if grep -q '^running ' <<<"$check"; then
-                echo "FAIL: an image without the update key listed updates: $check" >&2; fail=1
-            else
-                echo "ok:   without the project's update key no update is accepted"
-            fi
-        fi
     else
         grep -q 'no room for a new version' <<<"$check" \
             || { echo "FAIL: the 8G stick did not say it cannot be updated in place: $check" >&2; fail=1; }

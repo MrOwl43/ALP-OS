@@ -10,5 +10,8 @@ While this file is missing, the image has an empty keyring and accepts no
 update at all.
 
 The private half never enters this repository, a log or a chat. It lives in
-the repository's Actions secret `UPDATE_SIGNING_KEY` (owner's decision,
-2026-11-15) and moves offline before the public release.
+the secret `UPDATE_SIGNING_KEY` of the GitHub environment `release`
+(owner's decision, 2026-11-15), not in a plain repository secret: the
+environment allows only the main branch and asks the owner to approve each
+run, so a workflow file on another branch cannot read the key. It moves
+offline before the public release.

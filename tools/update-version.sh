@@ -17,5 +17,10 @@ if [[ ! $name =~ ^([0-9]+)\.([0-9]+)(\.([0-9]{1,2}))?$ ]]; then
     exit 1
 fi
 third=${BASH_REMATCH[4]:-0}
+# 0.2.10 would be the same version as 0.2.1, and 0.2.05 would sort before it.
+if [[ ${#third} == 2 && ( $third == 0* || $third == *0 ) ]]; then
+    echo "update-version: '$name' is not a release name: a two-digit third number cannot start or end with 0" >&2
+    exit 1
+fi
 (( ${#third} == 2 )) || third="${third}0"
 echo "${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${third}"

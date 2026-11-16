@@ -153,7 +153,12 @@ jobs:
   # the dev VM). xz-compressed: one file must stay under GitHub's 2 GiB, and
   # Rufus and balenaEtcher write .img.xz directly.
   release-image:
-    if: ${{ inputs.release_version }}
+    # Only from main: the "release" environment holds the update signing key
+    # (ADR 0026 item 7). In the repository settings that environment allows
+    # only the main branch and asks the owner to approve each run, so a
+    # workflow file on another branch cannot read the key.
+    if: ${{ inputs.release_version && github.ref == 'refs/heads/main' }}
+    environment: release
     runs-on: ubuntu-26.04
     timeout-minutes: 60
     permissions:
@@ -180,6 +185,9 @@ jobs:
         run: |
           in_image=$(awk '{print $NF}' image/extra/usr/lib/alp/release)
           [ "$in_image" = "$VERSION" ] || { echo "::error::image/extra/usr/lib/alp/release says $in_image, the release is $VERSION"; exit 1; }
+          # Two names must never give one update version (0.2.1 and 0.2.10
+          # would both be 0.2.10): tools/update-version.sh refuses those.
+          tools/update-version.sh "$VERSION" >/dev/null
       - run: just build-image
       - name: Compress and hash
         env:
@@ -192,7 +200,7 @@ jobs:
           sha256sum "$name" "$name.xz" > "$name.sha256"
           cat "$name.sha256"
           ls -l "$name.xz"
-      - name: Publish (pre-release, private repository)
+      - name: Publish (pre-release)
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.release_version }}
@@ -221,10 +229,11 @@ jobs:
           tools/update-files.sh out/alp-os.raw "$(tools/update-version.sh "$VERSION")" out/update
           export GNUPGHOME="$RUNNER_TEMP/gnupg"
           mkdir -m 700 "$GNUPGHOME"
+          trap 'gpgconf --kill all; rm -rf "$RUNNER_TEMP/gnupg"' EXIT
           printf '%s\n' "$UPDATE_SIGNING_KEY" | gpg --batch --quiet --import
           gpg --batch --yes --detach-sign -o out/update/SHA256SUMS.gpg out/update/SHA256SUMS
           gpgconf --kill all
-          rm -rf "$GNUPGHOME"
+          rm -rf "$RUNNER_TEMP/gnupg"
           # The signature must check with the public key that is in the image.
           gpg --batch --no-options --dearmor <image/keys/update-signing.asc >"$RUNNER_TEMP/pubring.gpg"
           gpgv --keyring "$RUNNER_TEMP/pubring.gpg" out/update/SHA256SUMS.gpg out/update/SHA256SUMS
@@ -233,5 +242,7 @@ jobs:
             --notes "Files that an ALP-OS stick downloads when it updates itself (Settings, About, Updates). Not for writing to a stick by hand: for that, take the newest ALP-OS Live release."
           # The big files first, the list that names them last.
           gh release upload updates --clobber out/update/alp-os_*
-          gh release upload updates --clobber out/update/SHA256SUMS.gpg
-          gh release upload updates --clobber out/update/SHA256SUMS
+          # The list and its signature in one call, so the time in which a
+          # stick can see one without the other is as short as it can be
+          # (a stick then says "not signed" and installs nothing).
+          gh release upload updates --clobber out/update/SHA256SUMS.gpg out/update/SHA256SUMS
