@@ -45,8 +45,12 @@ volunteer site. CI keeps the downloads in a cache keyed on the lock file.
 RAW files are reported, not required: their `FORMAT raw-...` lines say
 which show a preview.
 
-Status: the download and check are in place; the lock file is still empty
-until the sample files are chosen and the release copy exists.
+Status for 0.2.7: the lock file is empty, so the test makes no RAW files
+and runs as before. RAW is checked by hand on real hardware with files from
+real cameras: copy them to the archive (phone app or card import), then for
+each note whether the file is kept unchanged (same size and checksum when
+downloaded back), whether the gallery shows a picture of it, and whether the
+picture opens full size. Record the camera model and the result here.
 
 ## Known limits
 
