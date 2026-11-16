@@ -2727,6 +2727,12 @@ pub fn is_open() -> bool {
     is_mounted(FILES_MNT)
 }
 
+/// Is the open archive one that is not encrypted (ADR 0016)? Anyone who
+/// held that disk could have written to it.
+pub fn open_is_plain() -> bool {
+    is_open() && kind_at(Path::new(HOST_MNT)) == Some(Format::Plain)
+}
+
 pub fn record() -> Option<Record> {
     fs::read_to_string(RECORD)
         .ok()

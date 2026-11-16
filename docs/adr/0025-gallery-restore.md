@@ -78,14 +78,19 @@ source).
   no backup while the computer was off at night) has nothing to restore:
   the gallery starts empty as before. The photos are on the disk.
 - The restore trusts the backup file on the archive. On an encrypted
-  archive only someone with the key can write it. **Open (security
-  review, 2026-11-16, owner's decision):** on an archive that is not
-  encrypted, someone who had the disk in their hands can put a prepared
-  backup file there. It is read as the database's administrator when a
-  new stick opens the disk, which is more than replacing photos: it can
-  add accounts or links the attacker knows, and run commands inside the
-  database's container. Proposed: on an archive that is not encrypted,
-  ask the person before the gallery is put back.
+  archive only someone with the key can write it. **Decided (security review and owner, 2026-11-16):**
+  on an archive that is not encrypted, someone who had the disk in their
+  hands can put a prepared backup file there. It is read as the
+  database's administrator when a new stick opens the disk, which is
+  more than replacing photos: it can add accounts or links the attacker
+  knows, and run commands inside the database's container. So on such an
+  archive the person is asked first (feature `restore_ask`:
+  `state.immich.restore_ask`, `POST gallery/restore {"restore": bool}`;
+  the marker carries a second line `ask` until then). "No" starts an
+  empty gallery; the backup stays in `backups/alp-kept/`. An encrypted
+  archive restores by itself as before. Covered by unit tests and the UI
+  smoke test, not yet by a VM test (T-IMMICH-02 uses an encrypted
+  archive).
 - The restore never touches the photos. A restore that fails is tried
   again, three times; then the behaviour is the one before this ADR.
   The backup the restore starts from is first copied to

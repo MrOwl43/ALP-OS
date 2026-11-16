@@ -373,6 +373,7 @@ fn status_for(key: &str) -> u16 {
         | "update.busy"
         | "update.unsupported"
         | "update.none"
+        | "restore.not_asked"
         | "update.running"
         | "network.offline" => 409,
         "archive.refused" => 422,
@@ -1694,6 +1695,19 @@ impl Live {
                 Ok(Response::json(202, &json!({"clock": clock_json()})))
             }),
             "clock/base" if post => self.clock_base(req),
+            // Feature restore_ask (ADR 0025): `{"restore": true|false}`.
+            "gallery/restore" if post => body(req)
+                .and_then(|b| {
+                    b["restore"].as_bool().ok_or_else(|| {
+                        Fail::new("request.json", "\"restore\" must be true or false.")
+                    })
+                })
+                .and_then(immich_restore::answer)
+                .map(|()| {
+                    // The next state says "bringing back" (or starts empty) at once.
+                    lock(&self.immich).at = None;
+                    Response::json(200, &json!({}))
+                }),
             "update/check" if post => body(req).and_then(|_| self.update_check()),
             "update/apply" if post => self.update_apply(req),
             "display/modes" if get => self.display_modes(),
@@ -2501,10 +2515,16 @@ impl Live {
         // The gallery of an archive opened with a new stick is being put
         // back (ADR 0025): say so instead of "still starting".
         let restoring = st == immich::State::Starting && immich_restore::pending();
+        // Feature restore_ask: on an archive that is not encrypted the
+        // person is asked first (`POST gallery/restore`).
+        let restore_ask = restoring && immich_restore::asking();
         c.state = json!({
             "state": word, "error": error,
             "restoring": restoring,
-            "detail": if restoring {
+            "restore_ask": restore_ask,
+            "detail": if restore_ask {
+                Some("This backup disk holds a gallery from before. Choose whether to bring it back.".to_string())
+            } else if restoring {
                 Some("Bringing your gallery back from the backup disk. This can take some minutes.".to_string())
             } else {
                 secs.map(immich::detail)
@@ -3983,6 +4003,7 @@ const FEATURES: &[&str] = &[
     "clock_base",
     "lock_hide",
     "update",
+    "restore_ask",
 ];
 
 /// [`FEATURES`], plus `display_modes` when the image has `wlr-randr` and

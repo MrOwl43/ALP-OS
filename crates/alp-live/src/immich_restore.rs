@@ -128,7 +128,12 @@ fn keep_copy(name: &str) {
 /// The backup the pending restore is for (noted in the marker), in
 /// `backups/` again if Immich rotated it away since.
 fn marked_backup() -> Option<String> {
-    let name = fs::read_to_string(mark_path()).ok()?.trim().to_string();
+    let name = fs::read_to_string(mark_path())
+        .ok()?
+        .lines()
+        .next()?
+        .trim()
+        .to_string();
     if !backup_name_ok(&name) {
         return None;
     }
@@ -141,6 +146,41 @@ fn marked_backup() -> Option<String> {
 /// Is a restore waiting or running?
 pub fn pending() -> bool {
     mark_path().exists()
+}
+
+/// Is the restore waiting for the person's answer? An archive that is not
+/// encrypted could carry a backup file someone else put there, and a
+/// backup is read as the database's administrator: the person is asked
+/// first (owner's decision, 2026-11-16).
+pub fn asking() -> bool {
+    fs::read_to_string(mark_path()).is_ok_and(|m| marker_asks(&m))
+}
+
+/// The marker: the backup's name, and a second line `ask` while the
+/// person has not answered.
+fn marker_asks(marker: &str) -> bool {
+    marker.lines().nth(1).is_some_and(|l| l.trim() == "ask")
+}
+
+/// The person's answer. `true`: put the gallery back from the backup.
+/// `false`: start with an empty gallery (the backup stays on the disk, in
+/// `backups/alp-kept/`).
+pub fn answer(restore: bool) -> Result<(), Fail> {
+    let marker = fs::read_to_string(mark_path()).unwrap_or_default();
+    if !marker_asks(&marker) {
+        return Err(Fail::new(
+            "restore.not_asked",
+            "There is no gallery waiting to be brought back.",
+        ));
+    }
+    if restore {
+        let name = marker.lines().next().unwrap_or("").trim().to_string();
+        immich::write_secret(&mark_path(), &format!("{name}\n"))
+    } else {
+        eprintln!("alpd: gallery: not brought back (the person's choice); starting empty");
+        fs::remove_file(mark_path())
+            .map_err(|e| immich::failed(format!("the choice could not be kept: {e}")))
+    }
 }
 
 /// A database backup's name as Immich writes it
@@ -185,7 +225,12 @@ pub fn mark_if_backup() {
         return;
     };
     keep_copy(&name);
-    match immich::write_secret(&mark_path(), &format!("{name}\n")) {
+    let ask = if crate::archive::open_is_plain() {
+        "ask\n"
+    } else {
+        ""
+    };
+    match immich::write_secret(&mark_path(), &format!("{name}\n{ask}")) {
         Ok(()) => eprintln!("ALP-OS Live: gallery: a backup is on the disk; it will be put back"),
         Err(e) => eprintln!("ALP-OS Live: gallery: restore not noted: {}", e.message),
     }
@@ -204,6 +249,7 @@ const TRY_AGAIN_AFTER: Duration = Duration::from_secs(60);
 /// would have come from stays in [`kept_dir`].
 pub fn tick() {
     if !pending()
+        || asking()
         || !crate::index::is_open()
         || !crate::archive::is_open()
         || RUNNING.load(Ordering::SeqCst)
@@ -675,6 +721,15 @@ mod tests {
         assert_eq!(newest_backup(&dir).as_deref(), Some(new));
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(newest_backup(&dir), None);
+    }
+
+    #[test]
+    fn the_marker_says_when_the_person_is_asked_first() {
+        let name = "immich-db-backup-20261115T101500-v3.3.3-pg14.19.sql.gz";
+        assert!(marker_asks(&format!("{name}\nask\n")));
+        assert!(!marker_asks(&format!("{name}\n")));
+        assert!(!marker_asks("ask\n"));
+        assert!(!marker_asks(""));
     }
 
     #[test]

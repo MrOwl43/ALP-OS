@@ -213,6 +213,8 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; justif
 .rem { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .7rem 1rem; border: 1px solid var(--line); border-radius: .9rem; }
 .rem b { display: block; } .rem span.d { color: var(--ink2); font-size: .88rem; }
 .rem button { flex: none; padding: .4rem 1.2rem; min-block-size: 2.4rem; }
+.rem.restore-ask { flex-direction: column; align-items: stretch; }
+.restore-ask-btns { display: flex; flex-wrap: wrap; gap: .6rem; }
 .disks { display: grid; gap: .5rem; text-align: start; margin-block-start: 1rem; }
 .diskrow { display: flex; align-items: center; gap: .9rem; padding: .8rem 1rem; border: 1px solid var(--line); border-radius: .9rem; }
 .diskrow .main { flex: 1; min-inline-size: 0; } .diskrow .t { font-weight: 600; display: block; } .diskrow .s { color: var(--ink2); font-size: .9rem; display: block; }
