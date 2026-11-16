@@ -24,7 +24,7 @@ origin=http://127.0.0.1:8411
 probe="-/bin/bash -c 'exec 3<>/dev/tcp/127.0.0.1/8411 && echo API-LISTENING || echo API-NOT-LISTENING'
 $(QA_HTTP_TIMEOUT=120 qa_http_probe SETUP POST /api/v1/live/password/setup "$origin" '{"password":"alpha-test-password-4"}')
 -/bin/bash -c 'echo PARTS-BEGIN; lsblk -rno PARTLABEL,SIZE,FSTYPE /dev/\$(lsblk -rno PKNAME \$(findmnt -no SOURCE /var/lib/alp) | head -n 1); echo PARTS-END'
--/bin/bash -c 'ls /usr/lib/systemd/systemd-sysupdate /usr/lib/systemd/systemd-pull >/dev/null 2>&1 && echo SYSUPDATE-yes || echo SYSUPDATE-no; echo TIMERS-\$(systemctl is-enabled systemd-sysupdate.timer systemd-sysupdate-reboot.timer systemd-bless-boot.service 2>&1 | paste -sd- -); echo \$(grep ^IMAGE_VERSION= /usr/lib/os-release || echo IMAGE_VERSION=none); echo KEYRING-\$(stat -c %s /usr/lib/systemd/import-pubring.gpg)'
+-/bin/bash -c 'ls /usr/lib/systemd/systemd-sysupdate /usr/lib/systemd/systemd-pull >/dev/null 2>&1 && echo SYSUPDATE-yes || echo SYSUPDATE-no; echo TIMERS-\$(systemctl is-enabled systemd-sysupdate.timer systemd-sysupdate-reboot.timer 2>&1 | paste -sd- -); echo \$(grep ^IMAGE_VERSION= /usr/lib/os-release || echo IMAGE_VERSION=none); echo KEYRING-\$(stat -c %s /usr/lib/systemd/import-pubring.gpg)'
 -/bin/bash -c 'echo CHECK-BEGIN; alpctl live update check 2>&1 | tail -n 5; echo CHECK-END'"
 fail=0
 for size in 32G 8G; do
@@ -51,8 +51,8 @@ for size in 32G 8G; do
         [[ $(grep -c '^_empty 6G' <<<"$parts" || true) == 2 && $(grep -c '^_empty 96M' <<<"$parts" || true) == 2 ]] \
             || { echo "FAIL: the update slots do not have the planned sizes" >&2; fail=1; }
         grep -q 'SYSUPDATE-yes' <<<"$out" || { echo "FAIL: systemd-sysupdate or systemd-pull is not in the image" >&2; fail=1; }
-        grep -q 'TIMERS-masked-masked-masked' <<<"$out" \
-            || { echo "FAIL: systemd's own update timers or bless service are not masked: $(grep -o 'TIMERS-[a-z-]*' <<<"$out" | head -n 1)" >&2; fail=1; }
+        grep -q 'TIMERS-masked-masked' <<<"$out" \
+            || { echo "FAIL: systemd's own update timers are not masked: $(grep -o 'TIMERS-[a-z-]*' <<<"$out" | head -n 1)" >&2; fail=1; }
         grep -Eq 'IMAGE_VERSION="?[0-9]+\.[0-9]+\.[0-9]{2}"?' <<<"$out" \
             || { echo "FAIL: the image does not know its version: $(grep -o 'IMAGE_VERSION=[^ ]*' <<<"$out" | head -n 1)" >&2; fail=1; }
         # No update key in the image (KEYRING-0): the signature cannot be checked, so nothing is offered.

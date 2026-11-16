@@ -41,9 +41,9 @@ writing the stick again, which empties the index.
    do not fit beside the written one. The update layout adds `alp-boot`
    (1 GiB, FAT, GPT type XBOOTLDR), which systemd-boot reads by its type.
    It is mounted at `/boot` only while an update is checked or written and
-   while a start is marked good (`alpctl live update`,
-   `alp-live-bless.service`; systemd's own `systemd-bless-boot.service` and
-   sysupdate timers are masked).
+   while a start is marked good (`alpctl live update`; our own
+   `systemd-bless-boot.service` in `/etc` takes the place of systemd's;
+   the sysupdate timers are masked).
 5. **Version order**: releases are numbered in the order they are made
    (0.2.6, 0.2.61, 0.2.7), which is not the order systemd compares
    (0.2.61 > 0.2.7). The image version (`IMAGE_VERSION`, update file names,
@@ -58,6 +58,17 @@ writing the stick again, which empties the index.
    exists, so nothing is accepted). T-UPD-02 covers both inside the guest
    with bind mounts made as root.
 
+8. **An unhealthy new version restarts by itself** (contract
+   `systemd-targets.md`, reboot on failure): `systemd-bless-boot.service`
+   is in the start only when the started entry has a boot counter
+   (systemd-bless-boot-generator), so its `JobTimeoutSec=10min` /
+   `JobTimeoutAction=reboot-force` (the start hangs) and
+   `FailureAction=reboot` (alpd does not answer: `alpctl live update
+   healthy`) can never restart a version that was marked good or the
+   written system. Limit: a version whose root cannot be mounted at all
+   stops in the initrd; switching the computer off and on uses a try, and
+   after three the version before starts (T-UPD-03).
+
 ## Consequences
 
 - 13.2 GiB of a 32 GB stick go to the slots and `alp-boot`; the index keeps the rest.
@@ -68,6 +79,7 @@ writing the stick again, which empties the index.
   systemd-sysupdate and systemd-pull) and `dosfstools`.
 - Tests: T-UPD-01 (layout on a 32 GiB and an 8 GiB stick, no key means no
   update), T-UPD-02 (a full update: found, written, started, marked good,
-  index opens). T-UPD-03..05 follow (rollback, power cut, bad signature in
-  the VM; a bad signature and slot rotation were tried by hand with
+  index opens). T-UPD-03 (a damaged new version: three
+  failed tries, then the old version and its index). T-UPD-04..05 follow
+  (power cut, bad signature in the VM; a bad signature and slot rotation were tried by hand with
   systemd-sysupdate 257 on a stick image, 2026-11-15).

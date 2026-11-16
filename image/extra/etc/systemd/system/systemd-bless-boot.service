@@ -1,1 +1,35 @@
-/dev/null
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Updates in place (ADR 0026). This file takes the place of systemd's own
+# systemd-bless-boot.service: the start files of updates are on the
+# alp-boot partition, which is mounted only for this moment.
+#
+# systemd-bless-boot-generator puts this unit into the start only when the
+# started entry has a boot counter, that is: only for the first starts of a
+# new version. A version that was marked good, and the system the stick was
+# written with, never run it, so nothing here can restart them.
+#
+# A new version starts with three tries. When this start is healthy
+# (boot-complete.target, which requires alp-healthy.target, and alpd
+# answers), the counter is removed and systemd-boot keeps starting this
+# version. When it is not, the computer restarts by itself (systemd's own
+# JobTimeoutAction= and FailureAction=); after the third try systemd-boot
+# goes back to the version before.
+[Unit]
+Description=ALP-OS Live: mark this start of a new version as good
+DefaultDependencies=no
+Requires=boot-complete.target
+After=local-fs.target boot-complete.target alp-live-state.service alpd.service
+Conflicts=shutdown.target
+Before=shutdown.target
+# boot-complete.target not reached within 10 minutes: this start hangs.
+JobTimeoutSec=10min
+JobTimeoutAction=reboot-force
+# alpd does not answer, or the counter could not be removed.
+FailureAction=reboot
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/usr/bin/alpctl live update healthy
+ExecStart=/usr/bin/alpctl live update bless
+TimeoutStartSec=5min

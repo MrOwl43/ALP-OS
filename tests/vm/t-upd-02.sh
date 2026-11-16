@@ -12,6 +12,11 @@
 #            marked good (the boot counter is gone), and the index opens
 #            with the ALP password chosen before the update.
 #
+# T-UPD-03, on a copy of the stick taken after start 1: the new version's
+# root is damaged (as T-BOOT-03 does). Three starts fail on dm-verity, each
+# using one try of the boot counter; the fourth start is the old version
+# again, with its index, and it says that the new version did not start.
+#
 # The image is not changed for the test: its update source and (empty)
 # keyring are covered inside the guest by bind mounts made as root.
 #
@@ -82,6 +87,7 @@ $testsrc
 $(check CHECK1)
 -/bin/bash -c 'echo APPLY-BEGIN; echo $api_script | base64 -d > /run/alp-test/api.sh; bash /run/alp-test/api.sh 2>&1; echo APPLY-END'
 $(check CHECK2)
+-/bin/bash -c 'echo STARTS-BEGIN; lsblk -rno PARTLABEL,START /dev/\$(lsblk -rno PKNAME \$(findmnt -no SOURCE /var/lib/alp) | head -n 1); echo STARTS-END'
 -/bin/bash -c 'echo PARTS-BEGIN; lsblk -rno PARTLABEL /dev/\$(lsblk -rno PKNAME \$(findmnt -no SOURCE /var/lib/alp) | head -n 1); echo PARTS-END'" 1800
 grep -q 'TESTSRC-ok' <<<"$out" || qa_skip "T-UPD-02: the update tools are not in this image yet"
 old=$(grep -o 'IMAGE_VERSION="\?[0-9.]*' <<<"$out" | head -n 1 | tr -d '"' | cut -d= -f2)
@@ -98,10 +104,14 @@ parts=$(between PARTS)
 if ! grep -q "^alp-root-$version\$" <<<"$parts" || ! grep -q "^alp-verity-$version\$" <<<"$parts"; then fail "the slots do not carry the new version: $parts"; fi
 [[ $(grep -c '^_empty$' <<<"$parts") == 2 && $(grep -c '^root-x86-64$' <<<"$parts") == 1 ]] || fail "the other slots or the written root changed: $parts"
 echo "ok:   version $version is written to a free slot; the written system is untouched"
+# For T-UPD-03: a copy of the stick as it is now, before the new version starts.
+cp --sparse=always "$work/stick.qcow2" "$work/stick-b.qcow2"
+root_start=$(between STARTS | awk -v l="alp-root-$version" '$1 == l {print $2}')
+[[ $root_start =~ ^[0-9]+$ ]] || fail "the new root slot's place on the stick is not known: $(between STARTS)"
 
 # Start 2: the stick starts the new version, marks it good, and the index opens.
 boot "$testsrc
--/bin/bash -c 'for i in \$(seq 90); do systemctl is-active -q alp-live-bless.service && break; sleep 2; done; echo BLESS-\$(systemctl is-active alp-live-bless.service)'
+-/bin/bash -c 'for i in \$(seq 90); do systemctl is-active -q systemd-bless-boot.service && break; sleep 2; done; echo BLESS-\$(systemctl is-active systemd-bless-boot.service)'
 -/bin/bash -c 'echo \$(grep ^IMAGE_VERSION= /usr/lib/os-release || echo IMAGE_VERSION=none)'
 $(QA_HTTP_TIMEOUT=90 qa_http_probe UNLOCK POST /api/v1/live/unlock "$origin" "{\"password\":\"$pw\"}")
 $(check CHECK3)" 600
@@ -115,3 +125,25 @@ echo "ok:   the start is marked good (no boot counter left)"
 between UNLOCK | grep -q '^HTTP/1.1 200' || fail "the index does not open with the password chosen before the update: $(between UNLOCK | head -n 3)"
 echo "ok:   the index opens with the ALP password chosen before the update"
 echo "PASS: T-UPD-02"
+
+# T-UPD-03: damage the new root (1 MiB, 1 MiB into the slot) on the copy.
+fail() { echo "FAIL: T-UPD-03: $*" >&2; exit 1; }
+qemu-io -f qcow2 -c "write -q -P 0x5a $(( root_start * 512 + 1024 * 1024 )) 1M" "$work/stick-b.qcow2" >/dev/null
+expect='device-mapper: verity: [^ ]+: (data|metadata) block [0-9]+ is corrupted'
+for try in 1 2 3; do
+    ALP_OVERLAY="$work/stick-b.qcow2" ALP_EXPECT_FAIL=$expect ALP_RAM=${ALP_RAM:-2G} "$here/run-vm.sh" "$image" 300 >/dev/null \
+        || fail "try $try of the damaged version did not fail on dm-verity"
+    echo "ok:   try $try: the damaged version does not start (dm-verity)"
+done
+status=0
+out=$(ALP_OVERLAY="$work/stick-b.qcow2" ALP_RAM=${ALP_RAM:-2G} ALP_PROBE_DELAY=15 ALP_QEMU_ARGS="-nic user,model=virtio-net-pci" ALP_PROBE="$testsrc
+-/bin/bash -c 'echo \$(grep ^IMAGE_VERSION= /usr/lib/os-release || echo IMAGE_VERSION=none)'
+$(QA_HTTP_TIMEOUT=90 qa_http_probe UNLOCK POST /api/v1/live/unlock "$origin" "{\"password\":\"$pw\"}")
+$(check CHECK4)" "$here/run-vm.sh" "$image" 600) || status=$?
+(( status == 0 )) || { echo "$out" | tail -n 40 | cut -c1-300; fail "the fourth start did not come up"; }
+back=$(grep -o 'IMAGE_VERSION="\?[0-9.]*' <<<"$out" | head -n 1 | tr -d '"' | cut -d= -f2)
+[[ $back == "$old" ]] || fail "the fourth start runs '$back', not the old version $old"
+between CHECK4 | grep -q "^newer $version failed" || fail "the old version does not say that $version did not start: $(between CHECK4)"
+between UNLOCK | grep -q '^HTTP/1.1 200' || fail "the index does not open after the rollback: $(between UNLOCK | head -n 3)"
+echo "ok:   after three failed tries the stick starts version $old again, and its index opens"
+echo "PASS: T-UPD-03"
