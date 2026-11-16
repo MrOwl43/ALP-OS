@@ -14,6 +14,9 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
 - (2) ADR 0026, `docs/plans/live-update.md`: layout (slots + `alp-boot`), sysupdate transfer files,
   `crates/alp-live/src/update.rs` (`alpctl live update bless|check|apply`), `tools/update-files.sh`,
   T-UPD-01/02 in the CI group "update" (builds a second image as version 9.9.90; green 2026-11-16),
+  Public history (2026-11-16): 14 commits of 2026-11-10 (in main, live-alpha and both release tags) carry
+  co-author and session lines; whether to rewrite the history is the owner's open decision.
+  `tests/ci/check-commit-messages.sh` (CI job shell) refuses such lines in every commit since 2026-11-11.
   Security review 2026-11-16 (clock, gallery restore, updates): fixed in code: signing key in the
   environment `release` (main only), unknown-key test, restore retries and keeps its backup aside,
   bless waits for the lock, no switch-off while writing, version names. Open: owner's decision on
