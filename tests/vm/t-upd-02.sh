@@ -17,6 +17,9 @@
 # using one try of the boot counter; the fourth start is the old version
 # again, with its index, and it says that the new version did not start.
 #
+# T-UPD-05, in start 2: the update server offers a list of files that was
+# changed after it was signed; the stick refuses it.
+#
 # The image is not changed for the test: its update source and (empty)
 # keyring are covered inside the guest by bind mounts made as root.
 #
@@ -44,6 +47,11 @@ mkdir "$work/srv"
 export GNUPGHOME="$work/gnupg"
 gpg --batch --quiet --passphrase '' --quick-generate-key 'T-UPD-02 test key' ed25519 sign never
 gpg --batch --yes --detach-sign -o "$work/srv/SHA256SUMS.gpg" "$work/srv/SHA256SUMS"
+# T-UPD-05: the same folder with a list that was changed after signing (it
+# offers a version 9.9.99 that the signature does not cover).
+mkdir "$work/srv/bad"
+cp "$work/srv/SHA256SUMS.gpg" "$work/srv/bad/"
+{ cat "$work/srv/SHA256SUMS"; sed "s/_${version}/_9.9.99/g" "$work/srv/SHA256SUMS"; } > "$work/srv/bad/SHA256SUMS"
 pubring=$(gpg --export | base64 -w0)
 gpgconf --kill all 2>/dev/null || true
 unset GNUPGHOME
@@ -114,7 +122,9 @@ boot "$testsrc
 -/bin/bash -c 'for i in \$(seq 90); do systemctl is-active -q systemd-bless-boot.service && break; sleep 2; done; echo BLESS-\$(systemctl is-active systemd-bless-boot.service)'
 -/bin/bash -c 'echo \$(grep ^IMAGE_VERSION= /usr/lib/os-release || echo IMAGE_VERSION=none)'
 $(QA_HTTP_TIMEOUT=90 qa_http_probe UNLOCK POST /api/v1/live/unlock "$origin" "{\"password\":\"$pw\"}")
-$(check CHECK3)" 600
+$(check CHECK3)
+-/bin/bash -c 'sed -i \"s|^Path=http://10.0.2.2:$port/|Path=http://10.0.2.2:$port/bad/|\" /run/alp-test/d/*.transfer; grep -c /bad/ /run/alp-test/d/10-root.transfer'
+$(check CHECK5)" 600
 now=$(grep -o 'IMAGE_VERSION="\?[0-9.]*' <<<"$out" | head -n 1 | tr -d '"' | cut -d= -f2)
 [[ $now == "$version" ]] || fail "the second start runs '$now', not $version"
 echo "ok:   the second start runs version $version"
@@ -125,6 +135,14 @@ echo "ok:   the start is marked good (no boot counter left)"
 between UNLOCK | grep -q '^HTTP/1.1 200' || fail "the index does not open with the password chosen before the update: $(between UNLOCK | head -n 3)"
 echo "ok:   the index opens with the ALP password chosen before the update"
 echo "PASS: T-UPD-02"
+
+# T-UPD-05: a list of update files whose signature does not fit is refused.
+if between CHECK5 | grep -q 'not signed by the ALP-OS project' && ! between CHECK5 | grep -q '^newer '; then
+    echo "ok:   a changed list of update files is refused (signature)"
+    echo "PASS: T-UPD-05"
+else
+    echo "FAIL: T-UPD-05: a changed list of update files was not refused: $(between CHECK5)" >&2; exit 1
+fi
 
 # T-UPD-03: damage the new root (1 MiB, 1 MiB into the slot) on the copy.
 fail() { echo "FAIL: T-UPD-03: $*" >&2; exit 1; }
