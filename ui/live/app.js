@@ -403,6 +403,11 @@
     return h("dl", { class: "specs" }, rows);
   }
   function sheet(...kids) { closeModal(); modalEl = h("div", { class: "modal", role: "dialog", "aria-modal": "true" }, h("div", { class: "sheet" }, ...kids)); document.body.append(modalEl); const b = modalEl.querySelector(".primary") || modalEl.querySelector("button"); if (b) b.focus(); }
+  function askRestart() {   // feature update: start the version that was just installed
+    sheet(h("h2", { style: "margin-top:0" }, t("power.restart.title")), h("p", { class: "fine", style: "margin:0" }, t("power.restart.sub")),
+      h("div", { class: "row" }, h("button", { class: "primary", onclick: () => { closeModal(); powerOff(true); } }, t("power.restart.yes")),
+        h("button", { class: "secondary", "data-back": "", onclick: closeModal }, t("common.cancel"))));
+  }
   function askPowerOff() {
     sheet(h("h2", { style: "margin-top:0" }, t("power.title")), h("p", { class: "fine", style: "margin:0" }, t("power.sub")),
       h("div", { class: "row" }, h("button", { class: "primary", onclick: () => { closeModal(); powerOff(); } }, t("power.yes")),
@@ -658,7 +663,8 @@
   // Shutdown (T15): "Shutting down…" with the steps of the power.off job. alpd stops last, so requests are expected
   // to fail at the end; the last message stays. If the screen is still on long after, say it is safe to switch off.
   const OFF_STEPS = ["immich", "archive", "index", "saving", "off"];
-  async function powerOff() {
+  async function powerOff(again) {
+    const restart = again === true;   // also called as a click handler: only a real `true` restarts (feature update)
     closeModal(); stopSaver(); stopPolling(); setConn(false);
     if (current && current.stop) current.stop();
     current = { name: "off", update() {}, stop() {} }; powerOffDone = true;
@@ -670,24 +676,26 @@
     const draw = () => {
       const at = job ? OFF_STEPS.indexOf(job.step) : -1, fin = job && job.state === "done";
       list.replaceChildren(...OFF_STEPS.map((st, i) => { const k = fin || at > i ? "done" : at === i ? "now" : "todo";
-        return h("li", { class: k }, h("span", { class: "badge " + (k === "done" ? "ok" : "todo"), "aria-hidden": "true" }, k === "done" ? "✓" : k === "now" ? "•" : ""), t("off.step." + st), h("span", { class: "sr" }, " " + t("step.status." + k))); }));
+        return h("li", { class: k }, h("span", { class: "badge " + (k === "done" ? "ok" : "todo"), "aria-hidden": "true" }, k === "done" ? "✓" : k === "now" ? "•" : ""), t(restart && st === "off" ? "off.step.restart" : "off.step." + st), h("span", { class: "sr" }, " " + t("step.status." + k))); }));
       if (job && job.message) line.now(job.message);
     };
-    card.replaceChildren(hero("power"), h("h1", {}, t("off.title")), list, line, end); draw();
-    try { const r = await alp.powerOff(); if (r && r.job) job = r.job; }
+    card.replaceChildren(hero("power"), h("h1", {}, t(restart ? "off.title.restart" : "off.title")), list, line, end); draw();
+    try { const r = await alp.powerOff(restart); if (r && r.job) job = r.job; }
     catch (e) {
       if (e.key !== "api.unreachable") {   // refused: say so, and let the person go back
         powerOffDone = false; line.remove();
-        end.replaceChildren(banner("bad", e), h("div", { class: "actions" }, h("button", { class: "primary", type: "button", onclick: powerOff }, t("common.tryagain")),
+        end.replaceChildren(banner("bad", e), h("div", { class: "actions" }, h("button", { class: "primary", type: "button", onclick: () => powerOff(restart) }, t("common.tryagain")),
           h("button", { class: "link", type: "button", "data-back": "", onclick: () => { L.view = null; route(true); pollTimer = setTimeout(loop, 500); } }, t("common.back"))));
         return;
       }
     }
     draw();
-    for (let gone = 0, t0 = Date.now(); ;) {
+    for (let gone = 0, wasGone = false, t0 = Date.now(); ;) {
       await sleep(1000);
-      try { const s = await alp.state(); gone = 0; S = s; if (s.power.job) job = s.power.job; } catch (e) { gone++; }
+      try { const s = await alp.state(); if (restart && wasGone) { location.reload(); return; } gone = 0; S = s; if (s.power.job) job = s.power.job; } catch (e) { gone++; wasGone = true; }
       draw();
+      // A restart: the screen comes back by itself; this page only waits (the kiosk usually starts it afresh).
+      if (restart && (gone >= 20 || Date.now() - t0 > 120000)) { line.now(t("off.restart.wait")); continue; }
       // Still on: alpd has been gone for 20 s (it stops last), or two minutes passed (the system forces off after 90 s).
       if (gone >= 20 || Date.now() - t0 > 120000) {
         line.remove(); list.querySelectorAll("li").forEach((li) => { li.className = "done"; li.firstChild.className = "badge ok"; li.firstChild.textContent = "✓"; });
@@ -2116,7 +2124,7 @@
               const install = btn(t("upd.install", { v: n.version }), () => { install.disabled = check.disabled = true; msg.replaceChildren(waitLine(t("upd.starting"))); follow(alp.updateApply); }, "primary");
               ctl = [install];
             }
-            else if (n && n.state === "installed") { desc = t("upd.installed", { v: n.version }); ctl = [btn(t("status.off"), askPowerOff)]; }
+            else if (n && n.state === "installed") { desc = t("upd.installed", { v: n.version }); ctl = [btn(t("power.restart.yes"), askRestart, "primary")]; }
             else if (n && n.state === "failed") desc = t("upd.failed", { v: n.version });
             else desc = t(u.checked ? "upd.none" : "upd.ask");
             updRow = row(t("upd.title"), desc, msg, ...ctl);

@@ -88,6 +88,8 @@ writing the stick again, which empties the index.
    (someone pressed "Check"), so that a healthy start is not restarted
    for it. The computer is not switched off from the screen while a
    version is being written (`update.running`).
+   After a version is installed the Updates row offers "Restart now"
+   (`power/off` with `restart`); the screen comes back by itself.
 
 ## Consequences
 

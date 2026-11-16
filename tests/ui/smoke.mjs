@@ -439,6 +439,11 @@ for (const q of ["", "&features=recovery_commit,events"]) {
   await page.screenshot({ path: path.join(out, "update-available.png") });
   await page.click("button:has-text('Install version 0.2.8')");
   await page.waitForSelector("text=Version 0.2.8 is on the stick", { timeout: 15000 });
+  await page.screenshot({ path: path.join(out, "update-installed.png") });
+  // The new version starts with "Restart now": asked once, then the shutdown screen says "Restarting".
+  await page.click(".setrow:has-text('Updates') button:has-text('Restart now')");
+  await page.click(".sheet button:has-text('Restart now')");
+  await page.waitForSelector("h1:has-text('Restarting')", { timeout: 8000 });
   await done(page, "update-install");
   const old = await open("&screen=settings&update=old");
   await old.click(".setcat:has-text('About')"); await old.waitForTimeout(250);
