@@ -1742,11 +1742,14 @@
       const gal = h("button", { class: "primary", type: "button", "data-focus": "", onclick: () => navigate("gallery") }, t("home.gallery"));
       const galWait = waitLine(t("home.gallery.starting"), "wait.gallery.slow", 240);
       const remBox = h("div");
+      // Feature restore_ask (ADR 0025): a backup disk that is not encrypted holds a gallery from before; the person decides.
+      const restoreBox = h("div", { class: "reminders" });
+      const restoreAnswer = async (yes, btns) => { btns.forEach((b) => { b.disabled = true; }); try { await alp.galleryRestore(yes); } catch (e) { btns.forEach((b) => { b.disabled = false; }); } await refresh(); };
       const menu = h("div", { class: "menu" }, gal,
         h("button", { class: "secondary", onclick: () => navigate("settings") }, t("home.settings")),
         has("media_import") ? h("button", { class: "secondary", type: "button", "data-ico": "download", onclick: () => refusedWhileCritical() || navigate("import") }, t("import.go")) : null,
         S.lock.state === "setup" ? null : h("button", { class: "secondary", onclick: lockNow }, t("home.lock")));
-      card.append(dot, title, sub, warn, remBox, lookAgain, other, galWait, tiles, menu);
+      card.append(dot, title, sub, warn, remBox, lookAgain, other, restoreBox, galWait, tiles, menu);
       const tile = (k, v, small, note) => h("div", { class: "tile" }, h("div", { class: "k" }, k), h("div", { class: "v" + (small ? " small" : ""), dir: small ? "ltr" : null }, v), note ? h("div", { class: "k" }, note) : null);
       return { update(s) {
         const rem = reminders(s), empty = ["none", "failed", "creating"].includes(s.arch.state);
@@ -1763,7 +1766,14 @@
         warn.replaceChildren(...(w.length || trouble ? [h("button", { class: "link", type: "button", "data-ico": "info", onclick: openErrors }, t("home.see.errors"))] : []));
         const miss = s.arch.state === "missing"; lookAgain.classList.toggle("hidden", !miss); other.classList.toggle("hidden", !miss); tiles.classList.toggle("hidden", miss || empty);
         gal.classList.toggle("hidden", miss || empty || s.immich.state !== "ready" && s.immich.state !== "paused");
-        galWait.classList.toggle("hidden", miss || empty || s.immich.state !== "starting");
+        const askRestore = has("restore_ask") && s.immich.state === "starting" && s.immich.restoreAsk && !miss && !empty;
+        if (askRestore !== !!restoreBox.firstChild) {
+          const yes = h("button", { class: "primary", type: "button" }, t("restore.ask.yes")), no = h("button", { class: "secondary", type: "button" }, t("restore.ask.no"));
+          yes.onclick = () => restoreAnswer(true, [yes, no]); no.onclick = () => restoreAnswer(false, [yes, no]);
+          restoreBox.replaceChildren(...(askRestore ? [h("div", { class: "rem restore-ask", role: "group", "aria-label": t("restore.ask.title") },
+            h("div", {}, h("b", {}, t("restore.ask.title")), h("span", { class: "d" }, t("restore.ask.text"))), h("div", { class: "restore-ask-btns" }, yes, no))] : []));
+        }
+        galWait.classList.toggle("hidden", miss || empty || s.immich.state !== "starting" || askRestore);
         galWait.why(s.immich.detail);   // T21: e.g. "Unpacking the photo service for the first time…"
         const place = s.arch.place ? (s.arch.place.label || s.arch.place.name) : "–";
         const hl = health(s);

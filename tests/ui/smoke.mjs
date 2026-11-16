@@ -447,6 +447,16 @@ for (const q of ["", "&features=recovery_commit,events"]) {
   await done(old, "update-unsupported");
 }
 
+// 0.2.7 (feature restore_ask, ADR 0025): a backup disk that is not encrypted asks before the gallery is put back.
+{
+  const page = await open("&screen=home-starting&restore=ask");
+  await page.waitForSelector("text=This backup disk holds a gallery from before", { timeout: 8000 });
+  await page.screenshot({ path: path.join(out, "restore-ask-question.png") });
+  await page.click("button:has-text('Bring my gallery back')");
+  await page.waitForSelector("text=This backup disk holds a gallery from before", { state: "detached", timeout: 8000 });
+  await done(page, "restore-ask");
+}
+
 await browser.close(); server.close();
 if (failures.length) { console.log(`FAIL: T-UI-SMOKE (${failures.length})`); process.exit(1); }
 console.log("PASS: T-UI-SMOKE");

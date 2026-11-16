@@ -12,7 +12,7 @@
   if (p.get("shot")) document.write('<img src="/__slow" alt="" hidden>');   // QA only: delays the load event so a headless screenshot waits for the screen
   const sl = (ms) => new Promise((r) => setTimeout(r, fast ? 30 : ms));
   const GB = 1e9;
-  const ALL_FEATURES = ["setup_progress", "recovery_commit", "password_change", "events", "gallery_session", "media_import", "natural_scrolling", "media_files", "terminal", "disks", "disk_check", "disk_eject", "status_levels", "prefs", "display_modes", "idle_lock_pref", "clock", "connection_check", "clock_sync", "clock_base", "lock_hide", "update"];
+  const ALL_FEATURES = ["setup_progress", "recovery_commit", "password_change", "events", "gallery_session", "media_import", "natural_scrolling", "media_files", "terminal", "disks", "disk_check", "disk_eject", "status_levels", "prefs", "restore_ask", "display_modes", "idle_lock_pref", "clock", "connection_check", "clock_sync", "clock_base", "lock_hide", "update"];
   const FEATURES = p.get("features") === "none" ? [] : p.get("features") ? p.get("features").split(",") : ALL_FEATURES;
   let failOnce = p.get("fail");
   const E = (key, message, status, extra) => new ApiError(key, message, null, status || 400, extra);
@@ -52,7 +52,7 @@
   const open = () => { Object.assign(W.archive, { state: "open", place: { partuuid: "p1", name: "sdb1", label: "Backup disk" }, size_bytes: 100 * GB, free_bytes: 90 * GB }); ready(); };
   // The photo service starting, with the plain sentences alpd gives (immich.detail, 2026-10-26).
   let immStart = 0;
-  const startImmich = () => { immStart = Date.now(); Object.assign(W.immich, { state: "starting", console_url: null }); };
+  const startImmich = () => { immStart = Date.now(); Object.assign(W.immich, { state: "starting", console_url: null, restore_ask: p.get("restore") === "ask" && FEATURES.includes("restore_ask") }); };
   const IMM_DETAIL = ["Unpacking the photo service for the first time (about 2.5 GB): part 1 of 3, 0.4 GB of 2.5 GB…", "Unpacking the photo service for the first time (about 2.5 GB): part 2 of 3, 1.1 GB of 2.5 GB…",
     "Unpacking the photo service for the first time (about 2.5 GB): part 3 of 3, 2.1 GB of 2.5 GB…", "Starting the photo service…", "Still starting: the first start sets up the photo database. This can take a few minutes more."];
   let offStart = 0;   // power/off: the job's steps, then alpd stops answering
@@ -134,7 +134,9 @@
       W.import_job = { id: "import", state: pc >= 100 ? "done" : "running", percent: pc, message: "Importing " + Math.round(pc * 13) + " of 1,276…", photos: 1240, videos: 36, skipped: 112, error: null };
       if (pc >= 100) { impAt = 0; W.phone.photos += 1276; }
     }
-    if (W.immich.state === "starting" && immStart) {
+    if (W.immich.state === "starting" && W.immich.restore_ask) {   // ?restore=ask: waits for the person's answer (feature restore_ask)
+      W.immich.restoring = true; W.immich.detail = "This backup disk holds a gallery from before. Choose whether to bring it back.";
+    } else if (W.immich.state === "starting" && immStart) {
       const sec = (Date.now() - immStart) / 1000, dur = fast ? 2 : p.get("immich") === "slow" || preset === "home-starting" ? 60 : 12;
       W.immich.seconds_starting = Math.round(sec);
       W.immich.detail = IMM_DETAIL[Math.min(IMM_DETAIL.length - 1, Math.floor((sec / dur) * IMM_DETAIL.length))];
@@ -297,6 +299,10 @@
           if ("time_zone" in body) W.prefs.time_zone = body.time_zone;
           if ("lock_hide" in body) W.prefs.lock_hide = body.lock_hide;
           return { prefs: W.prefs };
+        case "POST live/gallery/restore":   // feature restore_ask: the answer to "bring the gallery back?"
+          if (!W.immich.restore_ask) throw E("restore.not_asked", "There is no gallery waiting to be brought back.", 409);
+          W.immich.restore_ask = false; W.immich.restoring = !!body.restore; immStart = Date.now();
+          return {};
         case "POST live/update/check":   // ?update=none|old|offline: nothing newer, a stick without room, no network
           W.update.job = { id: "update.check", state: "running", message: "Looking for a new version…", percent: null }; W.update.error = null;
           setTimeout(() => { W.update.job.state = "done"; W.update.checked = true;

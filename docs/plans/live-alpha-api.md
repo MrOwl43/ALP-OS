@@ -1243,5 +1243,6 @@ the computer usually helps.").
 ## 0.2.7 (2026-11-15): the gallery on a new stick (ADR 0025)
 
 - **`state.immich.restoring`** (bool): the gallery's database is being put back from the backup disk after the disk was opened with a new stick. `state.immich.state` is `starting` meanwhile, and `detail` says "Bringing your gallery back from the backup disk. This can take some minutes." No new call: it starts by itself.
+- **`state.immich.restore_ask`** (bool, feature `restore_ask`, 2026-11-16): the archive is not encrypted and holds a gallery backup; nothing is restored until the person answers. `POST gallery/restore {"restore": true|false}` (console sign-in) gives the answer: `200 {}`; `409 restore.not_asked` when nothing is waiting. `false` starts an empty gallery. Meanwhile `state.immich.state` is `starting` and `restoring` is true.
 - While it runs, calls that need the photo service's owner answer `immich.starting` as during a normal start.
 - Turning off: the `immich` step of the `power.off` job may take up to 30 s longer (one more backup of the gallery's database when photos came in since the last one).

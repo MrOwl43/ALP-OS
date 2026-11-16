@@ -58,7 +58,7 @@
       console: { state: (w.console || {}).state || "open", idle: (w.console || {}).idle_lock_seconds || 300, hidden: Array.isArray((w.console || {}).hidden) ? w.console.hidden : [] },
       index: { size: (w.index || {}).size_bytes || 0, free: (w.index || {}).free_bytes || 0, space: (w.index || {}).space || "ok" },
       arch: { state: ar.state, space: ar.space || "ok", health: ar.health || null, recovery: ar.recovery || "none", passwordReopen: ar.password_reopen !== false, serious: !!ar.serious, job: ar.job, place: ar.place, size: ar.size_bytes || 0, free: ar.free_bytes || 0, error: ar.error },
-      immich: { state: im.state, detail: im.detail || null, consoleUrl: im.console_url || null, galleryUrl: im.gallery_url || null, error: im.error || null, startingFor: im.seconds_starting == null ? null : im.seconds_starting },
+      immich: { state: im.state, restoreAsk: !!im.restore_ask, detail: im.detail || null, consoleUrl: im.console_url || null, galleryUrl: im.gallery_url || null, error: im.error || null, startingFor: im.seconds_starting == null ? null : im.seconds_starting },
       pairing: { window: (w.pairing || {}).window_seconds || null, pending: (w.pairing || {}).pending || [], devices: ((w.pairing || {}).devices || []).filter((d) => !d.revoked), strict: !!(w.pairing || {}).strict },
       phone: { url: ph.server_url, account: ph.account, paired: !!ph.paired, phones: ph.phones || 0, photos: ph.photos || 0, last: ph.last_upload, devices: ph.devices || [], now: ph.connected_now || [] },
       chain: { state: ch.state, role: ch.role, id: ch.chain_id },
@@ -127,6 +127,7 @@
     passwordChange: (password, new_password) => raw("POST", "live/password/change", { password, new_password }),
     reportSave: () => raw("POST", "live/report/save", {}),
     setPrefs: (p) => raw("POST", "live/prefs", p),
+    galleryRestore: (restore) => raw("POST", "live/gallery/restore", { restore: !!restore }),   // feature restore_ask: the answer when state.immich.restore_ask
     updateCheck: () => raw("POST", "live/update/check", {}),   // feature update: 202 { job }; the result is state.update
     updateApply: () => raw("POST", "live/update/apply", {}),   // downloads and writes the version the last check found
     clockSync: () => raw("POST", "live/clock/sync", {}),   // feature clock_sync: asks a time server again; the answer shows as a new clock.syncedAt
