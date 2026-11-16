@@ -20,7 +20,11 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   do: restart button after an update, T-UPD-04 (power cut; T-UPD-03 rollback and T-UPD-05 bad signature
   pass in t-upd-02.sh, with the restart of an unhealthy counted start), bump
   `image/extra/usr/lib/alp/release` to 0.2.7 at release (the release job checks it).
-- Next: (2) green in CI and finished, then (3).
+- (3) trial step 1 done: `docs/plans/remote-access.md`, `spikes/iroh-tunnel` (iroh 1.4.1 + own iroh-relay on
+  one machine: direct, relay-only, refusal of an unapproved phone). Product design there (own unprivileged
+  `alp-tunnel`, never inside alpd). Step 2 needs the owner's phone and a relay server on the internet
+  (owner decision), and the app repository.
+- Next: the owner's update key and relay decision; T-UPD-04; security check of ADR 0024/0025/0026.
 
 ## Alpha 0.2.61 (2026-11-15, branch claude/project-thread-o9ostf off live-alpha)
 

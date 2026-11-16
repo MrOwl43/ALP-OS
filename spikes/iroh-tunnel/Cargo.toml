@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# A trial, not product code (docs/plans/remote-access.md). Its own workspace:
+# never built into the image, not part of `just check`.
+[package]
+name = "spike-iroh"
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[workspace]
+
+[dependencies]
+iroh = "=1.4.1"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
