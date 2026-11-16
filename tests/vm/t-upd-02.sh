@@ -23,6 +23,10 @@
 # T-UPD-05, in start 2: the update server offers a list of files that was
 # changed after it was signed; the stick refuses it.
 #
+# T-UPD-04, on a new stick: the power is cut while the new version is being
+# written. The next start is the old version, nothing of the half-written
+# one is offered as installed, and installing again works.
+#
 # The image is not changed for the test: its update source and (empty)
 # keyring are covered inside the guest by bind mounts made as root.
 #
@@ -180,3 +184,52 @@ between CHECK4 | grep -q "^newer $version failed" || fail "the old version does 
 between UNLOCK | grep -q '^HTTP/1.1 200' || fail "the index does not open after the rollback: $(between UNLOCK | head -n 3)"
 echo "ok:   after three failed tries the stick starts version $old again, and its index opens"
 echo "PASS: T-UPD-03"
+
+# T-UPD-04: the power is cut while the new version is being written.
+fail() { echo "FAIL: T-UPD-04: $*" >&2; exit 1; }
+cut_script=$(base64 -w0 <<'SCRIPT'
+api() { curl -s -m 20 -H "Origin: http://127.0.0.1:8411" -H "Cookie: $(cat /run/qa-cookie)" "$@"; }
+post() { api -X POST -H "Content-Type: application/json" -d "{}" "http://127.0.0.1:8411/api/v1/live/update/$1" >/dev/null; }
+update() { api http://127.0.0.1:8411/api/v1/live/state | grep -o '"update":{.*'; }
+post check
+for _ in $(seq 60); do case $(update) in *'"state":"available"'*) break ;; esac; sleep 2; done
+post apply
+for _ in $(seq 400); do
+    p=$(update | grep -o '"percent":[0-9]*' | head -n 1 | cut -d: -f2)
+    if [ "${p:-0}" -ge 30 ] && [ "${p:-0}" -lt 95 ]; then
+        echo "CUT-at $p"
+        sleep 1
+        # Off at once, nothing written out: as pulling the plug.
+        echo o > /proc/sysrq-trigger
+        sleep 60
+    fi
+    sleep 2
+done
+echo CUT-never
+SCRIPT
+)
+status=0
+out=$(ALP_OVERLAY="$work/stick-c.qcow2" ALP_OVERLAY_SIZE=32G ALP_RAM=${ALP_RAM:-2G} ALP_PROBE_DELAY=15 ALP_QEMU_ARGS="-nic user,model=virtio-net-pci" ALP_PROBE="$(QA_HTTP_TIMEOUT=120 qa_http_probe SETUP POST /api/v1/live/password/setup "$origin" "{\"password\":\"$pw\"}")
+$testsrc
+-/bin/bash -c 'echo $cut_script | base64 -d > /run/alp-test/cut.sh; bash /run/alp-test/cut.sh 2>&1'" "$here/run-vm.sh" "$image" 1500 2>&1) || status=$?
+grep -q 'CUT-at ' <<<"$out" || { echo "$out" | tail -n 30 | cut -c1-300; fail "the power was not cut while the version was being written"; }
+(( status != 0 )) || fail "the computer was still running after the power cut"
+echo "ok:   power cut while writing ($(grep -o 'CUT-at [0-9]*' <<<"$out" | head -n 1 | cut -d' ' -f2) percent written)"
+status=0
+out=$(ALP_OVERLAY="$work/stick-c.qcow2" ALP_RAM=${ALP_RAM:-2G} ALP_PROBE_DELAY=15 ALP_QEMU_ARGS="-nic user,model=virtio-net-pci" ALP_PROBE="$testsrc
+-/bin/bash -c 'echo \$(grep ^IMAGE_VERSION= /usr/lib/os-release || echo IMAGE_VERSION=none)'
+$(QA_HTTP_TIMEOUT=90 qa_http_probe UNLOCK POST /api/v1/live/unlock "$origin" "{\"password\":\"$pw\"}")
+$(check CHECK6)
+-/bin/bash -c 'echo AGAIN-BEGIN; alpctl live update apply $version 2>&1 | tail -n 4; echo AGAIN-END'
+$(check CHECK7)" "$here/run-vm.sh" "$image" 1800) || status=$?
+(( status == 0 )) || { echo "$out" | tail -n 40 | cut -c1-300; fail "the start after the power cut did not come up"; }
+back=$(grep -o 'IMAGE_VERSION="\?[0-9.]*' <<<"$out" | head -n 1 | tr -d '"' | cut -d= -f2)
+[[ $back == "$old" ]] || fail "the start after the power cut runs '$back', not $old"
+between UNLOCK | grep -q '^HTTP/1.1 200' || fail "the index does not open after the power cut: $(between UNLOCK | head -n 3)"
+between CHECK6 | grep -q "^newer $version available" || fail "the half-written version is not offered again as new: $(between CHECK6)"
+if between CHECK6 | grep -q "^start-file alp-os_$version"; then fail "a start file of the half-written version is on the stick: $(between CHECK6)"; fi
+echo "ok:   after the power cut the stick starts version $old, its index opens, and $version is offered again"
+between CHECK7 | grep -q "^newer $version installed" || fail "installing again after the power cut did not work: $(between AGAIN) $(between CHECK7)"
+between CHECK7 | grep -q "^start-file alp-os_$version+3-0.efi" || fail "the start file after installing again is not right: $(between CHECK7)"
+echo "ok:   installing again after the power cut works"
+echo "PASS: T-UPD-04"

@@ -101,5 +101,5 @@ writing the stick again, which empties the index.
   signed by an unknown key are refused; a full update: found, written,
   started, marked good, index opens). T-UPD-03 (a damaged new version: three
   failed tries, then the old version and its index). T-UPD-05 (a list of update
-  files changed after signing is refused). T-UPD-04 follows (power cut; a bad signature and slot rotation were tried by hand with
-  systemd-sysupdate 257 on a stick image, 2026-11-15).
+  files changed after signing is refused). T-UPD-04 (the power is cut while a version is written: the old version
+  starts, the new one is offered again and installs).
