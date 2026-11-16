@@ -429,6 +429,24 @@ for (const q of ["", "&features=recovery_commit,events"]) {
   await done(page, "no-browser-feel");
 }
 
+// 0.2.7 (feature update, ADR 0026): Settings > About finds a new version, installs it and says what to do next; a
+// stick without room says so and offers no button.
+{
+  const page = await open("&screen=settings");
+  await page.click(".setcat:has-text('About')"); await page.waitForTimeout(250);
+  await page.click(".setrow:has-text('Updates') button:has-text('Look for updates')");
+  await page.waitForSelector("button:has-text('Install version 0.2.8')", { timeout: 8000 });
+  await page.screenshot({ path: path.join(out, "update-available.png") });
+  await page.click("button:has-text('Install version 0.2.8')");
+  await page.waitForSelector("text=Version 0.2.8 is on the stick", { timeout: 15000 });
+  await done(page, "update-install");
+  const old = await open("&screen=settings&update=old");
+  await old.click(".setcat:has-text('About')"); await old.waitForTimeout(250);
+  await old.waitForSelector("text=This stick has no room for updates in place");
+  if (await old.locator(".setrow:has-text('Updates') button").count()) old.errors.push("a stick without room offers an update button");
+  await done(old, "update-unsupported");
+}
+
 await browser.close(); server.close();
 if (failures.length) { console.log(`FAIL: T-UI-SMOKE (${failures.length})`); process.exit(1); }
 console.log("PASS: T-UI-SMOKE");

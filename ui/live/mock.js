@@ -12,7 +12,7 @@
   if (p.get("shot")) document.write('<img src="/__slow" alt="" hidden>');   // QA only: delays the load event so a headless screenshot waits for the screen
   const sl = (ms) => new Promise((r) => setTimeout(r, fast ? 30 : ms));
   const GB = 1e9;
-  const ALL_FEATURES = ["setup_progress", "recovery_commit", "password_change", "events", "gallery_session", "media_import", "natural_scrolling", "media_files", "terminal", "disks", "disk_check", "disk_eject", "status_levels", "prefs", "display_modes", "idle_lock_pref", "clock", "connection_check", "clock_sync", "clock_base", "lock_hide"];
+  const ALL_FEATURES = ["setup_progress", "recovery_commit", "password_change", "events", "gallery_session", "media_import", "natural_scrolling", "media_files", "terminal", "disks", "disk_check", "disk_eject", "status_levels", "prefs", "display_modes", "idle_lock_pref", "clock", "connection_check", "clock_sync", "clock_base", "lock_hide", "update"];
   const FEATURES = p.get("features") === "none" ? [] : p.get("features") ? p.get("features").split(",") : ALL_FEATURES;
   let failOnce = p.get("fail");
   const E = (key, message, status, extra) => new ApiError(key, message, null, status || 400, extra);
@@ -41,7 +41,7 @@
     immich: { state: "off", error: null, detail: null, seconds_starting: null, console_url: null },
     phone: { server_url: null, account: null, paired: false, phones: 0, photos: 0, last_upload: null, devices: [] },
     chain: { state: "none", chain_id: null, role: null, since: null },
-    features: FEATURES, setup: { complete: false, skipped: [] }, events: [], media: [], import_job: null, prefs: { natural_scrolling: true, ui_scale: null, home_background: "blue", time_zone: null, lock_hide: (new URLSearchParams(location.search).get("hide") || "").split(",").filter(Boolean) }, clock: { now: 1794650400, synced: !new URLSearchParams(location.search).has("noclock"), synced_at: new URLSearchParams(location.search).has("noclock") ? null : 1794650000, base: null }, display: { width_mm: 309, height_mm: 174, auto_scale: 1.25 }, alerts: [], status: null,
+    features: FEATURES, setup: { complete: false, skipped: [] }, update: { supported: p.get("update") !== "old", current: "0.2.7", checked: false, newer: null, error: null, job: null }, events: [], media: [], import_job: null, prefs: { natural_scrolling: true, ui_scale: null, home_background: "blue", time_zone: null, lock_hide: (new URLSearchParams(location.search).get("hide") || "").split(",").filter(Boolean) }, clock: { now: 1794650400, synced: !new URLSearchParams(location.search).has("noclock"), synced_at: new URLSearchParams(location.search).has("noclock") ? null : 1794650000, base: null }, display: { width_mm: 309, height_mm: 174, auto_scale: 1.25 }, alerts: [], status: null,
   });
   const W = base();
   const online = (kind) => { W.network.online = true; W.network.address = "192.168.1.23";
@@ -297,6 +297,17 @@
           if ("time_zone" in body) W.prefs.time_zone = body.time_zone;
           if ("lock_hide" in body) W.prefs.lock_hide = body.lock_hide;
           return { prefs: W.prefs };
+        case "POST live/update/check":   // ?update=none|old|offline: nothing newer, a stick without room, no network
+          W.update.job = { id: "update.check", state: "running", message: "Looking for a new version…", percent: null }; W.update.error = null;
+          setTimeout(() => { W.update.job.state = "done"; W.update.checked = true;
+            if (p.get("update") === "offline") { W.update.job.state = "failed"; W.update.error = { key: "update.offline", message: "The update server could not be reached. Check the internet connection and try again." }; }
+            else W.update.newer = p.get("update") === "none" ? null : { version: "0.2.8", state: "available" }; }, fast ? 60 : 1200);
+          return { job: W.update.job };
+        case "POST live/update/apply":
+          if (!W.update.newer || W.update.newer.state !== "available") throw E("update.none", "There is no new version to install. Look for updates first.", 409);
+          W.update.job = { id: "update.apply", state: "running", message: "Downloading version 0.2.8…", percent: 0 };
+          { const tick = setInterval(() => { W.update.job.percent += 10; if (W.update.job.percent >= 100) { clearInterval(tick); W.update.job.state = "done"; W.update.newer.state = "installed"; } }, fast ? 30 : 500); }
+          return { job: W.update.job };
         case "POST live/clock/sync": await sl(300);
           if (p.get("sync") !== "fail") setTimeout(() => { W.clock.synced = true; W.clock.synced_at = (W.clock.synced_at || W.clock.now) + 60; W.clock.base = null; }, fast ? 60 : 1500);
           return { clock: W.clock };

@@ -13,10 +13,12 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   "ALP-OS" cloud environment (raw.pixls.us allowed there).
 - (2) ADR 0026, `docs/plans/live-update.md`: layout (slots + `alp-boot`), sysupdate transfer files,
   `crates/alp-live/src/update.rs` (`alpctl live update bless|check|apply`), `tools/update-files.sh`,
-  T-UPD-01/02 in the CI group "update" (builds a second image as version 9.9.90). Still to do: release job
-  (rolling release tag `updates`, signing with the Actions secret `UPDATE_SIGNING_KEY`; the owner adds the
-  secret and the public key goes to `image/keys/update-signing.asc`), alpd API + Settings UI, reboot on an
-  unhealthy counted start, T-UPD-03..05, bump `image/extra/usr/lib/alp/release` to 0.2.7 at release.
+  T-UPD-01/02 in the CI group "update" (builds a second image as version 9.9.90; green 2026-11-16),
+  alpd feature `update` (`state.update`, `update/check`, `update/apply`), Settings > About > Updates, release
+  job step "Update files (signed)" (rolling release tag `updates`; skipped until the Actions secret
+  `UPDATE_SIGNING_KEY` and `image/keys/update-signing.asc` exist: the owner needs steps for that). Still to
+  do: restart button after an update, reboot on an unhealthy counted start, T-UPD-03..05, bump
+  `image/extra/usr/lib/alp/release` to 0.2.7 at release (the release job checks it).
 - Next: (2) green in CI and finished, then (3).
 
 ## Alpha 0.2.61 (2026-11-15, branch claude/project-thread-o9ostf off live-alpha)

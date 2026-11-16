@@ -1950,7 +1950,7 @@
           (() => { const i = h("span", { class: "sq sq-" + col, "aria-hidden": "true" }); i.innerHTML = ICON[ic] || ICON.settings; return i; })(), h("span", {}, t("cat." + k)))));
       card.append(h("div", { class: "settings" }, side, h("div", { class: "setmain" }, h("h1", {}, t("cat." + L.setCat)), err, pane)));
       // 0.2.5 addendum: every setting row has an icon from the one set.
-      const ROW_ICON = { "about.build": "log", "about.version": "info", "admin.reset": "refresh", "enc.row": "lock", "pair.strict": "lock", "pc.battery.now": "battery",
+      const ROW_ICON = { "about.build": "log", "about.version": "info", "upd.title": "refresh", "admin.reset": "refresh", "enc.row": "lock", "pair.strict": "lock", "pc.battery.now": "battery",
         "set.addphone": "phone", "set.disk": "disk", "set.disks": "disk", "set.enc": "key", "set.files": "folder", "set.lockafter": "lock", "set.natural": "trackpad",
         "set.saver": "gallery", "set.term": "wrench", "status.network": "wifi", "status.off": "power", "set.zone": "info", "set.lang": "info",
         "set.lockshow.phones": "phone", "set.lockshow.network": "wifi", "set.lockshow.space": "disk", "set.lockshow.backup": "check" };
@@ -2076,7 +2076,42 @@
         },
         about() {
           const prot = S.lock.protection ? t("about.protection." + S.lock.protection) : null;
-          return [group(row(t("about.version"), [S.sys.release || "ALP-OS", prot].filter(Boolean).join(" · ")), S.sys.build ? row(t("about.build"), h("span", { dir: "ltr" }, S.sys.build)) : null),
+          // 0.2.7 (feature update, ADR 0026): a new version without writing the stick again. Looking and installing are
+          // jobs of alpd; this row follows state.update until the job ends, then draws itself again.
+          const u = has("update") ? S.update : null;
+          let updRow = null;
+          if (u) {
+            const msg = h("span", { class: "d", role: "status" });
+            const follow = async (start) => {
+              try {
+                await start();
+                for (let i = 0; i < 3600 && current.name === "settings" && L.setCat === "about"; i++) {
+                  await sleep(window.useMock ? 100 : 1500); await refresh();
+                  const j = S.update && S.update.job;
+                  if (!j || j.state !== "running") break;
+                  msg.replaceChildren(waitLine(j.percent != null ? t("upd.progress", { n: j.percent }) : j.message));
+                }
+                if (current.name === "settings" && L.setCat === "about") openSettings("about");
+              } catch (e) { msg.textContent = ""; fail(e); }
+            };
+            const running = u.job && u.job.state === "running";
+            const check = btn(t("upd.check"), () => { check.disabled = true; msg.replaceChildren(waitLine(t("upd.checking"))); follow(alp.updateCheck); });
+            const n = u.newer;
+            let desc, ctl = [check];
+            if (!u.supported) { desc = t("upd.unsupported"); ctl = []; }
+            else if (running) { desc = u.job.percent != null ? t("upd.progress", { n: u.job.percent }) : u.job.message; ctl = []; follow(async () => {}); }
+            else if (u.error) desc = u.error.message;
+            else if (n && n.state === "available") {
+              desc = t("upd.available", { v: n.version });
+              const install = btn(t("upd.install", { v: n.version }), () => { install.disabled = check.disabled = true; msg.replaceChildren(waitLine(t("upd.starting"))); follow(alp.updateApply); }, "primary");
+              ctl = [install];
+            }
+            else if (n && n.state === "installed") { desc = t("upd.installed", { v: n.version }); ctl = [btn(t("status.off"), askPowerOff)]; }
+            else if (n && n.state === "failed") desc = t("upd.failed", { v: n.version });
+            else desc = t(u.checked ? "upd.none" : "upd.ask");
+            updRow = row(t("upd.title"), desc, msg, ...ctl);
+          }
+          return [group(row(t("about.version"), [S.sys.release || "ALP-OS", prot].filter(Boolean).join(" · ")), S.sys.build ? row(t("about.build"), h("span", { dir: "ltr" }, S.sys.build)) : null, updRow),
             h("h2", {}, t("about.hw")), group(specList()),
             h("h2", {}, t("about.credits")), group(h("p", { class: "d" }, t("about.credits.d")), h("ul", { class: "credits" }, CREDITS.map(([n, l, what]) => h("li", {}, h("b", {}, n), " · " + l + " · " + t(what)))))];
         },

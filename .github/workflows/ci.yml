@@ -174,6 +174,12 @@ jobs:
         with:
           path: out/immich-images
           key: immich-images-${{ hashFiles('image/immich/images.lock') }}
+      - name: The release name in the image is the version being released
+        env:
+          VERSION: ${{ inputs.release_version }}
+        run: |
+          in_image=$(awk '{print $NF}' image/extra/usr/lib/alp/release)
+          [ "$in_image" = "$VERSION" ] || { echo "::error::image/extra/usr/lib/alp/release says $in_image, the release is $VERSION"; exit 1; }
       - run: just build-image
       - name: Compress and hash
         env:
@@ -196,3 +202,36 @@ jobs:
           gh release create "alpha-${VERSION}" --target "$GITHUB_SHA" --prerelease \
             --title "ALP-OS Live alpha ${VERSION}" --notes "$notes" \
             "out/${name}.xz" "out/${name}.sha256"
+      # Updates in place (ADR 0026): the same root, hash partition and UKI as
+      # update files, with a signed SHA256SUMS, on the rolling release
+      # "updates" that sticks ask (image/extra/usr/lib/sysupdate.d). Skipped
+      # until the project's update key exists: its public half in
+      # image/keys/update-signing.asc, its private half only in the Actions
+      # secret UPDATE_SIGNING_KEY (never in the repository or a log).
+      - name: Update files (signed)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.release_version }}
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          if [ -z "$UPDATE_SIGNING_KEY" ] || [ ! -f image/keys/update-signing.asc ]; then
+            echo "::notice::No update key yet: this release has a stick image only, no update files."
+            exit 0
+          fi
+          tools/update-files.sh out/alp-os.raw "$(tools/update-version.sh "$VERSION")" out/update
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          printf '%s\n' "$UPDATE_SIGNING_KEY" | gpg --batch --quiet --import
+          gpg --batch --yes --detach-sign -o out/update/SHA256SUMS.gpg out/update/SHA256SUMS
+          gpgconf --kill all
+          rm -rf "$GNUPGHOME"
+          # The signature must check with the public key that is in the image.
+          gpg --batch --no-options --dearmor <image/keys/update-signing.asc >"$RUNNER_TEMP/pubring.gpg"
+          gpgv --keyring "$RUNNER_TEMP/pubring.gpg" out/update/SHA256SUMS.gpg out/update/SHA256SUMS
+          gh release view updates >/dev/null 2>&1 || gh release create updates --prerelease \
+            --title "ALP-OS update files" \
+            --notes "Files that an ALP-OS stick downloads when it updates itself (Settings, About, Updates). Not for writing to a stick by hand: for that, take the newest ALP-OS Live release."
+          # The big files first, the list that names them last.
+          gh release upload updates --clobber out/update/alp-os_*
+          gh release upload updates --clobber out/update/SHA256SUMS.gpg
+          gh release upload updates --clobber out/update/SHA256SUMS

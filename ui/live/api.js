@@ -50,6 +50,7 @@
     return {
       sys: { battery: bat && typeof bat.percent === "number" ? { percent: Math.round(bat.percent), charging: !!bat.charging } : null, release: sy.release || null, build: sy.build || null },
       power: { state: pw.state || "on", job: pw.job || null },
+      update: w.update || null,   // feature update (ADR 0026): { supported, current, checked, newer: { version, state }, error, job }
       hw: { canRun: hw.verdict !== "fail", verdict: hw.verdict, machine: hw.machine, reportSaved: !!hw.report_file, pending: !!hw.pending, checks: hw.checks || [], specs: hw.specs || null },
       net: { online: !!nw.online, address: nw.address, wifiPresent: !!nw.wifi_present, kind: wired ? "wired" : wifi ? "wifi" : null,
         ssid: wifi && wifi.ssid, signal: wifi && wifi.signal, waiting: ports.some((p) => p.state === "waiting"), job: nw.job, addresses: addrs },
@@ -126,6 +127,8 @@
     passwordChange: (password, new_password) => raw("POST", "live/password/change", { password, new_password }),
     reportSave: () => raw("POST", "live/report/save", {}),
     setPrefs: (p) => raw("POST", "live/prefs", p),
+    updateCheck: () => raw("POST", "live/update/check", {}),   // feature update: 202 { job }; the result is state.update
+    updateApply: () => raw("POST", "live/update/apply", {}),   // downloads and writes the version the last check found
     clockSync: () => raw("POST", "live/clock/sync", {}),   // feature clock_sync: asks a time server again; the answer shows as a new clock.syncedAt
     clockBase: (local) => raw("POST", "live/clock/base", { local: !!local }),   // feature clock_base: the hardware clock holds local time (true) or UTC (false)
     displayModes: async () => (await raw("GET", "live/display/modes")).modes || [],
