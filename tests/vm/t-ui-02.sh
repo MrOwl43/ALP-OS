@@ -63,6 +63,13 @@ shoot() {
 export -f shoot
 export here
 
+# The archive opens in these starts, so the photo service runs: 4 GB like
+# T-IMMICH-01 and T-LIVE-03 (ALPArchive's minimum; the hardware check
+# refuses less). With 2 GB the second start ran out of memory now and then
+# and did not reach alp-healthy.target in time (CI runs 43606120163 tpm
+# case, 43696137517 plain case: "Under memory pressure").
+ram=${ALP_RAM:-${ALP_IMMICH_RAM:-4G}}
+
 run_case() { # tpm | password | plain
     local mode=$1 tpm=0 work status=0 fail=0 args out1 out2 ext_uuid setup_body
     echo "== case: $mode"
@@ -82,7 +89,7 @@ run_case() { # tpm | password | plain
 $(qa_http_probe CREATE POST /api/v1/live/archive/create "$origin" "{\"partuuid\":\"$ext_uuid\"}")
 /bin/sleep 60
 $(qa_http_probe STATE1 GET /api/v1/live/state)"
-    out1=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe1" ALP_PROBE_DELAY=15 ALP_QEMU_ARGS="$args" "$here/run-vm.sh" "$image" 600 2>&1) || status=$?
+    out1=$(ALP_RAM=$ram ALP_PROBE="$probe1" ALP_PROBE_DELAY=15 ALP_QEMU_ARGS="$args" "$here/run-vm.sh" "$image" 600 2>&1) || status=$?
     if (( status != 0 )); then echo "$out1" | tail -n 40; echo "FAIL: T-UI-02 boot 1 ($mode)" >&2; return 1; fi
     grep -qE '^HTTP/1\.[01] 200' <<<"$(block "$out1" SETUP)" || { block "$out1" SETUP; echo "FAIL: password setup ($mode)" >&2; return 1; }
     grep -qE '"state": ?"open"' <<<"$(block "$out1" STATE1)" || echo "note: archive not open yet after boot 1 ($mode); boot 2 still tests the start"
@@ -95,7 +102,7 @@ $(timed UI-STATE /api/v1/live/state)
 -/bin/sh -c 'echo DIAG-BEGIN; cat /proc/uptime; systemctl list-jobs --no-pager; systemctl --failed --no-pager; journalctl -b --no-pager -o short-monotonic -u alpd -u alp-kiosk -n 60; echo DIAG-END'"
     [[ $mode == plain ]] && probe2+=$'\n'"-/bin/sh -c 'echo PLAIN-BEGIN; sleep 20; ls -1 /run/alp/host/ALPArchive; grep -c fuse.gocryptfs /proc/self/mountinfo; echo PLAIN-END'"
     export png="$outdir/t-ui-02-$mode.png"
-    out2=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe2" ALP_HOST_HOOK=shoot ALP_QEMU_ARGS="$args" "$here/run-vm.sh" "$image" 600 2>&1) || status=$?
+    out2=$(ALP_RAM=$ram ALP_PROBE="$probe2" ALP_HOST_HOOK=shoot ALP_QEMU_ARGS="$args" "$here/run-vm.sh" "$image" 600 2>&1) || status=$?
     grep -E '^(ok|FAIL):' <<<"$out2" || true
     for tag in UI-PAGE UI-FILE UI-STATE; do
         local line code secs

@@ -10,12 +10,14 @@ use std::time::{Duration, Instant};
 
 use alp_live::fail::Fail;
 use alp_live::{
-    admin, archive, chain, disks, display, events, format, immich, index, job, live, pairing,
-    prefs, qr, recovery, wifi,
+    admin, archive, chain, clock, disks, display, events, format, immich, immich_restore, index,
+    job, live, pairing, prefs, qr, recovery, update, wifi,
 };
 use serde_json::{Value, json};
 
 use crate::console::{Request, Response};
+use crate::live_media;
+use crate::live_terminal;
 
 const PREFIX: &str = "/api/v1/live/";
 /// Seconds an Immich answer is reused by `GET state` (it is polled often).
@@ -242,6 +244,9 @@ pub struct Live {
     chain: chain::Store,
     wifi_job: Mutex<Option<Job>>,
     archive_job: Mutex<Option<Job>>,
+    /// Updates in place (ADR 0026): what the last check found, and the job
+    /// of a check or of writing a new version.
+    update: Mutex<UpdateCache>,
     networks: Mutex<Vec<wifi::Network>>,
     immich: Mutex<ImmichCache>,
     tries: Mutex<Tries>,
@@ -287,6 +292,9 @@ pub struct Live {
     /// Console preferences (T56), kept in `prefs_file` on the stick.
     prefs: Mutex<prefs::Prefs>,
     prefs_file: std::path::PathBuf,
+    /// Moves the system clock for `clock/base` (`clock::set_base`;
+    /// replaced in unit tests).
+    clock_set: fn(Option<&str>) -> Result<(), String>,
     /// An unconfirmed screen mode change (T56).
     display_pending: Mutex<Option<DisplayPending>>,
     /// Runs `wlr-randr` (`display::randr`; replaced in unit tests).
@@ -362,6 +370,11 @@ fn status_for(key: &str) -> u16 {
         | "setup.busy"
         | "archive.not_creating"
         | "archive.not_open"
+        | "update.busy"
+        | "update.unsupported"
+        | "update.none"
+        | "restore.not_asked"
+        | "update.running"
         | "network.offline" => 409,
         "archive.refused" => 422,
         "archive.forget" | "format.confirm_stale" | "archive.critical" => 409,
@@ -369,8 +382,10 @@ fn status_for(key: &str) -> u16 {
         "locked" | "index.exists" | "state.not_ready" => 409,
         "password.wrong" | "recovery.wrong" | "disk.locked" => 403,
         "disk.open" => 409,
-        "prefs.invalid" => 422,
+        "prefs.invalid" | "setup.invalid" => 422,
         "display.busy" | "display.no_pending" => 409,
+        "clock.synced" | "clock.no_zone" => 409,
+        "clock.sync" | "clock.not_set" => 500,
         "display.not_found" => 404,
         "display.unavailable" => 503,
         "display.failed" => 500,
@@ -385,7 +400,15 @@ fn status_for(key: &str) -> u16 {
         "disk.not_found" => 404,
         "disk.changed" => 409,
         "disk.refused" => 422,
+        "media.not_found" => 404,
+        "media.not_open" | "media.busy" => 409,
+        "media.refused" | "media.type" => 422,
+        "media.too_large" => 413,
+        "media.failed" | "media.unreadable" => 500,
+        "request.forbidden" => 403,
         "phone.reset_gone" => 410,
+        "terminal.running" | "terminal.no_password" => 409,
+        "terminal.failed" => 500,
         "index.missing" => 404,
         "index.failed" => 500,
         "internal" | "immich.failed" | "reset.failed" => 500,
@@ -393,8 +416,74 @@ fn status_for(key: &str) -> u16 {
     }
 }
 
+/// What the last update check found (ADR 0026).
+#[derive(Default)]
+struct UpdateCache {
+    checked: bool,
+    newer: Option<update::Newer>,
+    error: Option<Fail>,
+    job: Option<Job>,
+}
+
+/// [`update::supported`], asked at most every 30 seconds (it reads the
+/// stick's partition table; the state is polled every second).
+fn update_supported() -> bool {
+    static CACHE: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
+    let mut c = lock(&CACHE);
+    match *c {
+        Some((at, v)) if v || at.elapsed() < Duration::from_secs(30) => v,
+        _ => {
+            let v = update::supported();
+            *c = Some((Instant::now(), v));
+            v
+        }
+    }
+}
+
 fn err(f: &Fail) -> Response {
     Response::json(status_for(f.key), &json!({"error": fail_json(f)}))
+}
+
+/// `state.setup` (T09): `complete` is `finished` under the name the
+/// `setup_progress` feature uses.
+fn setup_json() -> Value {
+    let done = archive::setup_done();
+    json!({"finished": done, "complete": done, "skipped": archive::setup_skipped()})
+}
+
+/// What a `setup/progress` request asks for: the new skipped list (if
+/// given) and whether setup is complete. Checked before anything is kept.
+fn setup_request(b: &Value) -> Result<(Option<Vec<&'static str>>, bool), Fail> {
+    let bad = || Fail::new("setup.invalid", "This setup progress is not valid.");
+    let mut skipped = None;
+    let mut complete = false;
+    for (k, v) in b.as_object().ok_or_else(bad)? {
+        match k.as_str() {
+            "complete" => complete = v.as_bool().filter(|c| *c).ok_or_else(bad)?,
+            "skipped" => {
+                let names: Option<Vec<&str>> = v
+                    .as_array()
+                    .ok_or_else(bad)?
+                    .iter()
+                    .map(Value::as_str)
+                    .collect();
+                skipped = Some(names.and_then(archive::setup_steps_of).ok_or_else(bad)?);
+            }
+            _ => return Err(bad()),
+        }
+    }
+    Ok((skipped, complete))
+}
+
+fn setup_progress(b: &Value) -> Result<Response, Fail> {
+    let (skipped, complete) = setup_request(b)?;
+    if let Some(s) = skipped {
+        archive::set_setup_skipped(&s).map_err(|e| Fail::new("internal", e))?;
+    }
+    if complete {
+        archive::set_setup_done().map_err(|e| Fail::new("internal", e))?;
+    }
+    Ok(Response::json(200, &json!({"setup": setup_json()})))
 }
 
 fn body(req: &Request) -> Result<Value, Fail> {
@@ -589,6 +678,7 @@ impl Live {
             chain,
             wifi_job: Mutex::new(None),
             archive_job: Mutex::new(None),
+            update: Mutex::new(UpdateCache::default()),
             networks: Mutex::new(Vec::new()),
             immich: Mutex::new(ImmichCache::default()),
             tries: Mutex::new(Tries::default()),
@@ -612,6 +702,7 @@ impl Live {
             pairing: Mutex::new(pairing::Pairing::default()),
             prefs: Mutex::new(prefs::Prefs::load_from(Path::new(prefs::PATH))),
             prefs_file: prefs::PATH.into(),
+            clock_set: clock::set_base,
             display_pending: Mutex::new(None),
             randr: display::randr,
             revert_after: Duration::from_secs(15),
@@ -680,6 +771,30 @@ impl Live {
             c.last = Some(Instant::now());
         }
         ok
+    }
+
+    /// `GET gallery/gate`: nginx asks this before it passes a gallery
+    /// request on 127.0.0.1:8412 to the photo service (`auth_request`). The
+    /// answer carries the family account's key for nginx to add, only while
+    /// the console is signed in: locking the console closes the gallery at
+    /// once, with nothing to clean up. A browser can never read the key:
+    /// every browser request carries `Sec-Fetch-Site` (nginx does not pass
+    /// it on), and those are refused here. 401 for every refusal.
+    fn gallery_gate(&self, req: &Request, get: bool) -> Response {
+        let no = || Response::json(401, &json!({}));
+        if !get || req.header("sec-fetch-site").is_some() || req.header("origin").is_some() {
+            return no();
+        }
+        if !self.console_open(req, false) {
+            return no();
+        }
+        let Some(key) = immich::family_key() else {
+            return no();
+        };
+        let mut r = Response::json(200, &json!({}));
+        r.headers
+            .push(("X-Alp-Gallery-Key", key.as_str().to_string()));
+        r
     }
 
     /// A new console session; the cookie goes on `r`.
@@ -773,7 +888,9 @@ impl Live {
                 if lock(&fam.pending).is_none() {
                     break;
                 }
-                if immich::ping() {
+                // Not while the gallery is being put back (ADR 0025): the
+                // family account comes back with it.
+                if immich::ping() && !immich_restore::pending() {
                     if let Some(pw) = lock(&fam.pending).take() {
                         match fam.apply(&pw) {
                             Ok(()) => eprintln!("alpd: phones now sign in with the main password"),
@@ -788,6 +905,32 @@ impl Live {
             *pending = None;
             fam.worker.store(false, Ordering::SeqCst);
         });
+    }
+
+    /// Signed in now, without a request (the Terminal's watcher). Uses the
+    /// same "Lock after" time as the console, so both lock together.
+    fn console_fresh(&self) -> bool {
+        let c = lock(&self.console);
+        let idle = self.idle_lock();
+        c.token.is_some() && c.last.is_some_and(|t| t.elapsed() < idle)
+    }
+
+    /// `POST terminal/start {password}` (docs/plans/live-terminal.md, T5):
+    /// behind the console sign-in like every route, and the password again
+    /// each time, in the same counter and back-off as sign-in. Not without
+    /// a password (protection level 1 or setup): there is nothing to check.
+    fn terminal_start(self: &Arc<Self>, req: &Request) -> Result<Response, Fail> {
+        if self.require_index && (index::lock_state() == "setup" || index::protection() == "none") {
+            return Err(Fail::new(
+                "terminal.no_password",
+                "Choose an ALPArchive password first to use the Terminal.",
+            ));
+        }
+        let pw = password_field(req)?;
+        self.check_password(&pw)?;
+        let me = Arc::clone(self);
+        let url = live_terminal::start(move || me.console_fresh())?;
+        Ok(Response::json(200, &json!({"url": url})))
     }
 
     fn signin(&self, req: &Request) -> Result<Response, Fail> {
@@ -1175,11 +1318,38 @@ impl Live {
     /// after the photo service started, a new address from the router), and
     /// what nginx really sends is checked (0.2.5 field report; cheap when
     /// nothing changed). The device allowlist is rewritten every 12 hours.
+    /// At start: the person's kept answer about the hardware clock
+    /// (`clock/base`) is applied again while the network has not set it.
+    pub fn clock_start(&self) {
+        let p = lock(&self.prefs);
+        clock::apply_kept(p.clock_local, p.time_zone.as_deref());
+    }
+
+    /// Idle phone sessions are removed once a day (T63).
     pub fn watch_certificate(self: &Arc<Self>) {
         std::thread::spawn(|| {
             std::thread::sleep(Duration::from_secs(60));
             let mut last_map: Option<Instant> = None;
+            let mut last_idle: Option<Instant> = None;
             loop {
+                // T63: once a day, phone sessions not used for 60 days are
+                // signed out, but only while the clock was set from the
+                // network: a clock that runs months ahead (0.2.5-test1 saw
+                // one hours ahead) would sign every phone out.
+                let synced = clock_json()["synced"] == json!(true);
+                if index::is_open()
+                    && synced
+                    && last_idle.is_none_or(|t| t.elapsed() >= Duration::from_secs(24 * 3600))
+                    && immich::state() == immich::State::Ready
+                {
+                    let now = clock_json()["now"].as_u64().unwrap_or(0);
+                    match immich::remove_idle_sessions(now) {
+                        Ok(n) if n > 0 => eprintln!("alpd: phone: {n} idle device(s) signed out"),
+                        Ok(_) => {}
+                        Err(e) => eprintln!("alpd: phone: idle devices not checked: {}", e.message),
+                    }
+                    last_idle = Some(Instant::now());
+                }
                 if index::is_open() {
                     // Failures are logged by tls::ensure; the phone screen shows them.
                     let _ = immich::certificate_for(&live::addresses(&live::ports()));
@@ -1202,6 +1372,15 @@ impl Live {
             loop {
                 me.refresh_immich();
                 std::thread::sleep(Duration::from_secs(2));
+            }
+        });
+        // Its own thread: these wait for the photo service, the state
+        // above must not (ADR 0025).
+        std::thread::spawn(|| {
+            loop {
+                std::thread::sleep(Duration::from_secs(5));
+                immich_restore::tick();
+                immich_restore::backup_tick();
             }
         });
     }
@@ -1426,6 +1605,11 @@ impl Live {
         };
         let get = req.method == "GET" || req.method == "HEAD";
         let post = req.method == "POST";
+        // Asked by the gallery proxy, never by a page; it must not count as
+        // use of the console (no keep-alive from the gallery frame).
+        if route == "gallery/gate" {
+            return self.gallery_gate(req, get);
+        }
         let free = matches!(
             route,
             "state"
@@ -1450,9 +1634,16 @@ impl Live {
             "console/lock" if post => body(req).map(|_| {
                 *lock(&self.console) = Console::default();
                 lock(&self.confirms).clear();
+                // The Terminal ends with the console (plan rule 5).
+                live_terminal::stop();
                 // Words shown on the screen are wiped there; the code
                 // they belong to must not be confirmed by someone else.
                 let _ = self.recovery_cancel();
+                Response::json(200, &json!({}))
+            }),
+            "terminal/start" if post && live_terminal::available() => self.terminal_start(req),
+            "terminal/stop" if post && live_terminal::available() => body(req).map(|_| {
+                live_terminal::stop();
                 Response::json(200, &json!({}))
             }),
             "console/activity" if post => body(req)
@@ -1463,6 +1654,7 @@ impl Live {
                 archive::set_setup_done().map_err(|e| Fail::new("internal", e))?;
                 Ok(Response::json(200, &json!({})))
             }),
+            "setup/progress" if post => body(req).and_then(|b| setup_progress(&b)),
             "recovery/create" if post => self.need_open().and_then(|()| self.recovery_create(req)),
             "recovery/commit" if post => self.need_open().and_then(|()| self.recovery_commit(req)),
             // `discard` is the Live UI developer's name for it (docs/plans/live-ui-0.2.4.md).
@@ -1495,6 +1687,29 @@ impl Live {
             "events" if get => Ok(Response::json(200, &events::recent_json())),
             "disks/eject" if post => self.disks_eject(req),
             "prefs" if post => self.prefs_set(req),
+            "clock/sync" if post => body(req).and_then(|_| {
+                clock::sync_now().map_err(|e| {
+                    eprintln!("alpd: clock: {e}");
+                    Fail::new("clock.sync", "The time service could not be asked. Please try again.")
+                })?;
+                Ok(Response::json(202, &json!({"clock": clock_json()})))
+            }),
+            "clock/base" if post => self.clock_base(req),
+            // Feature restore_ask (ADR 0025): `{"restore": true|false}`.
+            "gallery/restore" if post => body(req)
+                .and_then(|b| {
+                    b["restore"].as_bool().ok_or_else(|| {
+                        Fail::new("request.json", "\"restore\" must be true or false.")
+                    })
+                })
+                .and_then(immich_restore::answer)
+                .map(|()| {
+                    // The next state says "bringing back" (or starts empty) at once.
+                    lock(&self.immich).at = None;
+                    Response::json(200, &json!({}))
+                }),
+            "update/check" if post => body(req).and_then(|_| self.update_check()),
+            "update/apply" if post => self.update_apply(req),
             "display/modes" if get => self.display_modes(),
             "display/mode" if post => self.display_mode(req),
             "display/mode/keep" if post => self.display_keep(req),
@@ -1505,6 +1720,12 @@ impl Live {
                 self.need_open().and_then(|()| self.disks_format_estimate(req))
             }
             "disks/format" if post => self.need_open().and_then(|()| self.disks_format(req)),
+            // Stage F Files (feature media_files): read only (live_media.rs).
+            "media/open" if post => body(req).and_then(|b| live_media::open(&b)),
+            "media/list" if post => body(req).and_then(|b| live_media::list(&b)),
+            // GET only: a HEAD answer would carry the body (review N2).
+            "media/file" if req.method == "GET" => live_media::file(req),
+            "media/eject" if post => body(req).and_then(|b| live_media::eject(&b)),
             "password/check" if post => password_field(req)
                 .and_then(|pw| self.check_password(&pw))
                 .map(|()| Response::json(200, &json!({}))),
@@ -1613,6 +1834,20 @@ impl Live {
                 "encrypt.running",
                 "ALPArchive is being encrypted. Switch off when it is done, or the next start goes on with it.",
             )),
+            // A version half written is only thrown away, but the person
+            // would have to download it again.
+            "power/off"
+                if post
+                    && lock(&self.update)
+                        .job
+                        .as_ref()
+                        .is_some_and(|j| j.id == "update.apply" && j.state == "running") =>
+            {
+                Err(Fail::new(
+                    "update.running",
+                    "A new version is being written. Switch off when it is done.",
+                ))
+            }
             "power/off" if post => self.power_off(req),
             "state"
             | "password/setup"
@@ -1625,6 +1860,10 @@ impl Live {
             | "events"
             | "disks/eject"
             | "prefs"
+            | "clock/sync"
+            | "clock/base"
+            | "update/check"
+            | "update/apply"
             | "display/modes"
             | "display/mode"
             | "display/mode/keep"
@@ -1633,6 +1872,10 @@ impl Live {
             | "disks/prepare"
             | "disks/format/estimate"
             | "disks/format"
+            | "media/open"
+            | "media/list"
+            | "media/file"
+            | "media/eject"
             | "archive/cancel"
             | "password/check"
             | "reset"
@@ -1658,6 +1901,7 @@ impl Live {
             | "console/lock"
             | "console/activity"
             | "setup/finish"
+            | "setup/progress"
             | "recovery/create"
             | "recovery/commit"
             | "recovery/cancel"
@@ -1667,6 +1911,9 @@ impl Live {
             | "archive/recover"
             | "gallery/delete"
             | "gallery/trash/empty" => {
+                return Response::error(405, "request.method", "Not allowed here.");
+            }
+            "terminal/start" | "terminal/stop" if live_terminal::available() => {
                 return Response::error(405, "request.method", "Not allowed here.");
             }
             _ => return Response::error(404, "request.not_found", "Not found."),
@@ -1680,9 +1927,182 @@ impl Live {
         v["status"] = status_of(&list);
         v["alerts"] = Value::Array(list);
         if !open {
-            locked_view(&mut v);
+            locked_view(&mut v, &lock(&self.prefs).lock_hide);
         }
+        // External disks for Files (stage F): only for a signed-in console.
+        v["media"] = if open { live_media::state() } else { json!([]) };
         v
+    }
+
+    /// `state.update` (feature `update`, ADR 0026): whether this stick can
+    /// take a new version in place, the running version, what the last
+    /// check found and the job of a check or of writing.
+    fn update_json(&self) -> Value {
+        let u = lock(&self.update);
+        json!({
+            "supported": update_supported(),
+            "current": update::running().map(|v| update::display(&v)),
+            "checked": u.checked,
+            "newer": u.newer.as_ref().map(|n| json!({
+                "version": update::display(&n.version),
+                "state": n.state.as_str(),
+            })),
+            "error": u.error.as_ref().map(fail_json),
+            "job": u.job.as_ref().map(Job::json),
+        })
+    }
+
+    /// One update job at a time; nothing while a disk job runs (both write
+    /// a lot, and the stick is the slow one).
+    fn update_start(&self, id: &'static str, message: &str) -> Result<Job, Fail> {
+        // Asked fresh (not the state's 30 second memory): the slots are
+        // made when the password is chosen.
+        if !update::supported() {
+            return Err(Fail::new(
+                "update.unsupported",
+                "This stick has no room for a new version. Write the new version to the stick instead.",
+            ));
+        }
+        if Job::running(&lock(&self.archive_job)) {
+            return Err(busy());
+        }
+        let mut u = lock(&self.update);
+        if Job::running(&u.job) {
+            return Err(Fail::new(
+                "update.busy",
+                "An update is already being checked or written.",
+            ));
+        }
+        let job = Job::start(id, "update", message, None);
+        u.job = Some(job.clone());
+        u.error = None;
+        Ok(job)
+    }
+
+    fn update_end(&self, r: Result<&str, Fail>) {
+        let mut u = lock(&self.update);
+        if let Some(j) = u.job.as_mut() {
+            match &r {
+                Ok(message) => {
+                    j.state = "done";
+                    j.step = "done".into();
+                    j.message = (*message).into();
+                    j.percent = Some(100);
+                }
+                Err(e) => {
+                    j.state = "failed";
+                    j.message.clone_from(&e.message);
+                    j.error = Some(e.clone());
+                }
+            }
+        }
+        u.error = r.err();
+    }
+
+    /// `POST update/check`: ask the update server (in the background; the
+    /// result is `state.update`).
+    fn update_check(self: &Arc<Self>) -> Result<Response, Fail> {
+        let job = self.update_start("update.check", "Looking for a new version…")?;
+        let me = Arc::clone(self);
+        std::thread::spawn(move || match update::check() {
+            Ok(status) => {
+                {
+                    let mut u = lock(&me.update);
+                    u.checked = true;
+                    u.newer = status.newer;
+                }
+                me.update_end(Ok("Checked."));
+            }
+            Err(e) => {
+                eprintln!("alpd: update check: {}", e.message);
+                me.update_end(Err(e));
+            }
+        });
+        Ok(Response::json(202, &json!({"job": job.json()})))
+    }
+
+    /// `POST update/apply`: download and write the version the last check
+    /// found. The running system is not touched; a restart starts the new
+    /// version.
+    fn update_apply(self: &Arc<Self>, req: &Request) -> Result<Response, Fail> {
+        body(req)?;
+        let version = match lock(&self.update).newer.as_ref() {
+            Some(n) if n.state == update::NewerState::Available => n.version.clone(),
+            _ => {
+                return Err(Fail::new(
+                    "update.none",
+                    "There is no new version to install. Look for updates first.",
+                ));
+            }
+        };
+        let shown = update::display(&version);
+        let job = self.update_start("update.apply", &format!("Downloading version {shown}…"))?;
+        let me = Arc::clone(self);
+        std::thread::spawn(move || {
+            let r = update::apply(&version, &mut |percent| {
+                if let Some(j) = lock(&me.update).job.as_mut() {
+                    j.percent = Some(percent);
+                    j.moved = Instant::now();
+                }
+            });
+            match r {
+                Ok(()) => {
+                    if let Some(n) = lock(&me.update).newer.as_mut() {
+                        n.state = update::NewerState::Installed;
+                    }
+                    me.update_end(Ok("The new version is ready. Restart to use it."));
+                }
+                Err(e) => {
+                    eprintln!("alpd: update apply: {}", e.message);
+                    me.update_end(Err(e));
+                }
+            }
+        });
+        Ok(Response::json(202, &json!({"job": job.json()})))
+    }
+
+    /// `POST clock/base` (feature `clock_base`): `{"local": true}` says the
+    /// computer's hardware clock holds local time in the chosen time zone
+    /// (a computer that also runs Windows), `false` that it holds UTC. The
+    /// system clock is moved to match and the answer is kept on the stick
+    /// for the next start. Refused once the network set the clock: then
+    /// there is nothing to correct.
+    fn clock_base(&self, req: &Request) -> Result<Response, Fail> {
+        let b = body(req)?;
+        let local = field(&b, "local")?
+            .as_bool()
+            .ok_or_else(|| Fail::new("request.json", "\"local\" must be true or false."))?;
+        if clock::synced() {
+            return Err(Fail::new(
+                "clock.synced",
+                "The clock is already set from the internet.",
+            ));
+        }
+        let mut p = lock(&self.prefs);
+        let zone = p.time_zone.clone();
+        if local && zone.is_none() {
+            return Err(Fail::new("clock.no_zone", "Choose a time zone first."));
+        }
+        (self.clock_set)(if local { zone.as_deref() } else { None }).map_err(|e| {
+            eprintln!("alpd: clock: {e}");
+            Fail::new(
+                "clock.not_set",
+                "The clock could not be changed. Please try again.",
+            )
+        })?;
+        let mut next = p.clone();
+        next.clock_local = local;
+        if self.require_index && archive::state_ready().is_err() {
+            // The clock is right for now; only the answer is not kept.
+            eprintln!("alpd: clock: answer not kept (the stick's storage is not ready)");
+        } else if let Err(e) = next.save_to(&self.prefs_file) {
+            eprintln!("alpd: prefs not saved: {e}");
+        }
+        *p = next;
+        Ok(Response::json(
+            200,
+            &json!({"clock": clock_json(), "prefs": p.json()}),
+        ))
     }
 
     /// `POST prefs` (T56): any subset of the known settings; answers the
@@ -1972,12 +2392,16 @@ impl Live {
                      "tpm": index::tpm_state(),
                      "protection": if index::lock_state() == "setup" { Value::Null } else { index::protection().into() }},
             "console": {"state": "open", "idle_lock_seconds": self.idle_lock().as_secs()},
-            "setup": {"finished": archive::setup_done()},
+            "setup": setup_json(),
             // What this alpd can do, so the console (Live UI 0.2.4) shows
             // only the flows it has: two-step recovery code (T42).
             "features": features(),
             "prefs": lock(&self.prefs).json(),
+            "clock": clock_json(),
+            "update": self.update_json(),
             "display": display::state_json(),
+            // Never the session's address (plan, build note 3).
+            "terminal": live_terminal::state_json(),
             "index": self.space_json(index::MNT, index::is_open()),
             "archive": self.archive_state(),
             "immich": if *lock(&self.paused) {
@@ -2088,11 +2512,28 @@ impl Live {
                 ("failed", fail_json(&Fail::new("immich.failed", m.clone())))
             }
         };
+        // The gallery of an archive opened with a new stick is being put
+        // back (ADR 0025): say so instead of "still starting".
+        let restoring = st == immich::State::Starting && immich_restore::pending();
+        // Feature restore_ask: on an archive that is not encrypted the
+        // person is asked first (`POST gallery/restore`).
+        let restore_ask = restoring && immich_restore::asking();
         c.state = json!({
             "state": word, "error": error,
-            "detail": secs.map(immich::detail),
+            "restoring": restoring,
+            "restore_ask": restore_ask,
+            "detail": if restore_ask {
+                Some("This backup disk holds a gallery from before. Choose whether to bring it back.".to_string())
+            } else if restoring {
+                Some("Bringing your gallery back from the backup disk. This can take some minutes.".to_string())
+            } else {
+                secs.map(immich::detail)
+            },
             "seconds_starting": secs,
             "console_url": (st == immich::State::Ready).then_some(immich::CONSOLE_URL),
+            // Feature gallery_session: set once the gallery proxy can answer.
+            "gallery_url": (st == immich::State::Ready && immich::family_key().is_some())
+                .then_some(immich::GALLERY_URL),
         });
         let fam = if st == immich::State::Ready {
             immich::family()
@@ -3172,7 +3613,12 @@ impl Live {
             }
         };
         let stop = |unit: &str, secs: u64| bounded("systemctl", &["stop", unit], secs);
+        // Photos came in since the last backup of the gallery's database:
+        // one more, so that a new stick can bring the gallery back.
         step(self, "immich", "Stopping the photo service…", 10, &|| {
+            if !immich_restore::backup_now(Duration::from_secs(30)) {
+                eprintln!("alpd: gallery: no new backup of its database before turning off");
+            }
             stop(immich::UNIT, IMMICH_STOP_SECS) || {
                 // The pod did not stop in time: end it, the database
                 // recovers from its own log at the next start.
@@ -3540,6 +3986,8 @@ fn setup_busy() -> Fail {
 
 /// Server capabilities announced in the state (`features`).
 const FEATURES: &[&str] = &[
+    "connection_check",
+    "setup_progress",
     "recovery_commit",
     "disks",
     "events",
@@ -3548,13 +3996,25 @@ const FEATURES: &[&str] = &[
     "status_levels",
     "prefs",
     "idle_lock_pref",
+    "media_files",
+    "clock",
+    "gallery_session",
+    "clock_sync",
+    "clock_base",
+    "lock_hide",
+    "update",
+    "restore_ask",
 ];
 
-/// [`FEATURES`], plus `display_modes` when the image has `wlr-randr`.
+/// [`FEATURES`], plus `display_modes` when the image has `wlr-randr` and
+/// `terminal` when the image carries it.
 fn features() -> Vec<&'static str> {
     let mut f = FEATURES.to_vec();
     if display::modes_supported() {
         f.push("display_modes");
+    }
+    if live_terminal::available() {
+        f.push("terminal");
     }
     f
 }
@@ -3711,8 +4171,38 @@ fn uploads_pause(on: bool) -> bool {
     true
 }
 
-fn locked_view(v: &mut Value) {
+/// What a locked console gets. Names are always shortened; what the
+/// person chose to hide on the lock screen (`prefs.lock_hide`) is not sent
+/// at all, and `console.hidden` says which items those are so the screen
+/// can say so.
+fn locked_view(v: &mut Value, hide: &[&str]) {
     v["console"]["state"] = "locked".into();
+    v["console"]["hidden"] = json!(hide);
+    let hidden = |k: &str| hide.contains(&k);
+    if hidden("phones") {
+        v["phone"]["devices"] = json!([]);
+        v["phone"]["phones"] = json!(0);
+    }
+    if hidden("network")
+        && let Some(ports) = v["network"]["ports"].as_array_mut()
+    {
+        for p in ports {
+            p["ssid"] = Value::Null;
+        }
+    }
+    if hidden("space") {
+        for part in ["archive", "index"] {
+            for k in ["free_bytes", "size_bytes"] {
+                if !v[part][k].is_null() {
+                    v[part][k] = Value::Null;
+                }
+            }
+        }
+    }
+    if hidden("backup") {
+        v["phone"]["photos"] = json!(0);
+        v["phone"]["last_upload"] = Value::Null;
+    }
     v["hardware"]["report_file"] = Value::Null;
     if let Some(place) = v["archive"]["place"].as_object_mut() {
         for k in ["name", "label"] {
@@ -3786,7 +4276,24 @@ fn connection_check() -> Value {
         })
         .unwrap_or_default();
     v["refused_requests"] = json!(refused);
+    v["clock"] = clock_json();
     v
+}
+
+/// `state.clock` (feature `clock`): the computer's time in seconds since
+/// 1970 (UTC), whether it was set from the network and when
+/// (`synced_at`, feature `clock_sync`), and what the person said about the
+/// hardware clock since this start (`base`: "local", "utc" or null;
+/// feature `clock_base`). A clock that was not set from the network can
+/// be hours off (a hardware clock kept in local time is read as UTC): the
+/// 0.2.5-test1 field report.
+fn clock_json() -> Value {
+    json!({
+        "now": clock::now(),
+        "synced": clock::synced(),
+        "synced_at": clock::synced_at(),
+        "base": clock::base().map(|local| if local { "local" } else { "utc" }),
+    })
 }
 
 #[cfg(test)]
@@ -3814,9 +4321,18 @@ mod tests {
             prefs_file: std::env::temp_dir()
                 .join(format!("alpd-prefs-{name}-{}.json", std::process::id())),
             randr: fake_randr,
+            clock_set: fake_clock_set,
             revert_after: Duration::from_millis(300),
             ..Arc::try_unwrap(l).ok().unwrap()
         })
+    }
+
+    /// What `clock/base` asked for (the test machine's clock is not moved).
+    static CLOCK_CALLS: Mutex<Vec<Option<String>>> = Mutex::new(Vec::new());
+
+    fn fake_clock_set(zone: Option<&str>) -> Result<(), String> {
+        lock(&CLOCK_CALLS).push(zone.map(str::to_string));
+        Ok(())
     }
 
     /// The `wlr-randr` calls the display tests made (no screen here).
@@ -3829,13 +4345,39 @@ mod tests {
     }
 
     #[test]
+    fn setup_progress_takes_known_steps_only() {
+        let ok = |v: Value| setup_request(&v).ok();
+        assert_eq!(ok(json!({})), Some((None, false)));
+        assert_eq!(ok(json!({"complete": true})), Some((None, true)));
+        // Kept once each, in the order of the steps.
+        assert_eq!(
+            ok(json!({"skipped": ["phone", "network", "phone"]})),
+            Some((Some(vec!["network", "phone"]), false))
+        );
+        assert_eq!(ok(json!({"skipped": []})), Some((Some(vec![]), false)));
+        for bad in [
+            json!({"skipped": ["network", "nonsense"]}),
+            json!({"skipped": ["../x"]}),
+            json!({"skipped": [1]}),
+            json!({"skipped": "network"}),
+            json!({"complete": false}),
+            json!({"complete": 1}),
+            json!({"other": true}),
+        ] {
+            let e = setup_request(&bad)
+                .err()
+                .unwrap_or_else(|| panic!("{bad} was taken"));
+            assert_eq!(e.key, "setup.invalid");
+        }
+    }
+    #[test]
     fn lock_screen_hides_names() {
         let mut v = json!({"console": {"state": "open"}, "hardware": {"report_file": "hw.txt"},
             "archive": {"place": {"name": "sdb1", "label": "My Passport"}},
             "network": {"ports": [{"ssid": "Home"}, {"ssid": null}]},
             "phone": {"server_url": "https://x", "account": "family@x", "photos": 3},
             "chain": {"chain_id": "ab"}});
-        locked_view(&mut v);
+        locked_view(&mut v, &[]);
         assert_eq!(v["console"]["state"], "locked");
         assert_eq!(v["archive"]["place"]["label"], "M••••••••");
         assert_eq!(v["archive"]["place"]["name"], "s•••");
@@ -3859,6 +4401,37 @@ mod tests {
             ..Request::default()
         });
         (r.status, serde_json::from_slice(&r.body).unwrap())
+    }
+
+    /// The gallery proxy's question: never answered to a browser (it sends
+    /// `Sec-Fetch-Site` or `Origin`), only to GET, and without a family
+    /// key there is nothing to give (the test machine has none).
+    #[test]
+    fn the_gallery_gate_refuses_browsers_and_gives_no_key_without_one() {
+        let l = live("gate");
+        let ask = |method: &str, headers: Vec<(String, String)>| {
+            l.handle(&Request {
+                method: method.into(),
+                path: format!("{PREFIX}gallery/gate"),
+                headers,
+                ..Request::default()
+            })
+        };
+        for r in [
+            ask("GET", vec![]),
+            ask("POST", vec![]),
+            ask("GET", vec![("sec-fetch-site".into(), "same-origin".into())]),
+            ask(
+                "GET",
+                vec![("origin".into(), "http://127.0.0.1:8411".into())],
+            ),
+        ] {
+            assert_eq!(r.status, 401);
+            assert!(r.headers.iter().all(|(k, _)| *k != "X-Alp-Gallery-Key"));
+        }
+        let f = l.state(true)["features"].clone();
+        assert!(f.as_array().unwrap().contains(&json!("gallery_session")));
+        assert_eq!(l.state(true)["immich"]["gallery_url"], Value::Null);
     }
 
     #[test]
@@ -4663,6 +5236,17 @@ mod tests {
         assert!(st["display"]["auto_scale"].is_number());
         let f = st["features"].as_array().unwrap();
         assert!(f.contains(&json!("prefs")) && f.contains(&json!("status_levels")));
+        // The clock: a plausible time and whether the network set it.
+        assert!(f.contains(&json!("clock")));
+        assert!(st["clock"]["now"].as_u64().unwrap() > 1_700_000_000);
+        assert!(st["clock"]["synced"].is_boolean());
+        assert_eq!(st["prefs"]["time_zone"], Value::Null);
+        let (s, r) = call(&l, "POST", "prefs", r#"{"time_zone": "Etc/GMT-2"}"#);
+        assert_eq!((s, &r["prefs"]["time_zone"]), (200, &json!("Etc/GMT-2")));
+        assert_eq!(
+            key(&call(&l, "POST", "prefs", r#"{"time_zone": "../x"}"#)),
+            (422, Some("prefs.invalid"))
+        );
         let (s, r) = call(&l, "POST", "prefs", r#"{"ui_scale": 1.25}"#);
         assert_eq!((s, &r["prefs"]["ui_scale"]), (200, &json!(1.25)));
         assert_eq!(prefs::Prefs::load_from(&l.prefs_file).ui_scale, Some(125));
@@ -4677,6 +5261,90 @@ mod tests {
         assert_eq!(l.state(true)["prefs"]["ui_scale"], 1.25);
         assert_eq!(call(&l, "GET", "prefs", "").0, 405);
         let _ = std::fs::remove_file(&l.prefs_file);
+    }
+
+    /// `clock/base`: the answer about the hardware clock moves the clock
+    /// through `clock_set` and is kept; never once the network set it.
+    #[test]
+    fn the_hardware_clock_answer_is_applied_and_kept() {
+        let l = live("clockbase");
+        let _ = std::fs::remove_file(&l.prefs_file);
+        let f = l.state(true)["features"].clone();
+        for name in ["clock_sync", "clock_base", "lock_hide"] {
+            assert!(f.as_array().unwrap().contains(&json!(name)), "{name}");
+        }
+        assert_eq!(call(&l, "GET", "clock/base", "").0, 405);
+        assert_eq!(call(&l, "GET", "clock/sync", "").0, 405);
+        assert_eq!(
+            key(&call(&l, "POST", "clock/base", r#"{"local": "yes"}"#)),
+            (400, Some("request.json"))
+        );
+        if clock::synced() {
+            // A test machine whose own clock is set from the network.
+            assert_eq!(
+                key(&call(&l, "POST", "clock/base", r#"{"local": true}"#)),
+                (409, Some("clock.synced"))
+            );
+            return;
+        }
+        assert_eq!(
+            key(&call(&l, "POST", "clock/base", r#"{"local": true}"#)),
+            (409, Some("clock.no_zone"))
+        );
+        call(&l, "POST", "prefs", r#"{"time_zone": "Etc/GMT-7"}"#);
+        lock(&CLOCK_CALLS).clear();
+        let (s, r) = call(&l, "POST", "clock/base", r#"{"local": true}"#);
+        assert_eq!((s, &r["prefs"]["clock_local"]), (200, &json!(true)));
+        assert!(prefs::Prefs::load_from(&l.prefs_file).clock_local);
+        let (s, r) = call(&l, "POST", "clock/base", r#"{"local": false}"#);
+        assert_eq!((s, &r["prefs"]["clock_local"]), (200, &json!(false)));
+        assert_eq!(
+            *lock(&CLOCK_CALLS),
+            vec![Some("Etc/GMT-7".to_string()), None]
+        );
+        let _ = std::fs::remove_file(&l.prefs_file);
+    }
+
+    /// What the person chose to hide on the lock screen is not sent to a
+    /// locked console, and the screen is told which items those are.
+    #[test]
+    fn hidden_lock_screen_items_are_not_sent() {
+        let full = || {
+            json!({"console": {"state": "open"}, "hardware": {},
+            "archive": {"free_bytes": 5, "size_bytes": 9, "space": "ok"},
+            "index": {"free_bytes": 2, "size_bytes": 3, "space": "ok"},
+            "network": {"ports": [{"ssid": "Home"}]},
+            "phone": {"photos": 3, "phones": 2, "last_upload": "2026-11-01T00:00:00Z",
+                      "devices": [{"id": "a", "name": "Blue phone"}]},
+            "chain": {}})
+        };
+        let mut v = full();
+        locked_view(&mut v, &[]);
+        assert_eq!(v["console"]["hidden"], json!([]));
+        assert_eq!(
+            (&v["phone"]["photos"], &v["phone"]["phones"]),
+            (&json!(3), &json!(2))
+        );
+        assert_eq!(v["archive"]["free_bytes"], 5);
+        let mut v = full();
+        locked_view(&mut v, &["phones", "network", "space", "backup"]);
+        assert_eq!(
+            v["console"]["hidden"],
+            json!(["phones", "network", "space", "backup"])
+        );
+        assert_eq!(v["phone"]["devices"], json!([]));
+        assert_eq!(
+            (&v["phone"]["photos"], &v["phone"]["phones"]),
+            (&json!(0), &json!(0))
+        );
+        assert_eq!(v["phone"]["last_upload"], Value::Null);
+        assert_eq!(v["network"]["ports"][0]["ssid"], Value::Null);
+        assert_eq!(v["archive"]["free_bytes"], Value::Null);
+        assert_eq!(v["index"]["size_bytes"], Value::Null);
+        // The level stays: the lock screen still says when room runs out.
+        assert_eq!(v["archive"]["space"], "ok");
+        let text = v.to_string();
+        assert!(!text.contains("Home") && !text.contains("Blue"));
     }
 
     #[test]
@@ -4736,5 +5404,24 @@ mod tests {
             .count();
         assert_eq!(sets, 5);
         let _ = std::fs::remove_file(&l.prefs_file);
+    }
+
+    #[test]
+    fn the_terminal_locks_with_the_console_lock_after() {
+        let l = live("term-idle");
+        {
+            let mut c = lock(&l.console);
+            c.token = Some(zeroize::Zeroizing::new("t".into()));
+            c.last = Instant::now().checked_sub(Duration::from_secs(400));
+        }
+        // Default 300 s: 400 s idle is locked.
+        assert!(!l.console_fresh());
+        // Lock after 15 minutes: still signed in.
+        lock(&l.prefs).idle_lock_seconds = 900;
+        assert!(l.console_fresh());
+        // Lock after 1 minute.
+        lock(&l.prefs).idle_lock_seconds = 60;
+        assert!(!l.console_fresh());
+        assert_eq!(l.idle_lock(), Duration::from_secs(60));
     }
 }

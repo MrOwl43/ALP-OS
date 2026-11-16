@@ -4,6 +4,94 @@
 Status: contract for UX and QA, 2026-10-19 (lead developer). Changes are
 listed here, newest first, before the code changes.
 
+- 2026-11-14 (additive): feature `connection_check` says that `GET
+  phone/connection` exists; the console shows its answer in plain lines
+  under "My phone cannot connect". No change to the answer itself.
+- 2026-11-14 (T09, the rest; additive, feature `setup_progress`):
+  `POST setup/progress {complete?: true, skipped?: [..]}` answers
+  `{setup}`. `skipped` replaces the kept list; each name is one of
+  `network`, `password`, `where`, `recovery`, `phone` (anything else:
+  `422 setup.invalid`, nothing changes). `complete: true` is the same as
+  `setup/finish`; it cannot be taken back except by Start over. `state.setup`
+  becomes `{finished, complete, skipped}` (`complete` equals `finished`). The
+  list is kept on the stick in `/var/lib/alp/live/setup-skipped` (written
+  atomically, checked again when read); Start over removes it. Allowed
+  exactly where `setup/finish` is allowed.
+- 2026-11-14 (T62, security review S1; additive): the identity at
+  `/.well-known/alparchive/identity` and in `pair/v1/status` (approved)
+  gains `seq` (the CA's number on this stick, from 1, one more for every
+  new CA) and `endorsement2`: K_id's Ed25519 signature (base64) over
+  `"alparchive-ca-endorsement-v2\n<id>\n<ca>\n<seq>\n"`. `v` stays 1 and
+  `endorsement` (v1) stays while phones with the first app are in use. A
+  phone keeps the highest `seq` it has seen and refuses a lower one.
+- 2026-11-14 (T63, security review B3; no API change): once a day, while
+  the clock was set from the network (`clock.synced`), alpd signs out phone
+  sessions the photo service has not seen for 60 days and writes each
+  removal to the journal. The phone signs in again with the ALP password.
+- 2026-11-16 (0.2.7; additive; ADR 0026): feature `update`, a new version
+  without writing the stick again. `state.update` is `{supported, current,
+  checked, newer, error, job}`: `supported` is false on a stick without
+  update slots (under 28 GiB, or first started before 0.2.7); `current` is
+  the running version as people read it (`0.2.7`); `newer` is `null` or
+  `{version, state}` with `state` `available` (on the server), `installed`
+  (on the stick, the next start uses it) or `failed` (it was tried three
+  times and never became healthy; the stick stays on `current`); `error`
+  is the last failure (`update.offline`, `update.bad_signature`,
+  `update.failed`). `POST update/check` (`{}`) asks the update server and
+  `POST update/apply` (`{}`) downloads and writes the version the last check
+  found; both answer `202 {job}` (`update.check`, `update.apply`, with
+  `percent` while writing) and are followed in `state.update`. `409
+  update.busy`, `409 update.unsupported`, `409 update.none` (nothing to
+  install), `409 archive.busy` (a disk job runs), `409 update.running`
+  (`power/off` while a version is being written). The running system is
+  never changed; `power/off` with `restart` starts the new version.
+- 2026-11-15 (0.2.6 field report; additive; ADR 0024):
+  1. Feature `clock_sync`: `state.clock.synced_at` is the time (seconds
+     since 1970) the network last set the clock, or `null`. `POST
+     clock/sync` (`{}`) asks a time server again and answers `202` with the
+     `clock` block; a new `synced_at` in the state is the result.
+  2. Feature `clock_base`: `POST clock/base` with `{"local": true}` says the
+     computer's hardware clock holds local time in `prefs.time_zone`
+     (`false`: UTC). alpd moves the system clock to match and answers
+     `{clock, prefs}`; `prefs.clock_local` keeps the answer for the next
+     start and cannot be set through `prefs`. `state.clock.base` is
+     `"local"`, `"utc"` or `null` (not answered since this start).
+     `409 clock.synced` once the network set the clock, `409 clock.no_zone`
+     for `local` without a time zone.
+  3. Feature `lock_hide`: `prefs.lock_hide` is a list out of `phones`,
+     `network`, `space`, `backup`. A locked console does not get those
+     details at all (devices and their number; the Wi-Fi name; free and
+     total room; photo count and last upload), and `state.console.hidden`
+     repeats the list so the lock screen can say what is hidden.
+  4. `state.immich.state` stays `ready` for up to ten minutes while the
+     photo service is running but too busy to answer (a video backup on a
+     slow disk); a stopped or failed service still shows at once.
+- 2026-11-14 (0.2.5-test1 field report: Photos could not be shown on the
+  console; the gallery layer of the 0.2.4 plan was never built; additive,
+  feature `gallery_session`):
+  1. `state.immich.gallery_url` is `http://127.0.0.1:8412/` once the photo
+     service is ready and the family account exists, else `null`. nginx
+     serves the web gallery there (loopback only, the delete guard of 443).
+  2. `GET gallery/gate` is for that nginx only (`auth_request`): `200` with
+     the header `X-Alp-Gallery-Key` while the console is signed in, `401`
+     otherwise and for every request that carries `Sec-Fetch-Site` or
+     `Origin` (every browser request). It does not count as use of the
+     console. The browser never holds a credential of the photo service.
+  3. The kiosk may no longer open `http://127.0.0.1:2283` (URL allow-list,
+     `frame-src`).
+- 2026-11-14 (0.2.5-test1 field report: the computer's clock ran ahead of
+  the phone's, so its new certificates were "not valid yet" there; additive,
+  feature `clock`):
+  1. `state.clock` is `{now, synced}`: `now` is the computer's time in
+     seconds since 1970 (UTC); `synced` is true once the clock was set from
+     the network in this start (systemd-timesyncd). `GET phone/connection`
+     carries the same `clock` block.
+  2. `state.prefs.time_zone` is a tz database name or `null` (UTC), set
+     through `POST live/prefs`. Only the console shows times in it; the
+     system clock and everything stored stay in UTC. A value that is not
+     shaped like a zone name gets `422 prefs.invalid`.
+  3. `alp-live-tls` starts the CA and the server certificate one day before
+     the computer's time (no API change).
 - 2026-11-08 (0.2.5 field report: phone refused the certificate; additive):
   1. `POST pair/open` refuses with `pair.certificate_not_served` (plain
      message) while nginx does not yet send a certificate naming every
@@ -837,6 +925,42 @@ writable through its own allowance (`/run/alp/allowed-format`), so an open
 archive is not touched; afterwards every partition and the disk are
 read-only again.
 
+### Files, read only (stage F, feature `media_files`, 2026-11-04)
+
+External disks for Settings > Advanced > Files (crates/alp-core/src/live_media.rs on
+crates/alp-live/src/media.rs). All need a signed-in console. A disk is named only by
+its opaque `id` from `state.media`; a path is a JSON list of names the server listed
+(each one name: never empty, `.`, `..`, or containing `/`). Every call checks the
+disk's role again (only external disks, never the stick, the computer's disks or
+the archive's disk; allowed file systems only).
+
+- `state.media` (signed in only; `[]` otherwise): `[{id, label, fs_type, size_bytes,
+  mounted, refused}]`; `refused` is the reason as text, or `null`. Refreshed at most
+  every 5 s, and at once after open and eject.
+- `POST media/open {media}` → 200 `{}`: mounted read-only (`ro,nosuid,nodev,noexec,
+  nosymfollow`, the partition read-only in the kernel).
+- `POST media/list {media, path, offset}` → 200 `{entries: [{name, dir, size_bytes}],
+  truncated, skipped}`; at most 10,000 entries per page; links and special files are
+  never listed. Only on an open disk (`409 media.not_open`).
+- `GET media/file?media=<id>&path=<JSON list, URL-encoded>`: only on an open disk;
+  `GET` only (no `HEAD`); only `.jpg .jpeg .png .gif .webp .bmp .mp4 .m4v .mov .webm`
+  and, always as `text/plain; charset=utf-8`, `.txt .log .md .csv .json .xml .ini
+  .cfg .conf .nfo` (by name; never SVG or HTML: `422 media.type`). Headers: the type, `Content-Disposition: inline`,
+  `Content-Security-Policy: sandbox; default-src 'none'`, `Accept-Ranges: bytes`,
+  and (on every console answer) `X-Content-Type-Options: nosniff`, `Cache-Control:
+  no-store`. One `Range` (206, at most 4 MiB per answer; 416 when outside the file);
+  without `Range` a file is sent whole only up to 32 MiB (`413 media.too_large`).
+  Text is a preview only: a text answer carries at most 256 KiB (the UI's `TEXT_MAX`),
+  with or without `Range`; a larger text file without `Range` gets `413`.
+  `Sec-Fetch-Dest`, when sent, must be `image`, `video` or `empty` (403). Paths are
+  never logged.
+- `POST media/eject {media}` → 200 `{}`: unmounted, and the id is forgotten (an old
+  link gives 404); the next `state.media` gives the disk a new id.
+
+Errors: `400 media.path`, `404 media.not_found` (unplugged, or ejected), `409
+media.not_open`, `409 media.busy`, `413 media.too_large`, `422 media.refused`
+(message says why), `422 media.type`, `500 media.failed`, `500 media.unreadable`.
+
 ### `POST /api/v1/live/archive/cancel` → 202 `{ "job": Job }`
 
 Body `{}`. Stops a running `archive.create` job (or the `erasing` step of a
@@ -1032,6 +1156,27 @@ Body `{}` or `{ "restart": true }`. Stops Immich, closes the archive and
 the index safely, saves, then powers off (or restarts). Steps, time
 limits and the `power` state block: 2026-10-26 change, item 1.
 
+### Terminal (stage F, feature `terminal`, 2026-11-04)
+
+Plan and security rules: `docs/plans/live-terminal.md` (revision 2, review
+T1-T6). Offered only when the image carries `alp-terminal.service` and ttyd.
+Behind the console sign-in like every route (`401 console.locked`).
+
+- `POST terminal/start {password}` → 200 `{ "url": "http://127.0.0.1:8413/<32 hex>/" }`.
+  The password is checked every time, in the sign-in counter and back-off
+  (`403 password.wrong`, `429 password.wait` with `retry_after_seconds`).
+  `409 terminal.running` when a session runs; `409 terminal.no_password`
+  when no ALP password was chosen (protection level 1, or setup);
+  `500 terminal.failed` when the session did not come up. The address is
+  given only here: never in the state or any log.
+- `POST terminal/stop {}` → 200 `{}`, also when no session runs.
+- State: `terminal: {"state": "off" | "running"}`, never the address.
+- A session ends when the console locks (`console/lock`, the idle lock or
+  a new sign-in), on `terminal/stop`, when its browser leaves (ttyd
+  `--once`), after 10 minutes without input at the prompt, after one hour,
+  and when alpd restarts. Then nothing listens on 8413: the old address
+  answers nothing.
+
 ## Other errors
 
 `404 request.not_found`, `405 request.method`, `400 request.json` (body is
@@ -1094,3 +1239,10 @@ the computer usually helps.").
 - **`POST live/display/mode/keep {}`** → `{}`. The mode is kept, and set again each time the kiosk starts, but only on the same screen (a hash of its EDID identity). Nothing waiting: `409 display.no_pending`.
 - `display_modes` is listed in `features` only when the image has `wlr-randr`.
 - **Lock after (feature `idle_lock_pref`).** `state.prefs.idle_lock_seconds` is 60, 300 (default), 900 or 1800, set through `POST live/prefs`. There is no "never" (Security, 2026-11-08); anything else gets `422 prefs.invalid`. alpd's own idle lock and `console.idle_lock_seconds` follow it.
+
+## 0.2.7 (2026-11-15): the gallery on a new stick (ADR 0025)
+
+- **`state.immich.restoring`** (bool): the gallery's database is being put back from the backup disk after the disk was opened with a new stick. `state.immich.state` is `starting` meanwhile, and `detail` says "Bringing your gallery back from the backup disk. This can take some minutes." No new call: it starts by itself.
+- **`state.immich.restore_ask`** (bool, feature `restore_ask`, 2026-11-16): the archive is not encrypted and holds a gallery backup; nothing is restored until the person answers. `POST gallery/restore {"restore": true|false}` (console sign-in) gives the answer: `200 {}`; `409 restore.not_asked` when nothing is waiting. `false` starts an empty gallery. Meanwhile `state.immich.state` is `starting` and `restoring` is true.
+- While it runs, calls that need the photo service's owner answer `immich.starting` as during a normal start.
+- Turning off: the `immich` step of the `power.off` job may take up to 30 s longer (one more backup of the gallery's database when photos came in since the last one).

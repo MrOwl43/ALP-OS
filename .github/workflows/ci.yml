@@ -53,6 +53,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: the commit message check reads every commit.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Commit messages name no tool, session or co-author
+        run: tests/ci/check-commit-messages.sh
       # Pinned: the runner's preinstalled shellcheck differs from the dev VM's,
       # and versions report different warning codes.
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
@@ -98,7 +104,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: ${{ fromJSON(inputs.vm_groups || '["base", "ui", "immich"]') }}
+        group: ${{ fromJSON(inputs.vm_groups || '["base", "ui", "immich", "update"]') }}
     name: image (${{ matrix.group }})
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -131,12 +137,20 @@ jobs:
         with:
           path: out/immich-images
           key: immich-images-${{ hashFiles('image/immich/images.lock') }}
+      # Camera RAW samples of T-FORMAT-01 (checked against their pinned
+      # SHA-256 on every run), so each run does not download them again.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: matrix.group == 'immich'
+        with:
+          path: out/raw-samples
+          key: raw-samples-${{ hashFiles('tests/vm/formats/raw-samples.lock') }}
       - run: just build-image
       - run: cat out/SHA256SUMS
       - run: just test-vm-${{ matrix.group }}
         env:
           # Immich runs only on hosted runners, never on the dev VM (owner).
           ALP_ALLOW_IMMICH: "1"
+          ALP_RAW_CACHE: ${{ github.workspace }}/out/raw-samples
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         # Also after a failed test, so the screenshots show what went wrong.
         if: always()
@@ -153,7 +167,12 @@ jobs:
   # the dev VM). xz-compressed: one file must stay under GitHub's 2 GiB, and
   # Rufus and balenaEtcher write .img.xz directly.
   release-image:
-    if: ${{ inputs.release_version }}
+    # Only from main: the "release" environment holds the update signing key
+    # (ADR 0026 item 7). In the repository settings that environment allows
+    # only the main branch and asks the owner to approve each run, so a
+    # workflow file on another branch cannot read the key.
+    if: ${{ inputs.release_version && github.ref == 'refs/heads/main' }}
+    environment: release
     runs-on: ubuntu-26.04
     timeout-minutes: 60
     permissions:
@@ -174,6 +193,15 @@ jobs:
         with:
           path: out/immich-images
           key: immich-images-${{ hashFiles('image/immich/images.lock') }}
+      - name: The release name in the image is the version being released
+        env:
+          VERSION: ${{ inputs.release_version }}
+        run: |
+          in_image=$(awk '{print $NF}' image/extra/usr/lib/alp/release)
+          [ "$in_image" = "$VERSION" ] || { echo "::error::image/extra/usr/lib/alp/release says $in_image, the release is $VERSION"; exit 1; }
+          # Two names must never give one update version (0.2.1 and 0.2.10
+          # would both be 0.2.10): tools/update-version.sh refuses those.
+          tools/update-version.sh "$VERSION" >/dev/null
       - run: just build-image
       - name: Compress and hash
         env:
@@ -186,7 +214,7 @@ jobs:
           sha256sum "$name" "$name.xz" > "$name.sha256"
           cat "$name.sha256"
           ls -l "$name.xz"
-      - name: Publish (pre-release, private repository)
+      - name: Publish (pre-release)
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.release_version }}
@@ -196,3 +224,39 @@ jobs:
           gh release create "alpha-${VERSION}" --target "$GITHUB_SHA" --prerelease \
             --title "ALP-OS Live alpha ${VERSION}" --notes "$notes" \
             "out/${name}.xz" "out/${name}.sha256"
+      # Updates in place (ADR 0026): the same root, hash partition and UKI as
+      # update files, with a signed SHA256SUMS, on the rolling release
+      # "updates" that sticks ask (image/extra/usr/lib/sysupdate.d). Skipped
+      # until the project's update key exists: its public half in
+      # image/keys/update-signing.asc, its private half only in the Actions
+      # secret UPDATE_SIGNING_KEY (never in the repository or a log).
+      - name: Update files (signed)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.release_version }}
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          if [ -z "$UPDATE_SIGNING_KEY" ] || [ ! -f image/keys/update-signing.asc ]; then
+            echo "::notice::No update key yet: this release has a stick image only, no update files."
+            exit 0
+          fi
+          tools/update-files.sh out/alp-os.raw "$(tools/update-version.sh "$VERSION")" out/update
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          trap 'gpgconf --kill all; rm -rf "$RUNNER_TEMP/gnupg"' EXIT
+          printf '%s\n' "$UPDATE_SIGNING_KEY" | gpg --batch --quiet --import
+          gpg --batch --yes --detach-sign -o out/update/SHA256SUMS.gpg out/update/SHA256SUMS
+          gpgconf --kill all
+          rm -rf "$RUNNER_TEMP/gnupg"
+          # The signature must check with the public key that is in the image.
+          gpg --batch --no-options --dearmor <image/keys/update-signing.asc >"$RUNNER_TEMP/pubring.gpg"
+          gpgv --keyring "$RUNNER_TEMP/pubring.gpg" out/update/SHA256SUMS.gpg out/update/SHA256SUMS
+          gh release view updates >/dev/null 2>&1 || gh release create updates --prerelease \
+            --title "ALP-OS update files" \
+            --notes "Files that an ALP-OS stick downloads when it updates itself (Settings, About, Updates). Not for writing to a stick by hand: for that, take the newest ALP-OS Live release."
+          # The big files first, the list that names them last.
+          gh release upload updates --clobber out/update/alp-os_*
+          # The list and its signature in one call, so the time in which a
+          # stick can see one without the other is as short as it can be
+          # (a stick then says "not signed" and installs nothing).
+          gh release upload updates --clobber out/update/SHA256SUMS.gpg out/update/SHA256SUMS

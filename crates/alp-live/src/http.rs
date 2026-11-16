@@ -10,12 +10,24 @@ use std::time::Duration;
 #[derive(Debug)]
 pub struct Response {
     pub status: u16,
+    /// Header lines as sent: lower-case name, trimmed value.
+    pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
 }
 
 impl Response {
     pub fn json(&self) -> Option<serde_json::Value> {
         serde_json::from_slice(&self.body).ok()
+    }
+
+    /// The value of the cookie `name` among the `Set-Cookie` headers.
+    pub fn cookie(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .filter(|(k, _)| k == "set-cookie")
+            .filter_map(|(_, v)| v.split(';').next()?.split_once('='))
+            .find(|(k, _)| k.trim() == name)
+            .map(|(_, v)| v.trim())
     }
 }
 
@@ -28,14 +40,26 @@ pub fn request(
     headers: &[String],
     body: Option<&[u8]>,
 ) -> std::io::Result<Response> {
+    request_within(30, addr, method, path, headers, body)
+}
+
+/// [`request`] that waits at most `secs` for each read and write.
+pub fn request_within(
+    secs: u64,
+    addr: &str,
+    method: &str,
+    path: &str,
+    headers: &[String],
+    body: Option<&[u8]>,
+) -> std::io::Result<Response> {
     let mut s = TcpStream::connect_timeout(
         &addr
             .parse()
             .map_err(|e| std::io::Error::other(format!("{addr}: {e}")))?,
         Duration::from_secs(3),
     )?;
-    s.set_read_timeout(Some(Duration::from_secs(30)))?;
-    s.set_write_timeout(Some(Duration::from_secs(30)))?;
+    s.set_read_timeout(Some(Duration::from_secs(secs)))?;
+    s.set_write_timeout(Some(Duration::from_secs(secs)))?;
     let mut req = format!(
         "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nAccept: application/json\r\n"
     );
@@ -67,9 +91,11 @@ pub fn parse(raw: &[u8]) -> Option<Response> {
     let status = lines.next()?.split_whitespace().nth(1)?.parse().ok()?;
     let mut chunked = false;
     let mut len = None;
+    let mut headers = Vec::new();
     for l in lines {
         let (k, v) = l.split_once(':')?;
         let (k, v) = (k.trim().to_ascii_lowercase(), v.trim());
+        headers.push((k.clone(), v.to_string()));
         if k == "transfer-encoding" && v.eq_ignore_ascii_case("chunked") {
             chunked = true;
         } else if k == "content-length" {
@@ -84,7 +110,11 @@ pub fn parse(raw: &[u8]) -> Option<Response> {
     } else {
         rest.to_vec()
     };
-    Some(Response { status, body })
+    Some(Response {
+        status,
+        headers,
+        body,
+    })
 }
 
 fn dechunk(mut b: &[u8]) -> Option<Vec<u8>> {

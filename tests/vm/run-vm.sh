@@ -142,12 +142,21 @@ Type=oneshot
 StandardOutput=tty
 TTYPath=/dev/console
 ExecStartPre=/bin/sleep ${ALP_PROBE_DELAY:-0}
+ExecStartPre=-/bin/sh -c 'dmesg -n 4'
 ExecStart=/bin/echo ALP-PROBE-BEGIN"
     while IFS= read -r cmd; do
         [[ -z $cmd ]] && continue
         cmd=${cmd//%/%%}; cmd=${cmd//\$/\$\$}
         unit+=$'\n'"ExecStart=$cmd"
     done <<<"$probe"
+    # The kernel writes to the same console: a line of its own (the audit
+    # line about this very unit, for one) landed inside the end marker now
+    # and then, and the runner waited for a marker that never came whole
+    # (T-UI-02 and T-LIVE-02 failing once in a while, 2026-11-16). So the
+    # kernel's notices are kept off the console from here on (errors still
+    # show), and the end marker is written twice.
+    unit+=$'\n'"ExecStart=/bin/echo ALP-PROBE-END"
+    unit+=$'\n'"ExecStart=/bin/sleep 1"
     unit+=$'\n'"ExecStart=/bin/echo ALP-PROBE-END"
     dropin=$'[Unit]\nWants=alp-test-probe.service'
     cred=io.systemd.credential.binary

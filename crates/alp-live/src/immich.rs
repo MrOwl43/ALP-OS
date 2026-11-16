@@ -14,6 +14,8 @@ use std::io::{Read, Write};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
@@ -62,19 +64,57 @@ pub enum State {
     Failed(String),
 }
 
+/// Does the photo service answer? At most [`PING_SECS`]: this runs inside
+/// the console's state answer, and a busy service must not hold that up.
 pub fn ping() -> bool {
-    http::request(API, "GET", "/api/server/ping", &[], None)
+    http::request_within(PING_SECS, API, "GET", "/api/server/ping", &[], None)
         .ok()
         .and_then(|r| r.json())
         .is_some_and(|v| v["res"] == "pong")
 }
 
+/// How long a photo service that answered before may stay silent and
+/// still count as ready. While it takes in videos from a phone on a slow
+/// disk it can miss a ping for minutes (alpha 0.2.6 field report: the
+/// gallery left the computer's screen with "still starting" during a video
+/// backup). A service that really stopped shows as failed below, at once.
+const PING_SECS: u64 = 5;
+const BUSY_GRACE: Duration = Duration::from_secs(600);
+
+/// When the photo service last answered a ping.
+static LAST_PONG: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// Ready when it answers now, or answered within `grace` and is only busy.
+fn ready_now(pong: bool, last: &mut Option<Instant>, now: Instant, grace: Duration) -> bool {
+    if pong {
+        *last = Some(now);
+        return true;
+    }
+    last.is_some_and(|t| now.duration_since(t) < grace)
+}
+
 pub fn state() -> State {
+    // Never held across the ping or a command: the console's state answer
+    // comes through here from several threads.
+    let last = || {
+        LAST_PONG
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    };
     if !crate::index::is_open() || !crate::archive::is_open() {
+        *last() = None;
         return State::Off;
     }
+    // The gallery is being brought back from the archive's own backup:
+    // nothing may use the photo service until that ended.
+    let restoring = crate::immich_restore::pending();
     if ping() {
-        return State::Ready;
+        ready_now(true, &mut last(), Instant::now(), BUSY_GRACE);
+        return if restoring {
+            State::Starting
+        } else {
+            State::Ready
+        };
     }
     let is_failed = |args: &[&str]| {
         Command::new("systemctl")
@@ -93,6 +133,7 @@ pub fn state() -> State {
             "immich-valkey.service",
         ]);
     if failed {
+        *last() = None;
         return State::Failed(
             "The photo service did not start. Restart the computer; if this stays, save a diagnosis for help."
                 .into(),
@@ -105,6 +146,11 @@ pub fn state() -> State {
             "The photo service could not start because the archive was not ready. Restart the computer."
                 .into(),
         );
+    }
+    // Only busy, not stopped: a unit that is not running gets started
+    // again by alpd, which needs to see "starting".
+    if !restoring && !unit_inactive() && ready_now(false, &mut last(), Instant::now(), BUSY_GRACE) {
+        return State::Ready;
     }
     State::Starting
 }
@@ -308,6 +354,88 @@ pub fn devices(sessions: &Value) -> Vec<Device> {
     v
 }
 
+/// Phone sessions not used for this long are removed (T63, security
+/// review 2026-11-03, B3): a lost or sold phone does not stay signed in
+/// for ever. Its owner signs in again with the ALP password.
+pub const IDLE_SESSION_SECS: u64 = 60 * 24 * 3600;
+
+/// Seconds since 1970 of an ISO 8601 UTC time as the photo service writes
+/// it (`2026-10-28T10:00:00.000Z`); `None` for anything else.
+fn unix_of_iso(t: &str) -> Option<u64> {
+    let b = t.as_bytes();
+    if b.len() < 20
+        || b[4] != b'-'
+        || b[7] != b'-'
+        || b[10] != b'T'
+        || b[13] != b':'
+        || b[16] != b':'
+    {
+        return None;
+    }
+    if !t.ends_with('Z') {
+        return None;
+    }
+    let n = |r: std::ops::Range<usize>| t.get(r)?.parse::<u64>().ok();
+    let (y, m, d) = (n(0..4)?, n(5..7)?, n(8..10)?);
+    let (h, mi, s) = (n(11..13)?, n(14..16)?, n(17..19)?);
+    if y < 1970 || !(1..=12).contains(&m) || !(1..=31).contains(&d) || h > 23 || mi > 59 || s > 60 {
+        return None;
+    }
+    // Days from 1970-01-01 (the civil-date algorithm; March-based years).
+    let y2 = if m <= 2 { y - 1 } else { y };
+    let era = y2 / 400;
+    let yoe = y2 - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = (era * 146_097 + doe).checked_sub(719_468)?;
+    Some(days * 86_400 + h * 3600 + mi * 60 + s)
+}
+
+/// The ids of the sessions last seen more than `max_age` seconds before
+/// `now` (unix seconds). A session without a readable time is kept.
+pub fn idle_sessions(sessions: &Value, now: u64, max_age: u64) -> Vec<String> {
+    sessions
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|x| {
+            let seen = unix_of_iso(x["updatedAt"].as_str()?)?;
+            let id = x["id"].as_str()?;
+            (now.checked_sub(seen)? > max_age).then(|| id.to_string())
+        })
+        .collect()
+}
+
+/// Remove the family account's sessions idle for [`IDLE_SESSION_SECS`];
+/// how many went. Each removal is written to the journal (never a token:
+/// a session id is not a credential). The caller makes sure the clock can
+/// be trusted: a clock that is months ahead would sign every phone out.
+pub fn remove_idle_sessions(now: u64) -> Result<usize, Fail> {
+    let k = Zeroizing::new(
+        fs::read_to_string(key_path())
+            .map_err(|_| failed("No phone is set up yet."))?
+            .trim()
+            .to_string(),
+    );
+    let Some(id) = family_id(&k)? else {
+        return Ok(0);
+    };
+    let auth = api_key_header(&k);
+    let sessions = call("GET", &format!("/admin/users/{id}/sessions"), &auth, None)?
+        .json()
+        .ok_or_else(|| failed("The photo service did not list the signed-in devices."))?;
+    let mut gone = 0;
+    for sid in idle_sessions(&sessions, now, IDLE_SESSION_SECS) {
+        if remove_device(&sid).is_ok() {
+            eprintln!("alpd: phone: a device not seen for 60 days was signed out (session {sid})");
+            gone += 1;
+        }
+    }
+    Ok(gone)
+}
+
 /// Addresses with an open connection to the phone app's port 443 now
 /// (`ss -Htn state established '( sport = :443 )'`), sorted, without the
 /// computer itself. Immich does not keep a device's address; while a phone
@@ -359,7 +487,7 @@ pub fn remove_device(id: &str) -> Result<(), Fail> {
     })
 }
 
-fn failed(msg: impl Into<String>) -> Fail {
+pub(crate) fn failed(msg: impl Into<String>) -> Fail {
     Fail::new("immich.failed", msg)
 }
 
@@ -373,7 +501,7 @@ fn random_bytes<const N: usize>() -> Result<Zeroizing<[u8; N]>, Fail> {
 
 /// A long random password for the admin account nobody types (its
 /// password is thrown away; only the API key is kept).
-fn admin_password() -> Result<Zeroizing<String>, Fail> {
+pub(crate) fn admin_password() -> Result<Zeroizing<String>, Fail> {
     let b = random_bytes::<24>()?;
     Ok(Zeroizing::new(
         b.iter().map(|x| format!("{x:02x}")).collect(),
@@ -384,7 +512,7 @@ fn key_path() -> PathBuf {
     Path::new(SECRETS).join("admin-api-key")
 }
 
-fn write_secret(path: &Path, value: &str) -> Result<(), Fail> {
+pub(crate) fn write_secret(path: &Path, value: &str) -> Result<(), Fail> {
     let io = |e: std::io::Error| failed(format!("Could not store a secret: {e}"));
     let dir = path.parent().unwrap_or(Path::new("/"));
     fs::create_dir_all(dir).map_err(io)?;
@@ -403,7 +531,7 @@ fn write_secret(path: &Path, value: &str) -> Result<(), Fail> {
     fs::rename(&tmp, path).map_err(io)
 }
 
-fn call(
+pub(crate) fn call(
     method: &str,
     path: &str,
     auth: &str,
@@ -430,7 +558,35 @@ fn call(
     })
 }
 
-fn api_key_header(key: &str) -> String {
+/// The console's gallery (security review 2026-11-01, section 2): the web
+/// gallery on its own local origin, served by nginx on this port, which
+/// adds the family account's key itself (after asking alpd, see
+/// `gallery/gate`). The browser never holds a credential of the photo
+/// service.
+pub const GALLERY_URL: &str = "http://127.0.0.1:8412/";
+
+/// The family account's key for the gallery proxy; `None` until the family
+/// account exists. Only letters, digits and `-_+/=` are passed on (it goes
+/// into a request header).
+pub fn family_key() -> Option<Zeroizing<String>> {
+    let k = Zeroizing::new(
+        fs::read_to_string(family_key_path())
+            .ok()?
+            .trim()
+            .to_string(),
+    );
+    header_safe(&k).then_some(k)
+}
+
+/// A key that can go into a request header as it is.
+fn header_safe(k: &str) -> bool {
+    !k.is_empty()
+        && k.len() <= 128
+        && k.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'+' | b'/' | b'='))
+}
+
+pub(crate) fn api_key_header(key: &str) -> String {
     format!("x-api-key: {key}")
 }
 
@@ -438,6 +594,14 @@ fn api_key_header(key: &str) -> String {
 /// is random and thrown away: only the API key (on the archive) remains,
 /// as in docs/contracts/api-access.md.
 pub fn admin_key() -> Result<Zeroizing<String>, Fail> {
+    // Never make a new owner while the old gallery is being brought back:
+    // the restore needs a photo service that nobody has set up.
+    if crate::immich_restore::pending() {
+        return Err(Fail::new(
+            "immich.starting",
+            "Your gallery is being brought back from the backup disk. Please wait a moment.",
+        ));
+    }
     if let Ok(k) = fs::read_to_string(key_path()) {
         let k = Zeroizing::new(k.trim().to_string());
         let r = call("GET", "/users/me", &api_key_header(&k), None)?;
@@ -457,33 +621,41 @@ pub fn admin_key() -> Result<Zeroizing<String>, Fail> {
             "The photo service already has an owner that this stick does not know. Code for help: immich admin.",
         ));
     }
-    let r = call(
-        "POST",
-        "/auth/login",
-        "",
-        Some(&json!({"email": ADMIN_EMAIL, "password": password.as_str()})),
-    )?;
-    let token = r
-        .json()
-        .and_then(|v| v["accessToken"].as_str().map(str::to_string))
-        .map(Zeroizing::new)
-        .ok_or_else(|| failed("The photo service did not let ALPArchive sign in."))?;
-    let bearer = format!("Authorization: Bearer {}", token.as_str());
-    let r = call(
-        "POST",
-        "/api-keys",
-        &bearer,
-        Some(&json!({"name": "alpd", "permissions": ["all"]})),
-    )?;
-    let key = r
+    key_as_admin(&password)
+}
+
+/// Sign in as the admin with `password`, make alpd's API key (older keys
+/// of alpd are deleted: after a restore the index no longer has them) and
+/// keep it in the index. The session is signed out again.
+pub(crate) fn key_as_admin(password: &str) -> Result<Zeroizing<String>, Fail> {
+    let key = signed_in(ADMIN_EMAIL, password, |bearer| {
+        let old: Vec<String> = call("GET", "/api-keys", bearer, None)?
+            .json()
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter(|k| k["name"] == ADMIN_KEY_NAME)
+            .filter_map(|k| k["id"].as_str().map(str::to_string))
+            .collect();
+        for id in old {
+            let _ = call("DELETE", &format!("/api-keys/{id}"), bearer, None);
+        }
+        call(
+            "POST",
+            "/api-keys",
+            bearer,
+            Some(&json!({"name": ADMIN_KEY_NAME, "permissions": ["all"]})),
+        )?
         .json()
         .and_then(|v| v["secret"].as_str().map(str::to_string))
         .map(Zeroizing::new)
-        .ok_or_else(|| failed("The photo service did not give ALPArchive a key."))?;
+        .ok_or_else(|| failed("The photo service did not give ALPArchive a key."))
+    })?;
     write_secret(&key_path(), &key)?;
-    let _ = call("POST", "/auth/logout", &bearer, Some(&json!({})));
     Ok(key)
 }
+
+const ADMIN_KEY_NAME: &str = "alpd";
 
 fn family_id(key: &str) -> Result<Option<String>, Fail> {
     let r = call("GET", "/admin/users", &api_key_header(key), None)?;
@@ -759,6 +931,11 @@ pub fn db_env(password: &str) -> String {
 /// them (Postgres and valkey change their own data folder's owner).
 fn ensure_dir(path: &Path, mode: u32, uid: u32, gid: u32, force_owner: bool) -> Result<(), String> {
     let io = |e: std::io::Error| format!("{}: {e}", path.display());
+    // A link in place of a folder (a prepared backup disk) would make
+    // root change the owner of, or mount, whatever it points to.
+    if is_link(path) {
+        return Err(format!("{}: is a link, not a folder", path.display()));
+    }
     let new = !path.exists();
     if new {
         fs::create_dir_all(path).map_err(io)?;
@@ -780,6 +957,10 @@ fn ensure_dir(path: &Path, mode: u32, uid: u32, gid: u32, force_owner: bool) -> 
         }
     }
     Ok(())
+}
+
+fn is_link(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
 }
 
 fn bind(src: &str, dst: &str) -> Result<(), String> {
@@ -852,6 +1033,9 @@ pub fn prepare() -> Result<(), String> {
     let pg = data.join("postgres");
     let pg_new = !pg.exists();
     ensure_dir(&pg, 0o700, UID, UID, false)?;
+    // A new index on an archive that already holds a gallery: its backup is
+    // put back once the photo service runs (ADR 0025).
+    let restore = pg_new;
     if pg_new {
         // No copy-on-write for the database on btrfs (fewer writes on the
         // stick; Postgres has its own checksums). Best effort.
@@ -867,6 +1051,9 @@ pub fn prepare() -> Result<(), String> {
     bind(DATA, HOME)?;
     // Archive: the originals, never anywhere else.
     let orig = Path::new(ORIGINALS);
+    if is_link(Path::new(ARCHIVE_FILES)) {
+        return Err(format!("{ARCHIVE_FILES}: is a link, not a folder"));
+    }
     ensure_dir(orig, 0o700, UID, UID, true)?;
     for d in ORIGINAL_DIRS {
         ensure_dir(&orig.join(d), 0o700, UID, UID, true)?;
@@ -884,7 +1071,14 @@ pub fn prepare() -> Result<(), String> {
         let _ = std::os::unix::fs::chown(status, Some(UID), Some(UID));
         let _ = fs::set_permissions(status, fs::Permissions::from_mode(0o644));
     }
+    // Checked again right before the mount.
+    if is_link(orig) {
+        return Err(format!("{ORIGINALS}: is a link, not a folder"));
+    }
     bind(ORIGINALS, ORIGINALS_BIND)?;
+    if restore {
+        crate::immich_restore::mark_if_backup();
+    }
     // Database password: random once, kept in the index; the file the
     // units read is in RAM, readable only by the immich user.
     let pw = db_password()?;
@@ -946,6 +1140,156 @@ pub fn cli(args: &[&str]) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_link_in_place_of_a_folder_is_refused() {
+        use super::ensure_dir;
+        use std::fs;
+        use std::os::unix::fs::MetadataExt;
+        let dir = std::env::temp_dir().join(format!("alp-immich-link-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("target")).unwrap();
+        let me = fs::metadata(&dir).unwrap();
+        std::os::unix::fs::symlink(dir.join("target"), dir.join("link")).unwrap();
+        std::os::unix::fs::symlink(dir.join("nowhere"), dir.join("dangling")).unwrap();
+        for name in ["link", "dangling"] {
+            let r = ensure_dir(&dir.join(name), 0o700, me.uid(), me.gid(), true);
+            assert!(r.is_err_and(|e| e.contains("is a link")), "{name}");
+        }
+        assert!(!dir.join("nowhere").exists());
+        assert!(ensure_dir(&dir.join("real"), 0o700, me.uid(), me.gid(), true).is_ok());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A photo service that answered a moment ago and is busy with a video
+    /// backup stays ready; one that never answered, or is silent for
+    /// longer than the grace, does not.
+    #[test]
+    fn a_busy_service_stays_ready_for_a_while() {
+        use std::time::{Duration, Instant};
+        let grace = Duration::from_secs(600);
+        let t0 = Instant::now();
+        let mut last = None;
+        assert!(!super::ready_now(false, &mut last, t0, grace));
+        assert!(super::ready_now(true, &mut last, t0, grace));
+        assert!(super::ready_now(
+            false,
+            &mut last,
+            t0 + Duration::from_secs(599),
+            grace
+        ));
+        assert!(!super::ready_now(
+            false,
+            &mut last,
+            t0 + Duration::from_secs(600),
+            grace
+        ));
+        assert!(super::ready_now(
+            true,
+            &mut last,
+            t0 + Duration::from_secs(700),
+            grace
+        ));
+        assert!(super::ready_now(
+            false,
+            &mut last,
+            t0 + Duration::from_secs(900),
+            grace
+        ));
+    }
+
+    #[test]
+    fn only_a_plain_key_goes_into_a_header() {
+        assert!(super::header_safe("AbC-12_3+/="));
+        for bad in ["", "a b", "a\r\nx-api-key: z", "a;b", &"k".repeat(129)] {
+            assert!(!super::header_safe(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn sessions_idle_for_60_days_are_found() {
+        assert_eq!(super::unix_of_iso("1970-01-01T00:00:00.000Z"), Some(0));
+        assert_eq!(
+            super::unix_of_iso("2026-11-14T08:15:55.000Z"),
+            Some(1_794_644_155)
+        );
+        assert_eq!(
+            super::unix_of_iso("2024-02-29T12:00:00Z"),
+            Some(1_709_208_000)
+        );
+        for bad in [
+            "",
+            "yesterday",
+            "2026-11-14 08:15:55",
+            "2026-13-01T00:00:00Z",
+            "2026-11-14T08:15:55+02:00",
+        ] {
+            assert_eq!(super::unix_of_iso(bad), None, "{bad}");
+        }
+        let now = 1_794_644_155;
+        let day = 86_400;
+        let iso = |secs_ago: u64| {
+            // Built from the same function's inverse by search: whole days only.
+            let t = now - secs_ago;
+            let (d, r) = (t / day, t % day);
+            let (mut y, mut left) = (1970, d);
+            loop {
+                let len = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+                    366
+                } else {
+                    365
+                };
+                if left < len {
+                    break;
+                }
+                left -= len;
+                y += 1;
+            }
+            let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+            let months = [
+                31,
+                if leap { 29 } else { 28 },
+                31,
+                30,
+                31,
+                30,
+                31,
+                31,
+                30,
+                31,
+                30,
+                31,
+            ];
+            let mut m = 0;
+            while left >= months[m] {
+                left -= months[m];
+                m += 1;
+            }
+            format!(
+                "{y:04}-{:02}-{:02}T{:02}:{:02}:{:02}.000Z",
+                m + 1,
+                left + 1,
+                r / 3600,
+                r % 3600 / 60,
+                r % 60
+            )
+        };
+        assert_eq!(super::unix_of_iso(&iso(61 * day)), Some(now - 61 * day));
+        let s = serde_json::json!([
+            {"id": "old", "updatedAt": iso(61 * day)},
+            {"id": "edge", "updatedAt": iso(60 * day)},
+            {"id": "new", "updatedAt": iso(3600)},
+            {"id": "future", "updatedAt": "2099-01-01T00:00:00.000Z"},
+            {"id": "odd", "updatedAt": "soon"},
+            {"updatedAt": iso(90 * day)},
+        ]);
+        assert_eq!(
+            super::idle_sessions(&s, now, super::IDLE_SESSION_SECS),
+            vec!["old".to_string()]
+        );
+        // A clock that is behind (a session "from the future") removes nothing.
+        assert!(super::idle_sessions(&s, 0, super::IDLE_SESSION_SECS).is_empty());
+    }
+
     #[test]
     fn devices_leave_out_the_console() {
         let s = serde_json::json!([

@@ -2,6 +2,49 @@
 
 Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
 
+## Alpha 0.2.7 (started 2026-11-15, same branch, on top of 0.2.61)
+
+- Owner's choice: one version with (1) the gallery back on a new stick, (2) a new version without erasing
+  the stick, (3) remote access through our own relay; plus a format test set (RAW of many makers, video
+  codecs) for the second beta.
+- (1) written: `crates/alp-live/src/immich_restore.rs`, ADR 0025, T-IMMICH-02. Uses Immich's own restore
+  flow and `immich-admin reset-admin-password`. Only CI can prove it (needs the photo service in a VM).
+- (1) green in CI. Format test set part 1 done (`docs/qa/formats.md`); camera RAW needs a session on the
+  "ALP-OS" cloud environment (raw.pixls.us allowed there).
+- (2) ADR 0026, `docs/plans/live-update.md`: layout (slots + `alp-boot`), sysupdate transfer files,
+  `crates/alp-live/src/update.rs` (`alpctl live update bless|check|apply`), `tools/update-files.sh`,
+  T-UPD-01/02 in the CI group "update" (builds a second image as version 9.9.90; green 2026-11-16),
+  Public history (2026-11-16): 14 commits of 2026-11-10 (in main, live-alpha and both release tags) carry
+  co-author and session lines; whether to rewrite the history is the owner's open decision.
+  `tests/ci/check-commit-messages.sh` (CI job shell) refuses such lines in every commit since 2026-11-11.
+  Security review 2026-11-16 (clock, gallery restore, updates): fixed in code: signing key in the
+  environment `release` (main only), unknown-key test, restore retries and keeps its backup aside,
+  bless waits for the lock, no switch-off while writing, version names. Open: owner's decision on
+  restore from an archive that is not encrypted (ADR 0025); links on a plain archive (immich.rs
+  ensure_dir/bind follow them); clock set far ahead by the network (certificate dated in the future).
+  alpd feature `update` (`state.update`, `update/check`, `update/apply`), Settings > About > Updates, release
+  job step "Update files (signed)" (rolling release tag `updates`; skipped until the Actions secret
+  `UPDATE_SIGNING_KEY` and `image/keys/update-signing.asc` exist: the owner needs steps for that). Still to
+  do: restart button after an update, T-UPD-04 (power cut; T-UPD-03 rollback and T-UPD-05 bad signature
+  pass in t-upd-02.sh, with the restart of an unhealthy counted start), bump
+  `image/extra/usr/lib/alp/release` to 0.2.7 at release (the release job checks it).
+- (3) trial step 1 done: `docs/plans/remote-access.md`, `spikes/iroh-tunnel` (iroh 1.4.1 + own iroh-relay on
+  one machine: direct, relay-only, refusal of an unapproved phone). Product design there (own unprivileged
+  `alp-tunnel`, never inside alpd). Step 2 needs the owner's phone and a relay server on the internet
+  (owner decision), and the app repository.
+- Next: the owner's update key and relay decision; T-UPD-04; security check of ADR 0024/0025/0026.
+
+## Alpha 0.2.61 (2026-11-15, branch claude/project-thread-o9ostf off live-alpha)
+
+- On the branch, no PR yet (needs the owner's OK): the phone's own certificate dated back; name lookup
+  (systemd-resolved) so the clock is set from the network; the hardware clock is never written
+  (`/etc/adjtime` LOCAL); `clock/sync`, `clock/base`, `prefs.lock_hide` (ADR 0024,
+  `docs/plans/live-alpha-api.md`); the time zone window; lock screen options; the gallery stays during a
+  video backup; Time & Language; gallery link cleanup; field-log fixes. Notes: `docs/ALPHA-0.2.61.md`.
+- Open: security review of ADR 0024 and of the 0.2.6 gallery / T62 / T63 before the beta; hardware test by
+  the owner; T67 (Wi-Fi rules file at early start).
+- Next after 0.2.61: remote access through our own relay, then backup between homes.
+
 ## Live UI 0.2.5 owner feedback (2026-11-08, branch claude/project-thread-ptxu5r off stream-a/live-alpha)
 
 - T53-T59 and the one-QR phone step, UI side: `docs/plans/live-ui-0.2.5-feedback.md`. New server calls are

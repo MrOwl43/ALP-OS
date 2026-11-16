@@ -70,6 +70,7 @@
     print: SV('<path d="M7 9V3.5h10V9"/><rect x="3.5" y="9" width="17" height="7.5" rx="2"/><path d="M7 14h10v6.5H7z"/>'),
     eye: SV('<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
     chip: SV('<rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx=".8"/><path d="M9 2.5V6M15 2.5V6M9 18v3.5M15 18v3.5M2.5 9H6M2.5 15H6M18 9h3.5M18 15h3.5"/>'),
+    clock: SV('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/>'),
     screen: SV('<rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8.5 21h7M12 17v4"/>'),
     wrench: SV('<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3.5 17.5l3 3 5.8-5.8a4 4 0 0 0 5.4-5.4l-2.4 2.4-2.4-.6-.6-2.4z"/>'),
     folder: SV('<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H10l2 2.5h7.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/>'),
@@ -208,6 +209,19 @@
     if (a === "none" || a === "failed") return { tone: "warn", label: t("tray.disk.none") };
     return null;   // locked: nothing is known yet
   }
+  // Feature clock: times on screen use the chosen time zone (UTC until one is chosen); the browser knows the zones.
+  // A zone name it does not know falls back to UTC.
+  function zoneOf(s) { const z = s && s.prefs && s.prefs.timeZone; if (!z) return "UTC"; try { new Intl.DateTimeFormat("en", { timeZone: z }); return z; } catch { return "UTC"; } }
+  function clockText(s, long) {
+    const d = new Date(s.clock.now * 1000), z = zoneOf(s);
+    const o = long ? { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: z, timeZoneName: "shortOffset" }
+      : { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: z };
+    return new Intl.DateTimeFormat("en-GB", o).format(d).replace("GMT", "UTC");
+  }
+  function clockEl(s) {
+    const label = clockText(s, true) + (s.clock.synced ? "" : " · " + t("clock.unsure"));
+    return h("span", { class: "tstat clock" + (s.clock.synced ? "" : " unsure"), role: "img", title: label, "aria-label": label, dir: "ltr" }, clockText(s, false));
+  }
   function batteryEl(b) {
     const p = Math.max(0, Math.min(100, b.percent)), tone = b.charging ? "" : p <= 10 ? "st-bad" : p <= 20 ? "st-warn" : "";
     const label = t(b.charging ? "tray.battery.charging" : "tray.battery", { n: p });
@@ -247,6 +261,7 @@
     const ds = diskStatus(S);
     if (ds) tray.append(trayBtn(ICON.disk, ds.label, gated ? () => netStatus(ds.label, "tray.disk.signin") : L.mode === "setup" ? () => jumpStep(4) : () => openSettings("disk"), ds.tone === "ok" ? "st-ok" : "st-off"));
     if (S.sys.battery) tray.append(batteryEl(S.sys.battery));
+    if (has("clock") && S.clock) tray.append(clockEl(S));
     // (i): a quiet grey icon; a small dot when something new happened (orange: needs attention, red: not working).
     const lvl = statusLevel(S);
     const ib = h("button", { class: "tbtn errb lvb" + (errPanel ? " on" : ""), type: "button", title: t("tray.errors") + ": " + t("lv." + lvl), "aria-label": t("tray.errors") + ": " + t("lv." + lvl), onclick: openErrors }, legendIcon(lvl, { word: false }));
@@ -277,7 +292,7 @@
         h("button", { class: "tbtn", type: "button", "data-back": "", "aria-label": t("common.close"), onclick: () => { if (errDetail) { errDetail = null; draw(); } else closeErrors(); } }, iconEl(errDetail ? "back" : "close")));
       if (errDetail) {
         const e = errDetail, res = h("div");
-        const dl = h("dl", { class: "specs" }, h("dt", {}, t("errs.when")), h("dd", {}, new Date(e.time).toLocaleString()),
+        const dl = h("dl", { class: "specs" }, h("dt", {}, t("errs.when")), h("dd", {}, new Date(e.time).toLocaleString([], { timeZone: zoneOf(S) })),
           e.code ? [h("dt", {}, t("errs.code")), h("dd", { dir: "ltr" }, e.code)] : null, e.step ? [h("dt", {}, t("errs.step")), h("dd", { dir: "ltr" }, e.step)] : null,
           e.detail || e.key ? [h("dt", {}, t("errs.tech")), h("dd", { class: "tech", dir: "ltr" }, [e.key, e.detail].filter(Boolean).join(": "))] : null);
         fill(errPanel, head, h("p", { class: "ep-text" }, e.text), dl, res,
@@ -293,7 +308,7 @@
           recent.length ? h("ul", { class: "ep-list" }, recent.map((e) => h("li", { class: "lv-" + e.level + (e.resolved ? " resolved" : "") },
             h("button", { type: "button", class: "ep-row", onclick: () => { errDetail = e; draw(); } },
               h("span", { class: "ep-dot", "aria-hidden": "true" }), h("span", { class: "ep-t" }, e.text, e.resolved ? h("span", { class: "ep-res" }, " · " + t("errs.resolved")) : null),
-              h("span", { class: "ep-time" }, new Date(e.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))))))
+              h("span", { class: "ep-time" }, new Date(e.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: zoneOf(S) }))))))
             : h("p", { class: "fine" }, t("errs.none"))));
     };
     Errs.onChange(draw); draw(); renderTray();
@@ -388,6 +403,11 @@
     return h("dl", { class: "specs" }, rows);
   }
   function sheet(...kids) { closeModal(); modalEl = h("div", { class: "modal", role: "dialog", "aria-modal": "true" }, h("div", { class: "sheet" }, ...kids)); document.body.append(modalEl); const b = modalEl.querySelector(".primary") || modalEl.querySelector("button"); if (b) b.focus(); }
+  function askRestart() {   // feature update: start the version that was just installed
+    sheet(h("h2", { style: "margin-top:0" }, t("power.restart.title")), h("p", { class: "fine", style: "margin:0" }, t("power.restart.sub")),
+      h("div", { class: "row" }, h("button", { class: "primary", onclick: () => { closeModal(); powerOff(true); } }, t("power.restart.yes")),
+        h("button", { class: "secondary", "data-back": "", onclick: closeModal }, t("common.cancel"))));
+  }
   function askPowerOff() {
     sheet(h("h2", { style: "margin-top:0" }, t("power.title")), h("p", { class: "fine", style: "margin:0" }, t("power.sub")),
       h("div", { class: "row" }, h("button", { class: "primary", onclick: () => { closeModal(); powerOff(); } }, t("power.yes")),
@@ -602,12 +622,16 @@
   function welcome() {
     show("welcome", (card) => {
       const list = h("ul", { class: "checks" }), notes = h("div", { class: "notes" }), tech = h("dl", { class: "specs" }), net0 = S.net.online + "|" + S.net.kind;
+      let netRow = null;
       S.hw.checks.forEach((c, i) => {
         const k = c.id || slug(c.item), name = T["hw.item." + k] ? t("hw.item." + k) : c.item, delay = "animation-delay:" + (0.25 + i * 0.25) + "s";
         tech.append(h("dt", {}, name), h("dd", {}, [c.status, c.value].filter(Boolean).join(" · ")));
         if (k === "wired_network" || k === "network") {
-          const n = netCheck(S);
-          list.append(h("li", { style: delay }, legendIcon(n.level), iconEl(n.icon), h("span", { class: "name" }, h("span", {}, name), h("span", { class: "fine" }, n.sub)), h("span", { class: "state" }, n.value)));
+          // Owner, 0.2.5-test1: the network line comes last; with no network it offers Wi-Fi right there
+          // (the next step is the network screen while there is none).
+          const n = netCheck(S), delayN = "animation-delay:" + (0.25 + (S.hw.checks.length - 1) * 0.25) + "s";
+          const join = !S.net.online && S.net.wifiPresent ? h("button", { class: "secondary", type: "button", "data-ico": "wifi", onclick: () => { L.welcomed = true; L.skip.network = false; goNext(); } }, t("hw.net.connect")) : null;
+          netRow = h("li", { style: delayN }, legendIcon(n.level), iconEl(n.icon), h("span", { class: "name" }, h("span", {}, name), h("span", { class: "fine" }, n.sub)), join || h("span", { class: "state" }, n.value));
           return;
         }
         list.append(h("li", { style: delay },
@@ -615,6 +639,11 @@
           h("span", { class: "state" }, c.status !== "ok" && c.value && c.value.length < 14 ? c.value : t("hw." + c.status))));
         if (c.status === "note") notes.append(h("p", {}, T["hw.note." + k] ? t("hw.note." + k) : c.advice || ""));
       });
+      // Owner, 0.2.6 field test: the time and its zone are set right at the start of setup.
+      if (has("clock") && S.clock && has("prefs")) list.append(h("li", { class: "clockrow" }, legendIcon(S.clock.synced ? "ok" : "note"), iconEl("clock"),
+        h("span", { class: "name" }, h("span", {}, t("set.clock")), h("span", { class: "fine" }, clockText(S, true) + (S.clock.synced ? "" : " · " + t("clock.unsure")))),
+        h("button", { class: "secondary zonebtn", type: "button", onclick: () => zonePicker(() => route(true)) }, zoneName(S.prefs.timeZone), iconEl("chevron"))));
+      if (netRow) list.append(netRow);
       // alpd answers before its hardware check is done (T28): show that it runs, then redraw.
       const pending = S.hw.pending;
       if (pending) list.append(h("li", {}, iconEl("refresh"), h("span", { class: "name" }, t("hw.checking"))));
@@ -634,7 +663,8 @@
   // Shutdown (T15): "Shutting down…" with the steps of the power.off job. alpd stops last, so requests are expected
   // to fail at the end; the last message stays. If the screen is still on long after, say it is safe to switch off.
   const OFF_STEPS = ["immich", "archive", "index", "saving", "off"];
-  async function powerOff() {
+  async function powerOff(again) {
+    const restart = again === true;   // also called as a click handler: only a real `true` restarts (feature update)
     closeModal(); stopSaver(); stopPolling(); setConn(false);
     if (current && current.stop) current.stop();
     current = { name: "off", update() {}, stop() {} }; powerOffDone = true;
@@ -646,24 +676,26 @@
     const draw = () => {
       const at = job ? OFF_STEPS.indexOf(job.step) : -1, fin = job && job.state === "done";
       list.replaceChildren(...OFF_STEPS.map((st, i) => { const k = fin || at > i ? "done" : at === i ? "now" : "todo";
-        return h("li", { class: k }, h("span", { class: "badge " + (k === "done" ? "ok" : "todo"), "aria-hidden": "true" }, k === "done" ? "✓" : k === "now" ? "•" : ""), t("off.step." + st), h("span", { class: "sr" }, " " + t("step.status." + k))); }));
+        return h("li", { class: k }, h("span", { class: "badge " + (k === "done" ? "ok" : "todo"), "aria-hidden": "true" }, k === "done" ? "✓" : k === "now" ? "•" : ""), t(restart && st === "off" ? "off.step.restart" : "off.step." + st), h("span", { class: "sr" }, " " + t("step.status." + k))); }));
       if (job && job.message) line.now(job.message);
     };
-    card.replaceChildren(hero("power"), h("h1", {}, t("off.title")), list, line, end); draw();
-    try { const r = await alp.powerOff(); if (r && r.job) job = r.job; }
+    card.replaceChildren(hero("power"), h("h1", {}, t(restart ? "off.title.restart" : "off.title")), list, line, end); draw();
+    try { const r = await alp.powerOff(restart); if (r && r.job) job = r.job; }
     catch (e) {
       if (e.key !== "api.unreachable") {   // refused: say so, and let the person go back
         powerOffDone = false; line.remove();
-        end.replaceChildren(banner("bad", e), h("div", { class: "actions" }, h("button", { class: "primary", type: "button", onclick: powerOff }, t("common.tryagain")),
+        end.replaceChildren(banner("bad", e), h("div", { class: "actions" }, h("button", { class: "primary", type: "button", onclick: () => powerOff(restart) }, t("common.tryagain")),
           h("button", { class: "link", type: "button", "data-back": "", onclick: () => { L.view = null; route(true); pollTimer = setTimeout(loop, 500); } }, t("common.back"))));
         return;
       }
     }
     draw();
-    for (let gone = 0, t0 = Date.now(); ;) {
+    for (let gone = 0, wasGone = false, t0 = Date.now(); ;) {
       await sleep(1000);
-      try { const s = await alp.state(); gone = 0; S = s; if (s.power.job) job = s.power.job; } catch (e) { gone++; }
+      try { const s = await alp.state(); if (restart && wasGone) { location.reload(); return; } gone = 0; S = s; if (s.power.job) job = s.power.job; } catch (e) { gone++; wasGone = true; }
       draw();
+      // A restart: the screen comes back by itself; this page only waits (the kiosk usually starts it afresh).
+      if (restart && (gone >= 20 || Date.now() - t0 > 120000)) { line.now(t("off.restart.wait")); continue; }
       // Still on: alpd has been gone for 20 s (it stops last), or two minutes passed (the system forces off after 90 s).
       if (gone >= 20 || Date.now() - t0 > 120000) {
         line.remove(); list.querySelectorAll("li").forEach((li) => { li.className = "done"; li.firstChild.className = "badge ok"; li.firstChild.textContent = "✓"; });
@@ -1104,7 +1136,7 @@
       const others = h("details", { class: "techd others" }, h("summary", {}, iconEl("chevron"), h("span", {}, t("phone.others"))),
         h("div", { class: "techd-body" }, h("p", { class: "fine" }, t("pair.temporary")), body));
       card.append(hero("phone"), h("h1", {}, t("phone.title")), h("p", { class: "sub" }, t(setup ? "phone.sub" : "phone.sub.more")), appBox, status, okBox, others,
-        h("div", { class: "row" }, h("button", { class: "link", type: "button", "data-ico": "", onclick: () => help.classList.toggle("hidden") }, t("phone.help.toggle"))), help,
+        h("div", { class: "row" }, h("button", { class: "link", type: "button", "data-ico": "", onclick: () => { if (!help.classList.toggle("hidden")) checkConnection(); } }, t("phone.help.toggle"))), help,
         h("div", { class: "toolbar bottom" }, stageBack, laterBtn(), go));
       let stopped = false, R = null, stage = 0, pairT = null, pwAsked = false, sig = "", qrTick = null, qrOpen = false;
       cur.stop = () => { stopped = true; clearTimeout(pairT); clearInterval(qrTick); if (qrOpen) alp.pairClose().catch(() => {}); };
@@ -1125,6 +1157,25 @@
         } catch (e) {   // an older alpd has no app pairing: the other ways are the way
           appQr.replaceChildren(banner("bad", e)); others.open = true;
         }
+      }
+      // What a phone meets on this network (GET phone/connection), in plain lines under the help text.
+      const checkBox = h("div", { class: "conncheck" }); help.firstElementChild.append(checkBox);
+      async function checkConnection() {
+        if (!has("connection_check")) return;
+        checkBox.replaceChildren(waitLine(t("conn.checking"), "wait.generic.slow", 30));
+        let c;
+        try { c = await alp.phoneConnection(); } catch (e) { if (!stopped) checkBox.replaceChildren(banner("bad", e)); return; }
+        if (stopped) return;
+        const line = (ok, text) => h("li", { class: ok ? "ok" : "bad" }, ok ? iconEl("check") : h("span", { class: "ico bang", "aria-hidden": "true" }, "!"), h("span", {}, text));
+        const served = Array.isArray(c.served) ? c.served : [];
+        const lines = [
+          line((c.addresses || []).length > 0, (c.addresses || []).length ? t("conn.addr", { a: c.addresses.join(", ") }) : t("conn.addr.none")),
+          line(!!c.nginx_active, t(c.nginx_active ? "conn.server" : "conn.server.off")),
+        ];
+        served.forEach((x) => lines.push(line(!!x.ok, t(x.ok ? "conn.cert" : x.answers === false ? "conn.cert.silent" : "conn.cert.bad", { a: x.address }))));
+        if (c.clock) lines.push(line(!!c.clock.synced, t(c.clock.synced ? "conn.clock" : "conn.clock.unsure", { time: clockText({ clock: c.clock, prefs: S.prefs }, true) })));
+        if (c.only_paired_phones) lines.push(line(true, t("conn.strict")));
+        checkBox.replaceChildren(h("ul", { class: "connlines" }, ...lines));
       }
       openAppQr();
       const certStage = () => !!(R && R.certificate_qr_svg && /^https:/.test(R.server_url || ""));
@@ -1260,10 +1311,11 @@
   function detectMode() {
     if (L.exited) { L.mode = "everyday"; return; }
     if (has("setup_progress") && !(window.useMock && params.get("screen"))) {   // T09: the server knows
-      L.mode = S.lock.state === "setup" || !S.setup.complete ? "setup" : "everyday";
       S.setup.skipped.forEach((k) => { if (L.skip[k] === undefined) L.skip[k] = true; });
       if (S.setup.complete) L.finished = true;
-      return;
+      if (S.lock.state === "setup") { L.mode = "setup"; return; }
+      if (S.setup.complete) { L.mode = "everyday"; return; }
+      // Not marked complete (a stick set up before this was kept, or setup still running): the state decides, below.
     }
     const a = S.arch.state;
     // T09: setup finished or left before a restart stays finished (kept on the stick); a locked stick asks for the
@@ -1484,7 +1536,7 @@
     // Hook: licence-checked photos listed in screensaver/photos/index.json replace the SVG scenes (see screensaver/README.md).
     fetch("screensaver/photos/index.json", { cache: "no-store" }).then((r) => (r.ok ? r.json() : [])).then((l) => { if (Array.isArray(l)) l.slice(0, 5).forEach((f, i) => { if (/^[\w.-]+$/.test(f)) slides[i].style.backgroundImage = "url(screensaver/photos/" + f + ")"; }); }).catch(() => {});
     const clock = h("div", { class: "saver-clock" });
-    const upd = () => { clock.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }; upd();
+    const upd = () => { clock.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: zoneOf(S) }); }; upd();
     const saverEl = h("div", { class: "saver", id: "saver", "aria-hidden": "true" }, ...slides, clock, h("div", { class: "saver-note" }, t("saver.note")));
     saverEl._t = setInterval(upd, 20000);
     document.body.append(saverEl);
@@ -1640,7 +1692,8 @@
     show("lock", (card, cur) => {
       card.classList.add("lockcard");
       const time = h("div", { class: "lk-time" }), date = h("div", { class: "lk-date" }), msg = h("p", { class: "lk-msg" }), chips = h("div", { class: "lk-chips" });
-      const tickClock = () => { const d = new Date(); time.textContent = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); date.textContent = d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" }); };
+      // In the chosen time zone, like the clock in the top bar (0.2.61: these two showed UTC whatever was chosen).
+      const tickClock = () => { const d = new Date(), z = zoneOf(S); time.textContent = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: z }); date.textContent = d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long", timeZone: z }); };
       tickClock(); const ct = setInterval(tickClock, 10000);
       const pw = h("input", { type: "password", id: "lpw", class: "c-alp", autocomplete: "current-password", maxlength: 128, "aria-label": t("pw.label"), placeholder: t("pw.label") });
       const res = h("div"), go = h("button", { class: "primary", type: "submit" }, t("lock.signin"));
@@ -1659,21 +1712,28 @@
       const onkey = (ev) => { if (form.classList.contains("hidden") && ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey) { ev.preventDefault(); reveal(ev.key); } else if (form.classList.contains("hidden") && ev.key === "Enter") reveal(); };
       document.addEventListener("keydown", onkey);
       cur.stop = () => { clearInterval(ct); clearInterval(timer); document.removeEventListener("keydown", onkey); card.classList.remove("lockcard"); };
-      card.append(h("div", { class: "lk-top" }, time, date, msg), chips, h("div", { class: "lk-bottom" }, hint, form));
+      const note = h("p", { class: "lk-note" });
+      card.append(h("div", { class: "lk-top" }, time, date, msg), chips, note, h("div", { class: "lk-bottom" }, hint, form));
       const chip = (icon, label, value, tone) => h("div", { class: "chip" + (tone ? " " + tone : "") }, iconEl(icon), h("div", {}, h("div", { class: "k" }, label), h("div", { class: "v" }, value)));
       return { update(s) {
         const hl = health(s), w = warnings(s);
         msg.textContent = t(hl === "bad" || w.some((x) => x[0] === "bad") ? "lock.msg.bad" : w.length ? "lock.msg.warn" : "lock.msg.ok");
+        // 0.2.61: what the person chose to hide (Settings > Display & Input) is not sent to a locked screen at all; each
+        // such tile says so, and the line under the tiles says what is hidden or shortened and why.
+        const hid = (k) => s.console.hidden.includes(k), hiddenEl = () => h("span", { class: "lk-hidden" }, iconEl("lock"), t("lock.hidden"));
         const devs = s.phone.devices.length ? s.phone.devices : Array.from({ length: s.phone.phones }, () => ({ kind: "phone", name: "" }));
         const devNode = devs.length ? h("div", { class: "devs" }, devs.map((d) => h("span", { class: "dev" }, iconEl(DEVICE_ICON[d.kind] || "phone"), d.name ? maskName(d.name) : t("lock.device")))) : t("lock.nodevices");
         const spaceTone = s.arch.space === "full" || s.index.space === "full" ? "bad" : s.arch.space === "low" || s.index.space === "low" ? "warn" : "";
         const net = s.net.online ? (s.net.kind === "wifi" && s.net.ssid ? t("lock.net.wifi", { name: maskName(s.net.ssid) }) : t("lock.net.cable")) : t("lock.net.off");
+        const netWifi = s.net.online && s.net.kind === "wifi";
         chips.replaceChildren(
-          chip("phone", t("lock.devices"), devNode),
-          chip("wifi", t("status.network"), net, s.net.online ? "" : "warn"),
-          chip("disk", t("status.room"), s.arch.state === "open" ? t("lock.free", { free: fmtGB(s.arch.free) }) : "–", spaceTone),
+          chip("phone", t("lock.devices"), hid("phones") ? hiddenEl() : devNode),
+          chip("wifi", t("status.network"), hid("network") && netWifi ? hiddenEl() : net, s.net.online ? "" : "warn"),
+          chip("disk", t("status.room"), hid("space") ? hiddenEl() : s.arch.state === "open" ? t("lock.free", { free: fmtGB(s.arch.free) }) : "–", spaceTone),
           chip("heart", t("lock.health"), t("health." + hl), hl === "ok" ? "" : hl),
-          s.phone.last ? chip("check", t("lock.last"), new Date(s.phone.last).toLocaleString()) : chip("check", t("status.photos"), num(s.phone.photos)));
+          hid("backup") ? chip("check", t("lock.last"), hiddenEl()) : s.phone.last ? chip("check", t("lock.last"), new Date(s.phone.last).toLocaleString([], { timeZone: zoneOf(s) })) : chip("check", t("status.photos"), num(s.phone.photos)));
+        const what = ["phones", "network", "space", "backup"].filter(hid).map((k) => t("lock.what." + k));
+        note.textContent = what.length ? t("lock.note.hidden", { list: what.join(", ") }) : t("lock.note");
       } };
     }, { foot: "" });
   }
@@ -1690,11 +1750,14 @@
       const gal = h("button", { class: "primary", type: "button", "data-focus": "", onclick: () => navigate("gallery") }, t("home.gallery"));
       const galWait = waitLine(t("home.gallery.starting"), "wait.gallery.slow", 240);
       const remBox = h("div");
+      // Feature restore_ask (ADR 0025): a backup disk that is not encrypted holds a gallery from before; the person decides.
+      const restoreBox = h("div", { class: "reminders" });
+      const restoreAnswer = async (yes, btns) => { btns.forEach((b) => { b.disabled = true; }); try { await alp.galleryRestore(yes); } catch (e) { btns.forEach((b) => { b.disabled = false; }); } await refresh(); };
       const menu = h("div", { class: "menu" }, gal,
         h("button", { class: "secondary", onclick: () => navigate("settings") }, t("home.settings")),
         has("media_import") ? h("button", { class: "secondary", type: "button", "data-ico": "download", onclick: () => refusedWhileCritical() || navigate("import") }, t("import.go")) : null,
         S.lock.state === "setup" ? null : h("button", { class: "secondary", onclick: lockNow }, t("home.lock")));
-      card.append(dot, title, sub, warn, remBox, lookAgain, other, galWait, tiles, menu);
+      card.append(dot, title, sub, warn, remBox, lookAgain, other, restoreBox, galWait, tiles, menu);
       const tile = (k, v, small, note) => h("div", { class: "tile" }, h("div", { class: "k" }, k), h("div", { class: "v" + (small ? " small" : ""), dir: small ? "ltr" : null }, v), note ? h("div", { class: "k" }, note) : null);
       return { update(s) {
         const rem = reminders(s), empty = ["none", "failed", "creating"].includes(s.arch.state);
@@ -1711,7 +1774,14 @@
         warn.replaceChildren(...(w.length || trouble ? [h("button", { class: "link", type: "button", "data-ico": "info", onclick: openErrors }, t("home.see.errors"))] : []));
         const miss = s.arch.state === "missing"; lookAgain.classList.toggle("hidden", !miss); other.classList.toggle("hidden", !miss); tiles.classList.toggle("hidden", miss || empty);
         gal.classList.toggle("hidden", miss || empty || s.immich.state !== "ready" && s.immich.state !== "paused");
-        galWait.classList.toggle("hidden", miss || empty || s.immich.state !== "starting");
+        const askRestore = has("restore_ask") && s.immich.state === "starting" && s.immich.restoreAsk && !miss && !empty;
+        if (askRestore !== !!restoreBox.firstChild) {
+          const yes = h("button", { class: "primary", type: "button" }, t("restore.ask.yes")), no = h("button", { class: "secondary", type: "button" }, t("restore.ask.no"));
+          yes.onclick = () => restoreAnswer(true, [yes, no]); no.onclick = () => restoreAnswer(false, [yes, no]);
+          restoreBox.replaceChildren(...(askRestore ? [h("div", { class: "rem restore-ask", role: "group", "aria-label": t("restore.ask.title") },
+            h("div", {}, h("b", {}, t("restore.ask.title")), h("span", { class: "d" }, t("restore.ask.text"))), h("div", { class: "restore-ask-btns" }, yes, no))] : []));
+        }
+        galWait.classList.toggle("hidden", miss || empty || s.immich.state !== "starting" || askRestore);
         galWait.why(s.immich.detail);   // T21: e.g. "Unpacking the photo service for the first time…"
         const place = s.arch.place ? (s.arch.place.label || s.arch.place.name) : "–";
         const hl = health(s);
@@ -1721,7 +1791,7 @@
         tiles.replaceChildren(
           tile(t("status.photos"), num(s.phone.photos)),
           mark(tile(t("status.room"), fmtGB(s.arch.free), false, t("where.room", { photos: roomPhotos(s.arch.free) })), !!spaceLv, spaceLv),
-          tile(t("status.phones"), s.phone.phones ? t("status.phones.n", { n: s.phone.phones }) : t("status.phones.none"), false, s.phone.last ? t("status.last", { when: new Date(s.phone.last).toLocaleString() }) : null),
+          tile(t("status.phones"), s.phone.phones ? t("status.phones.n", { n: s.phone.phones }) : t("status.phones.none"), false, s.phone.last ? t("status.last", { when: new Date(s.phone.last).toLocaleString([], { timeZone: zoneOf(s) }) }) : null),
           mark(tile(t("lock.health"), t("health." + hl)), hl !== "ok" && !spaceLv, hl === "bad" ? "now" : "action"),
           tile(t("status.kept"), place, true, t("home.kept.note")));
       } };
@@ -1769,7 +1839,18 @@
       const timer = setTimeout(() => { if (!loaded) { Errs.add({ level: "warn", text: t("gallery.fail.slow") }); soon("gallery.fail.slow"); } }, 20000);
       cur.stop = () => clearTimeout(timer);
       card.append(frame, msg);
-      const check = (s) => { if (frame.isConnected && s.immich.state !== "ready" && s.immich.state !== "paused") { Errs.add({ level: "warn", text: t(s.immich.state === "starting" ? "gallery.fail.starting" : "gallery.fail.off") }); soon(s.immich.state === "starting" ? "gallery.fail.starting" : "gallery.fail.off"); } };
+      // 0.2.61 (field report: the gallery left the screen while a phone backed up videos): one answer that says "not
+      // ready" does not take the gallery away. It goes only after a minute of that (at once when the service
+      // failed or is off), and comes back by itself when the photo service answers again.
+      let badSince = 0, gone = false;
+      const check = (s) => {
+        const st = s.immich.state, fine = st === "ready" || st === "paused";
+        if (fine) { badSince = 0; if (gone) { gone = false; route(true); } return; }
+        if (gone || !frame.isConnected) return;
+        if (!badSince) badSince = Date.now();
+        if (st === "starting" && Date.now() - badSince < 60000) return;
+        gone = true; Errs.add({ level: "warn", text: t(st === "starting" ? "gallery.fail.starting" : "gallery.fail.off") }); soon(st === "starting" ? "gallery.fail.starting" : "gallery.fail.off");
+      };
       check(S);
       return { update: check };
     }, { cls: "gallerycard", foot: "", instant: true });
@@ -1865,7 +1946,7 @@
   // two grey lines that say what it does for the person now, and one control.
   function deviceLine(d) { return [d.name || t("dev.unknown"), d.os].filter(Boolean).join(" · "); }
   const SET_CATS = [["phones", "phone", "blue"], ["password", "key", "red"], ["disk", "disk", "green"], ["chain", "elephant", "gold"], ["network", "wifi", "sky"],
-    ["display", "screen", "purple"], ["power", "power", "grey"], ["about", "logo", "black"], ["advanced", "wrench", "slate"]];
+    ["display", "screen", "purple"], ["time", "clock", "teal"], ["power", "power", "grey"], ["about", "logo", "black"], ["advanced", "wrench", "slate"]];
   function openSettings(cat) { L.setCat = cat; if (current && current.name === "settings") route(true); else navigate("settings"); }
   // T26: Advanced asks for the ALP password once; the permission ends after 10 minutes without use.
   let advancedUntil = 0;
@@ -1887,9 +1968,10 @@
           (() => { const i = h("span", { class: "sq sq-" + col, "aria-hidden": "true" }); i.innerHTML = ICON[ic] || ICON.settings; return i; })(), h("span", {}, t("cat." + k)))));
       card.append(h("div", { class: "settings" }, side, h("div", { class: "setmain" }, h("h1", {}, t("cat." + L.setCat)), err, pane)));
       // 0.2.5 addendum: every setting row has an icon from the one set.
-      const ROW_ICON = { "about.build": "log", "about.version": "info", "admin.reset": "refresh", "enc.row": "lock", "pair.strict": "lock", "pc.battery.now": "battery",
+      const ROW_ICON = { "about.build": "log", "about.version": "info", "upd.title": "refresh", "admin.reset": "refresh", "enc.row": "lock", "pair.strict": "lock", "pc.battery.now": "battery",
         "set.addphone": "phone", "set.disk": "disk", "set.disks": "disk", "set.enc": "key", "set.files": "folder", "set.lockafter": "lock", "set.natural": "trackpad",
-        "set.saver": "gallery", "set.term": "wrench", "status.network": "wifi", "status.off": "power" };
+        "set.saver": "gallery", "set.term": "wrench", "status.network": "wifi", "status.off": "power", "set.zone": "info", "set.lang": "info",
+        "set.lockshow.phones": "phone", "set.lockshow.network": "wifi", "set.lockshow.space": "disk", "set.lockshow.backup": "check" };
       const rowIcon = (label) => { const k = typeof label === "string" && Object.keys(ROW_ICON).find((x) => T[x] === label); return k ? [iconEl(ROW_ICON[k]), label] : label; };
       const row = (label, desc, ...ctl) => h("div", { class: "setrow" }, h("div", { class: "lbl" }, h("b", {}, rowIcon(label)), desc ? h("span", { class: "d" }, desc) : null), h("div", { class: "ctl" }, ...ctl));
       const group = (...rows) => h("div", { class: "setgroup" }, ...rows.filter(Boolean));
@@ -1899,7 +1981,7 @@
       if (L.setCat === "advanced") advancedUntil = Date.now() + ADV_MS;
       const P = {
         phones() {
-          const when = (d) => (d.last_seen ? new Date(d.last_seen).toLocaleString() : t("dev.never"));
+          const when = (d) => (d.last_seen ? new Date(d.last_seen).toLocaleString([], { timeZone: zoneOf(S) }) : t("dev.never"));
           const devs = S.phone.devices || [];
           const disconnect = (fn) => async () => { if (!(await confirmPassword("confirm.devremove"))) return; try { await fn(); await refresh(); route(true); } catch (e) { fail(e); } };
           return [group(...(devs.length || S.pairing.devices.length ? [
@@ -1964,7 +2046,13 @@
             modes.replaceChildren(choiceMenu(t("set.res"), ms.map((m) => ({ value: m.id, text: m.width + " × " + m.height + (m.refresh ? " · " + Math.round(m.refresh) + " Hz" : ""), hint: m.native ? t("disp.res.native") : null })),
               curM.id, (id) => changeMode(id, curM.id)));
           }).catch((e) => modes.replaceChildren(h("span", { class: "d" }, banner("bad", e).textContent)));
-          return [group(row(t("set.saver"), t("set.saver.d"), saver),
+          // 0.2.61 (owner): what the lock screen shows is a choice. A switch that is off means alpd does not send that
+          // detail to a locked screen at all; names are shortened there in any case.
+          const lockRow = (k) => row(t("set.lockshow." + k), t("set.lockshow." + k + ".d"), sw(!S.prefs.lockHide.includes(k), t("set.lockshow." + k), async (i) => {
+            const next = ["phones", "network", "space", "backup"].filter((x) => (x === k ? !i.checked : S.prefs.lockHide.includes(x)));
+            try { await alp.setPrefs({ lock_hide: next }); await refresh(); } catch (e) { i.checked = !i.checked; fail(e); } }));
+          const lockGroup = has("lock_hide") ? group(h("p", { class: "d" }, h("b", {}, t("set.lockshow")), " ", t("set.lockshow.d")), ...["phones", "network", "space", "backup"].map(lockRow)) : null;
+          return [lockGroup, group(row(t("set.saver"), t("set.saver.d"), saver),
             // Lock after: a choice when alpd keeps it (feature idle_lock_pref). Never is not offered: the idle lock is the
             // only guard on a signed-in console (security review, 2026-11-08); alpd accepts only these values.
             has("idle_lock_pref") ? row(t("set.lockafter"), t("set.lockafter.d", { n: Math.round(S.console.idle / 60) }),
@@ -1978,6 +2066,27 @@
             row([iconEl("gallery"), t("set.homebg")], t("set.homebg.d"), h("div", { class: "bgpick", role: "radiogroup", "aria-label": t("set.homebg") },
               h("button", { type: "button", role: "radio", "aria-checked": "true", class: "bgthumb on", title: t("bg.blue") }, h("span", { class: "bgsw blue" }), h("span", {}, t("bg.blue"))))))];
         },
+        // Owner, 0.2.6 field test: time has its own category, with the language (English only for now).
+        time() {
+          // 0.2.61: "Sync now" asks a time server again (feature clock_sync); the zone has its own picker with a
+          // search and a confirm step, which also puts a clock right that never reached the internet (clock_base).
+          const syncMsg = h("span", { class: "d", role: "status" });
+          const syncBtn = has("clock_sync") ? btn(t("set.sync"), async () => {
+            const before = S.clock.syncedAt; syncBtn.disabled = true; syncMsg.replaceChildren(waitLine(t("set.sync.wait")));
+            try {
+              await alp.clockSync();
+              for (let i = 0; i < 10 && current.name === "settings" && L.setCat === "time"; i++) { await sleep(window.useMock ? 100 : 2000); await refresh(); if (S.clock.synced && S.clock.syncedAt !== before) break; }
+              if (S.clock.synced && S.clock.syncedAt !== before) { L.syncNote = "ok"; openSettings("time"); return; }
+              syncMsg.textContent = t(S.net.online ? "set.sync.fail" : "set.sync.offline");
+            } catch (e) { syncMsg.textContent = ""; fail(e); }
+            syncBtn.disabled = false;
+          }) : null;
+          if (L.syncNote === "ok") { syncMsg.textContent = t("set.sync.ok"); L.syncNote = null; }
+          return [group(
+            has("clock") && S.clock ? row([iconEl("clock"), t("set.clock")], [clockText(S, true) + ". " + t(S.clock.synced ? "set.clock.synced" : S.clock.base === "local" ? "set.clock.byhand" : "set.clock.unsure"), syncMsg], syncBtn) : null,
+            has("clock") ? row(t("set.zone"), t("set.zone.d"), h("span", { class: "state" }, zoneName(S.prefs.timeZone)), btn(t("set.zone.change"), () => zonePicker(() => openSettings("time")))) : null),
+            group(row(t("set.lang"), t("set.lang.d"), h("span", { class: "state" }, t("lang.en"))))];
+        },
         power() {
           const b = S.sys.battery;
           return [group(row(t("status.off"), t("set.off.d"), btn(t("status.off"), askPowerOff)),
@@ -1985,7 +2094,42 @@
         },
         about() {
           const prot = S.lock.protection ? t("about.protection." + S.lock.protection) : null;
-          return [group(row(t("about.version"), [S.sys.release || "ALP-OS", prot].filter(Boolean).join(" · ")), S.sys.build ? row(t("about.build"), h("span", { dir: "ltr" }, S.sys.build)) : null),
+          // 0.2.7 (feature update, ADR 0026): a new version without writing the stick again. Looking and installing are
+          // jobs of alpd; this row follows state.update until the job ends, then draws itself again.
+          const u = has("update") ? S.update : null;
+          let updRow = null;
+          if (u) {
+            const msg = h("span", { class: "d", role: "status" });
+            const follow = async (start) => {
+              try {
+                await start();
+                for (let i = 0; i < 3600 && current.name === "settings" && L.setCat === "about"; i++) {
+                  await sleep(window.useMock ? 100 : 1500); await refresh();
+                  const j = S.update && S.update.job;
+                  if (!j || j.state !== "running") break;
+                  msg.replaceChildren(waitLine(j.percent != null ? t("upd.progress", { n: j.percent }) : j.message));
+                }
+                if (current.name === "settings" && L.setCat === "about") openSettings("about");
+              } catch (e) { msg.textContent = ""; fail(e); }
+            };
+            const running = u.job && u.job.state === "running";
+            const check = btn(t("upd.check"), () => { check.disabled = true; msg.replaceChildren(waitLine(t("upd.checking"))); follow(alp.updateCheck); });
+            const n = u.newer;
+            let desc, ctl = [check];
+            if (!u.supported) { desc = t("upd.unsupported"); ctl = []; }
+            else if (running) { desc = u.job.percent != null ? t("upd.progress", { n: u.job.percent }) : u.job.message; ctl = []; follow(async () => {}); }
+            else if (u.error) desc = u.error.message;
+            else if (n && n.state === "available") {
+              desc = t("upd.available", { v: n.version });
+              const install = btn(t("upd.install", { v: n.version }), () => { install.disabled = check.disabled = true; msg.replaceChildren(waitLine(t("upd.starting"))); follow(alp.updateApply); }, "primary");
+              ctl = [install];
+            }
+            else if (n && n.state === "installed") { desc = t("upd.installed", { v: n.version }); ctl = [btn(t("power.restart.yes"), askRestart, "primary")]; }
+            else if (n && n.state === "failed") desc = t("upd.failed", { v: n.version });
+            else desc = t(u.checked ? "upd.none" : "upd.ask");
+            updRow = row(t("upd.title"), desc, msg, ...ctl);
+          }
+          return [group(row(t("about.version"), [S.sys.release || "ALP-OS", prot].filter(Boolean).join(" · ")), S.sys.build ? row(t("about.build"), h("span", { dir: "ltr" }, S.sys.build)) : null, updRow),
             h("h2", {}, t("about.hw")), group(specList()),
             h("h2", {}, t("about.credits")), group(h("p", { class: "d" }, t("about.credits.d")), h("ul", { class: "credits" }, CREDITS.map(([n, l, what]) => h("li", {}, h("b", {}, n), " · " + l + " · " + t(what)))))];
         },
@@ -2040,6 +2184,86 @@
   }
   // Resolution (feature display_modes): the switch reverts by itself after 15 s unless Keep is pressed.
   // Our own drop-down list (spec 2: no native <select>): a button and a list popover; arrows, Enter, Esc work.
+  // The time zones the browser knows, each with its offset now; first "UTC" (no zone chosen).
+  function zoneOptions() {
+    let names = [];
+    try { names = Intl.supportedValuesOf("timeZone"); } catch { names = []; }
+    const off = (z) => { try { return new Intl.DateTimeFormat("en", { timeZone: z, timeZoneName: "shortOffset" }).formatToParts(new Date(S.clock.now * 1000)).find((x) => x.type === "timeZoneName").value.replace("GMT", "UTC"); } catch { return ""; } };
+    return [{ value: null, text: "UTC" }].concat(names.map((z) => ({ value: z, text: z.replace(/_/g, " "), hint: off(z) })));
+  }
+  const zoneName = (z) => (z ? z.replace(/_/g, " ") : "UTC");
+  // Minutes east of UTC of zone z at the time d (the browser's own zone rules).
+  function zoneOffsetMin(z, d) {
+    if (!z) return 0;
+    try {
+      const p = Object.fromEntries(new Intl.DateTimeFormat("en", { timeZone: z, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric" }).formatToParts(d).map((x) => [x.type, x.value]));
+      return Math.round((Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute) - Math.floor(d.getTime() / 60000) * 60000) / 60000);
+    } catch { return 0; }
+  }
+  const wallTime = (secs, z) => new Intl.DateTimeFormat(document.documentElement.lang || "en", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: z || "UTC" }).format(new Date(secs * 1000));
+  // The time zone picker (Settings > Time & Language, and the first setup screen): a window with a search box, the
+  // list, a preview of the time in the chosen zone, and Confirm. Nothing changes before Confirm (owner, 0.2.6 field
+  // test). While the clock did not come from the internet it also asks which time is right: a computer that also
+  // runs Windows keeps its hardware clock in local time, and alpd then moves the clock (feature clock_base).
+  function zonePicker(after) {
+    closeModal();
+    const opts = zoneOptions();
+    let chosen = S.prefs.timeZone || null, base = S.clock && S.clock.base, busy = false;
+    // The clock as the computer's own hardware clock gave it (an earlier answer taken back).
+    const raw = S.clock.now + (base === "local" ? zoneOffsetMin(S.prefs.timeZone, new Date(S.clock.now * 1000)) * 60 : 0);
+    const ask = () => has("clock_base") && !S.clock.synced && zoneOffsetMin(chosen, new Date(raw * 1000)) !== 0;
+    const search = h("input", { type: "search", id: "zq", autocomplete: "off", spellcheck: "false", placeholder: t("zone.search"), "aria-label": t("zone.search") });
+    const list = h("ul", { class: "zonelist", role: "listbox", "aria-label": t("set.zone") }), prev = h("div", { class: "zoneprev", "aria-live": "polite" }), res = h("div");
+    const go = h("button", { class: "primary", type: "button" }, t("zone.confirm"));
+    const drawPrev = () => {
+      const o = opts.find((x) => x.value === chosen) || opts[0];
+      const head = h("div", { class: "zp-head" }, h("b", {}, o.text), o.hint ? h("span", { class: "hint" }, o.hint) : null);
+      if (!ask()) {
+        const now = S.clock.synced ? S.clock.now : raw;
+        prev.replaceChildren(head, h("div", { class: "zp-time", dir: "ltr" }, wallTime(now, chosen)), h("p", { class: "fine" }, t(S.clock.synced ? "zone.prev.synced" : "zone.prev.unsure")));
+        go.disabled = busy; return;
+      }
+      // Two readings of the same hardware clock: it holds local time (its digits are right as they are), or UTC.
+      const pick = (v, label, d) => h("label", { class: "choice" }, h("input", { type: "radio", name: "zbase", checked: base === v, onchange: () => { base = v; go.disabled = busy; } }),
+        h("span", { class: "body" }, h("span", { class: "t", dir: "ltr" }, label), d ? h("span", { class: "s" }, d) : null));
+      prev.replaceChildren(head, h("p", { class: "zp-q" }, t("zone.which")),
+        pick("local", wallTime(raw, null)), pick("utc", wallTime(raw, chosen)), pick("unsure", t("zone.neither"), t("zone.neither.d")));
+      go.disabled = busy || !base;
+    };
+    const draw = () => {
+      const q = search.value.trim().toLowerCase().replace(/[_\s]+/g, " ");
+      const shown = opts.filter((o) => !q || (o.text + " " + (o.hint || "")).toLowerCase().includes(q));
+      list.replaceChildren(...shown.map((o) => h("li", { role: "option", tabindex: "-1", "aria-selected": String(o.value === chosen), onclick: () => { chosen = o.value; draw(); drawPrev(); } },
+        h("span", {}, o.text), o.hint ? h("span", { class: "hint" }, o.hint) : null, o.value === chosen ? iconEl("check") : null)));
+      if (!shown.length) list.append(h("li", { class: "none" }, t("zone.none")));
+    };
+    search.addEventListener("input", draw);
+    const end = () => { closeModal(); };
+    go.addEventListener("click", async () => {
+      busy = true; go.disabled = true;
+      try {
+        if (chosen !== (S.prefs.timeZone || null)) await alp.setPrefs({ time_zone: chosen });
+        // The answer about the hardware clock; without a zone (UTC) an earlier "local time" answer is taken back.
+        if (has("clock_base") && !S.clock.synced && (ask() || S.clock.base === "local")) await alp.clockBase(ask() && base === "local");
+        await refresh(); end(); after();
+      } catch (e) { busy = false; res.replaceChildren(banner("bad", e)); drawPrev(); }
+    });
+    const sheet = h("div", { class: "sheet zonesheet" }, h("h2", { style: "margin-top:0" }, t("zone.title")), h("p", { class: "fine", style: "margin:0 0 .6rem" }, t("zone.sub")),
+      h("div", { class: "zonecols" }, h("div", { class: "zonepick" }, search, list), prev), res,
+      h("div", { class: "row" }, go, h("button", { class: "secondary", type: "button", "data-back": "", onclick: end }, t("common.cancel"))));
+    sheet.addEventListener("keydown", (ev) => {
+      const items = [...list.querySelectorAll("li[role=option]")], i = items.indexOf(document.activeElement);
+      if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); end(); }
+      else if ((ev.key === "ArrowDown" || ev.key === "ArrowUp") && (i >= 0 || document.activeElement === search) && items.length) {
+        ev.preventDefault(); const n = i < 0 ? (ev.key === "ArrowDown" ? 0 : items.length - 1) : i + (ev.key === "ArrowDown" ? 1 : -1);
+        if (n < 0) search.focus(); else items[Math.min(n, items.length - 1)].focus();
+      } else if ((ev.key === "Enter" || ev.key === " ") && i >= 0) { ev.preventDefault(); items[i].click(); const again = list.querySelector("[aria-selected=true]"); if (again) again.focus(); }
+    });
+    modalEl = h("div", { class: "modal", role: "dialog", "aria-modal": "true", "aria-label": t("zone.title") }, sheet);
+    document.body.append(modalEl); draw(); drawPrev();
+    const cur = list.querySelector("[aria-selected=true]"); if (cur) cur.scrollIntoView({ block: "center" });
+    search.focus();
+  }
   function choiceMenu(label, options, value, onPick) {
     const cur = () => options.find((o) => o.value === value) || options[0] || { text: "" };
     const txt = h("span", {}, cur().text);

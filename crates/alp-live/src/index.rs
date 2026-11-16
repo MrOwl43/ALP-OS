@@ -35,6 +35,32 @@ pub const MNT: &str = "/var/lib/alp-index";
 const MAPPER: &str = "alp-index";
 /// systemd-repart definition that adds the index partition (image tree).
 pub const REPART_DIR: &str = "/usr/lib/alp/repart-index.d";
+/// The same with two empty root slots for updates in place before the
+/// index (ADR 0026): used on a stick with room for them.
+pub const REPART_UPDATE_DIR: &str = "/usr/lib/alp/repart-update.d";
+/// The smallest stick that gets update slots: what is sold as "32 GB". The
+/// slots take 12.2 GiB; a smaller stick keeps all its room for the index
+/// and is updated by writing it again.
+pub const UPDATE_STICK_MIN: u64 = 28 << 30;
+
+/// The repart definitions for a first start on a stick of `bytes`.
+pub fn repart_dir(bytes: Option<u64>) -> &'static str {
+    if bytes.is_some_and(|b| b >= UPDATE_STICK_MIN) {
+        REPART_UPDATE_DIR
+    } else {
+        REPART_DIR
+    }
+}
+
+/// The size of the whole disk `disk` (kernel name), from sysfs.
+fn disk_bytes(disk: &str) -> Option<u64> {
+    let sectors: u64 = fs::read_to_string(format!("/sys/block/{disk}/size"))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    sectors.checked_mul(512)
+}
 /// GPT type of the index partition (ALP-OS's own, see the repart file).
 pub const TYPE_UUID: &str = "A3E1C6B2-5B7E-4F0A-9C1D-6B2F0E8A4D11";
 pub const LABEL: &str = "alp-index";
@@ -758,10 +784,10 @@ pub fn lock_state() -> &'static str {
 }
 
 /// A stick partition: kernel name, PARTUUID, type UUID.
-type StickPart = (String, String, String);
+pub(crate) type StickPart = (String, String, String);
 
 /// The stick (system disk) and its partitions.
-fn stick() -> Result<(String, Vec<StickPart>), String> {
+pub(crate) fn stick() -> Result<(String, Vec<StickPart>), String> {
     let r = inspect::inspect(&inspect::Roots::system());
     let d = r
         .disks
@@ -939,7 +965,7 @@ fn new_partition(say: &mut dyn FnMut(&str)) -> Result<(String, String), Fail> {
                 &[
                     "--dry-run=no",
                     "--no-pager",
-                    &format!("--definitions={REPART_DIR}"),
+                    &format!("--definitions={}", repart_dir(disk_bytes(&disk))),
                     &format!("/dev/{disk}"),
                 ],
             )
@@ -1226,6 +1252,15 @@ pub fn cli(args: &[&str]) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_a_stick_with_room_gets_update_slots() {
+        assert_eq!(repart_dir(None), REPART_DIR);
+        assert_eq!(repart_dir(Some(16 << 30)), REPART_DIR);
+        assert_eq!(repart_dir(Some((28 << 30) - 1)), REPART_DIR);
+        assert_eq!(repart_dir(Some(28 << 30)), REPART_UPDATE_DIR);
+        assert_eq!(repart_dir(Some(128 << 30)), REPART_UPDATE_DIR);
+    }
+
     #[test]
     fn a_pending_wipe_is_found_by_partuuid_and_type_only() {
         let parts = vec![

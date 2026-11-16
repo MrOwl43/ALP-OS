@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Updates in place (ADR 0026): the dm-verity hash partition that belongs to
+# the root in 10-root.transfer (UUID: the second half of the root hash).
+[Transfer]
+Verify=yes
+ProtectVersion=%A
+
+[Source]
+Type=url-file
+Path=https://github.com/MrOwl43/ALP-OS/releases/download/updates/
+MatchPattern=alp-os_@v_@u.verity.raw.xz
+
+[Target]
+Type=partition
+Path=auto
+MatchPattern=alp-verity-@v
+MatchPartitionType=root-verity
+ReadOnly=1
+InstancesMax=2

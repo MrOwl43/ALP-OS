@@ -52,9 +52,11 @@ qa_http_probe() { # tag, method, path, origin, body
     [[ -z $origin ]] || hdr="Origin: $origin"
     a=$(printf '%s %s HTTP/1.0\r\nHost: 127.0.0.1:8411\r\n%s\r\n' "$method" "$path" "$hdr" | base64 -w0)
     b=$(printf 'Content-Type: application/json\r\nContent-Length: %s\r\n\r\n%s' "${#body}" "$body" | base64 -w0)
+    # While the answer is printed, only kernel warnings and errors go to the console (dmesg -n 4, put back
+    # after): an audit line in the middle of a long JSON answer broke T-IMMICH-01 once (2026-11-15).
     # The session cookie (alp_console, set by password/setup, unlock, console/signin) is kept in
     # /run/qa-cookie for the following requests of the same boot, like a browser's cookie jar.
-    printf '%s' "-/bin/bash -c 'exec 3<>/dev/tcp/127.0.0.1/8411 || { echo ${tag}-NO-CONNECT; exit 0; }; { echo ${a} | base64 -d; [ -s /run/qa-cookie ] && printf \"Cookie: %s\\r\\n\" \"\$(cat /run/qa-cookie)\"; echo ${b} | base64 -d; } >&3; echo ${tag}-BEGIN; timeout ${QA_HTTP_TIMEOUT:-10} cat <&3 | tr -d \"\\r\" | tee /run/qa-resp | head -c ${QA_HTTP_MAX:-65536}; echo; grep -i \"^set-cookie: alp_console=\" /run/qa-resp | head -1 | sed \"s/^[^:]*: *//; s/;.*//\" > /run/qa-cookie.new; [ -s /run/qa-cookie.new ] && mv /run/qa-cookie.new /run/qa-cookie; echo ${tag}-END'"
+    printf '%s' "-/bin/bash -c 'exec 3<>/dev/tcp/127.0.0.1/8411 || { echo ${tag}-NO-CONNECT; exit 0; }; cut -f1 /proc/sys/kernel/printk > /run/qa-printk; dmesg -n 4; { echo ${a} | base64 -d; [ -s /run/qa-cookie ] && printf \"Cookie: %s\\r\\n\" \"\$(cat /run/qa-cookie)\"; echo ${b} | base64 -d; } >&3; echo ${tag}-BEGIN; timeout ${QA_HTTP_TIMEOUT:-10} cat <&3 | tr -d \"\\r\" | tee /run/qa-resp | head -c ${QA_HTTP_MAX:-65536}; echo; grep -i \"^set-cookie: alp_console=\" /run/qa-resp | head -1 | sed \"s/^[^:]*: *//; s/;.*//\" > /run/qa-cookie.new; [ -s /run/qa-cookie.new ] && mv /run/qa-cookie.new /run/qa-cookie; echo ${tag}-END; dmesg -n \"\$(cat /run/qa-printk)\"'"
 }
 
 # Make a sparse 24 GiB GPT disk with one big ext4 partition (stands in for the

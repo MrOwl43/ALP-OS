@@ -213,6 +213,8 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; justif
 .rem { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .7rem 1rem; border: 1px solid var(--line); border-radius: .9rem; }
 .rem b { display: block; } .rem span.d { color: var(--ink2); font-size: .88rem; }
 .rem button { flex: none; padding: .4rem 1.2rem; min-block-size: 2.4rem; }
+.rem.restore-ask { flex-direction: column; align-items: stretch; }
+.restore-ask-btns { display: flex; flex-wrap: wrap; gap: .6rem; }
 .disks { display: grid; gap: .5rem; text-align: start; margin-block-start: 1rem; }
 .diskrow { display: flex; align-items: center; gap: .9rem; padding: .8rem 1rem; border: 1px solid var(--line); border-radius: .9rem; }
 .diskrow .main { flex: 1; min-inline-size: 0; } .diskrow .t { font-weight: 600; display: block; } .diskrow .s { color: var(--ink2); font-size: .9rem; display: block; }
@@ -288,6 +290,7 @@ button .bi, a.btn .bi { pointer-events: none; }
 .tbtn.st-ok { color: var(--ok); } .tbtn.st-warn, .tstat.st-warn { color: var(--warn); } .tbtn.st-bad, .tstat.st-bad { color: var(--bad); }
 .tstat { display: inline-flex; align-items: center; gap: .3rem; color: var(--ink2); font-size: .85rem; padding-inline: .45rem; white-space: nowrap; }
 .tstat svg { inline-size: 1.35rem; block-size: 1.35rem; }
+.tstat.clock { font-variant-numeric: tabular-nums; color: var(--ink); } .tstat.clock.unsure { color: var(--ink2); font-style: italic; }
 .tstat.ip { font-family: "DejaVu Sans Mono", monospace; font-weight: 600; color: var(--ink); background: var(--accent-soft); border-radius: .6rem; padding: .25rem .6rem; }
 .steps { display: flex; justify-content: center; margin-block-start: .3rem; font-size: .85rem; }
 .stepper { display: flex; justify-content: center; list-style: none; margin: 0; padding: 0; }
@@ -445,6 +448,9 @@ body[data-kind=full] .card > .hero, body[data-kind=full] .card .actions { margin
 body[data-view=home] .card { text-align: center; } body[data-view=home] .card .actions, body[data-view=home] .menu { align-items: center; justify-content: center; }
 body[data-kind=full] .sub { margin-inline: 0; }
 body[data-view=home] .sub { margin-inline: auto; }
+/* Photos without a gallery to show (not ready, starting, off): one centred message, like the home screen. */
+body[data-kind=full] .card.galempty .sub { margin-inline: auto; }
+body[data-kind=full] .card.galempty .actions, body[data-kind=full] .card.galempty .hero { align-items: center; margin-inline: auto; }
 
 /* settings: sidebar 260px + content */
 .settings { display: grid; grid-template-columns: 260px 1fr; gap: 32px; align-items: start; margin: calc(-1 * var(--gut)); min-block-size: calc(calc(100 * var(--vh)) - var(--bar)); }
@@ -694,3 +700,35 @@ body[data-view=home] .lv .lv-ico, body[data-view=home] .tbtn.lvb .lv-action .lv-
 .fmtcol { max-inline-size: 720px; margin-inline: auto; text-align: start; } .fmtcol .hero { margin-inline: 0; } .fmtcol .fmt-rescue { justify-content: flex-start; }
 .fmtcol .field { margin-inline: 0; } .fmtcol .actions { justify-content: flex-start; }
 .homelv { margin-block-end: 12px; } .homelv .lv { gap: 8px; }
+
+/* Connection check lines under "My phone cannot connect" (0.2.6). */
+.connlines { list-style: none; margin: .7rem 0 0; padding: 0; display: grid; gap: .35rem; font-size: .92em; }
+.connlines li { display: flex; gap: .5rem; align-items: flex-start; }
+.connlines .ico { flex: none; inline-size: 1.15rem; block-size: 1.15rem; margin-block-start: .1rem; }
+.connlines li.ok .ico { color: var(--ok, #1a7f4b); }
+.connlines li.bad .ico.bang { color: var(--bad, #b3261e); font-weight: 700; text-align: center; line-height: 1.15rem; }
+
+/* Time & Language (0.2.61). */
+.sq-teal { background: #0f9d94; }
+.checks li.clockrow .choicemenu { margin-inline-start: auto; }
+
+/* 0.2.61: the time zone window (search, list, preview, confirm) and the lock screen's note on what is hidden. */
+.sheet.zonesheet { inline-size: min(46rem, calc(94 * var(--vw))); max-block-size: calc(90 * var(--vh)); display: flex; flex-direction: column; }
+.zonecols { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 1rem; min-block-size: 0; flex: 1; }
+.zonepick { display: flex; flex-direction: column; gap: .5rem; min-block-size: 0; }
+.zonepick input { inline-size: 100%; font: inherit; padding: .55rem .8rem; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink); }
+.zonepick input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.zonelist { list-style: none; margin: 0; padding: 4px; overflow: auto; block-size: min(20rem, calc(46 * var(--vh))); border: 1px solid var(--line); border-radius: 10px; }
+.zonelist li { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; cursor: pointer; min-block-size: 34px; }
+.zonelist li:hover, .zonelist li:focus { background: var(--accent-soft); outline: none; } .zonelist li:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.zonelist li[aria-selected=true] { background: var(--accent-soft); font-weight: 600; }
+.zonelist li .hint, .zp-head .hint { color: var(--ink2); font-size: 13px; font-weight: 400; } .zonelist li .ico { inline-size: 16px; block-size: 16px; margin-inline-start: auto; color: var(--accent); }
+.zonelist li.none { cursor: default; color: var(--ink2); }
+.zoneprev { border: 1px solid var(--line); border-radius: 10px; padding: .8rem 1rem; align-self: start; }
+.zp-head { display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; } .zp-time { font-size: 1.5rem; font-weight: 600; margin-block: .5rem .2rem; }
+.zp-q { margin: .7rem 0 .4rem; font-weight: 600; } .zoneprev .choice { margin-block: .35rem; }
+.zonebtn { display: inline-flex; align-items: center; gap: .4rem; } .zonebtn .ico { inline-size: 14px; block-size: 14px; }
+.checks li.clockrow .zonebtn { margin-inline-start: auto; }
+@media (max-width: 700px) { .zonecols { grid-template-columns: 1fr; } .zonelist { block-size: 11rem; } }
+.lk-note { margin: .2rem 0 0; font-size: .9rem; color: var(--ink2); }
+.lk-hidden { display: inline-flex; align-items: center; gap: .35rem; font-weight: 500; opacity: .85; } .lk-hidden .ico { inline-size: 14px; block-size: 14px; }

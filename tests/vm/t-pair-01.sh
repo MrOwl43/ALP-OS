@@ -48,6 +48,12 @@ printf 'alparchive-ca-endorsement-v1\n%s\n%s\n' "$id" "$ca" >msg
 pad=$(( (8 - ${#id} % 8) % 8 )); eq=$(printf '%*s' $pad '' | tr ' ' '=')
 { printf '\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00'; printf '%s%s' "$id" "$eq" | base32 -d; } >kid.der
 openssl pkeyutl -verify -pubin -keyform DER -inkey kid.der -rawin -in msg -sigfile sig >/dev/null 2>&1 && ok "CA endorsement verifies with K_id" || bad "CA endorsement does not verify"
+# Endorsement v2 (T62): the same, with the CA's sequence number signed too.
+seq=$(sed -n 's/.*"seq": *\([0-9][0-9]*\).*/\1/p' <<<"$idj")
+sed -n 's/.*"endorsement2": *"\([^"]*\)".*/\1/p' <<<"$idj" | base64 -d >sig2
+printf 'alparchive-ca-endorsement-v2\n%s\n%s\n%s\n' "$id" "$ca" "$seq" >msg2
+[[ $seq == 1 ]] && openssl pkeyutl -verify -pubin -keyform DER -inkey kid.der -rawin -in msg2 -sigfile sig2 >/dev/null 2>&1 \
+    && ok "CA endorsement v2 verifies with K_id (seq 1)" || bad "CA endorsement v2 does not verify (seq '$seq')"
 sed -n 's/.*"ca_cert": *"\([^"]*\)".*/\1/p' <<<"$idj" | sed 's/\\n/\n/g' >ca.pem
 got=$(openssl x509 -in ca.pem -noout -pubkey | openssl pkey -pubin -outform DER | sha256sum | cut -d' ' -f1)
 [ "$got" = "$ca" ] && ok "CA certificate matches the endorsed hash" || bad "CA hash differs"
@@ -73,6 +79,10 @@ sed -n 's/.*"certificate": *"\([^"]*\)".*/\1/p' <<<"$s" | sed 's/\\n/\n/g' >phon
 openssl verify -CAfile ca.pem phone.crt >/dev/null 2>&1 && ok "device certificate chains to the endorsed CA" || bad "device certificate does not chain"
 openssl x509 -in phone.crt -noout -ext extendedKeyUsage 2>/dev/null | grep -q "Client Authentication" && ok "device certificate is for client authentication" || bad "no clientAuth"
 [ "$(openssl x509 -in phone.crt -noout -pubkey)" = "$(openssl pkey -in phone.key -pubout)" ] && ok "certificate is for the phone's own key" || bad "certificate key differs"
+# The device certificate starts a day back, like the server's (a computer
+# clock that runs ahead must not make it "not valid yet" on the phone).
+nb=$(date -u -d "$(openssl x509 -in phone.crt -noout -startdate | cut -d= -f2)" +%s 2>/dev/null || echo 0)
+[ "$nb" -gt 0 ] && [ $(( $(date -u +%s) - nb )) -ge 82800 ] && ok "device certificate starts a day back" || bad "device certificate starts now ($nb)"
 grep -qx "$serial 1;" /run/alp/devices-map.conf && ok "device is on the nginx allowlist" || bad "device not on the allowlist"
 grep -q "\"serial\":\"$serial\"" /var/lib/alp-index/alp/tls/devices.jsonl && ok "device is in the signed register" || bad "device not in the register"
 # Rejected on the console.

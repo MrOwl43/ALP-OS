@@ -50,14 +50,15 @@
     return {
       sys: { battery: bat && typeof bat.percent === "number" ? { percent: Math.round(bat.percent), charging: !!bat.charging } : null, release: sy.release || null, build: sy.build || null },
       power: { state: pw.state || "on", job: pw.job || null },
+      update: w.update || null,   // feature update (ADR 0026): { supported, current, checked, newer: { version, state }, error, job }
       hw: { canRun: hw.verdict !== "fail", verdict: hw.verdict, machine: hw.machine, reportSaved: !!hw.report_file, pending: !!hw.pending, checks: hw.checks || [], specs: hw.specs || null },
       net: { online: !!nw.online, address: nw.address, wifiPresent: !!nw.wifi_present, kind: wired ? "wired" : wifi ? "wifi" : null,
         ssid: wifi && wifi.ssid, signal: wifi && wifi.signal, waiting: ports.some((p) => p.state === "waiting"), job: nw.job, addresses: addrs },
       lock: { state: (w.lock || {}).state, wait: (w.lock || {}).retry_after_seconds || 0, tpm: (w.lock || {}).tpm || "none", protection: (w.lock || {}).protection || null },
-      console: { state: (w.console || {}).state || "open", idle: (w.console || {}).idle_lock_seconds || 300 },
+      console: { state: (w.console || {}).state || "open", idle: (w.console || {}).idle_lock_seconds || 300, hidden: Array.isArray((w.console || {}).hidden) ? w.console.hidden : [] },
       index: { size: (w.index || {}).size_bytes || 0, free: (w.index || {}).free_bytes || 0, space: (w.index || {}).space || "ok" },
       arch: { state: ar.state, space: ar.space || "ok", health: ar.health || null, recovery: ar.recovery || "none", passwordReopen: ar.password_reopen !== false, serious: !!ar.serious, job: ar.job, place: ar.place, size: ar.size_bytes || 0, free: ar.free_bytes || 0, error: ar.error },
-      immich: { state: im.state, detail: im.detail || null, consoleUrl: im.console_url || null, galleryUrl: im.gallery_url || null, error: im.error || null, startingFor: im.seconds_starting == null ? null : im.seconds_starting },
+      immich: { state: im.state, restoreAsk: !!im.restore_ask, detail: im.detail || null, consoleUrl: im.console_url || null, galleryUrl: im.gallery_url || null, error: im.error || null, startingFor: im.seconds_starting == null ? null : im.seconds_starting },
       pairing: { window: (w.pairing || {}).window_seconds || null, pending: (w.pairing || {}).pending || [], devices: ((w.pairing || {}).devices || []).filter((d) => !d.revoked), strict: !!(w.pairing || {}).strict },
       phone: { url: ph.server_url, account: ph.account, paired: !!ph.paired, phones: ph.phones || 0, photos: ph.photos || 0, last: ph.last_upload, devices: ph.devices || [], now: ph.connected_now || [] },
       chain: { state: ch.state, role: ch.role, id: ch.chain_id },
@@ -71,7 +72,9 @@
       media: Array.isArray(w.media) ? w.media : [],
       importJob: w.import_job || null,
       terminal: w.terminal || null,
-      prefs: { naturalScrolling: (w.prefs || {}).natural_scrolling, uiScale: (w.prefs || {}).ui_scale, homeBackground: (w.prefs || {}).home_background || "blue" },
+      prefs: { naturalScrolling: (w.prefs || {}).natural_scrolling, uiScale: (w.prefs || {}).ui_scale, homeBackground: (w.prefs || {}).home_background || "blue", timeZone: (w.prefs || {}).time_zone || null, lockHide: Array.isArray((w.prefs || {}).lock_hide) ? w.prefs.lock_hide : [] },
+      // Feature clock: the computer's time (seconds since 1970, UTC) and whether the network set it.
+      clock: w.clock && typeof w.clock.now === "number" ? { now: w.clock.now, synced: !!w.clock.synced, syncedAt: w.clock.synced_at || null, base: w.clock.base || null } : null,
       // T56: the screen's size and modes when alpd knows them (feature display_modes); width_mm from the screen's EDID.
       display: w.display || null,
       // T54 (feature status_levels): the worst alert and the list; level ok|note|action|now|critical.
@@ -98,6 +101,7 @@
     removeDevice: (id) => raw("POST", "live/phone/devices/remove", { id }),
     // ADR 0017: pairing a phone with the QR and an approval on this screen.
     pairOpen: () => raw("POST", "live/pair/open", {}),
+    phoneConnection: () => raw("GET", "live/phone/connection"),   // feature connection_check
     pairClose: () => raw("POST", "live/pair/close", {}),
     pairApprove: (id) => raw("POST", "live/pair/approve", { id }),
     pairReject: (id) => raw("POST", "live/pair/reject", { id }),
@@ -123,6 +127,11 @@
     passwordChange: (password, new_password) => raw("POST", "live/password/change", { password, new_password }),
     reportSave: () => raw("POST", "live/report/save", {}),
     setPrefs: (p) => raw("POST", "live/prefs", p),
+    galleryRestore: (restore) => raw("POST", "live/gallery/restore", { restore: !!restore }),   // feature restore_ask: the answer when state.immich.restore_ask
+    updateCheck: () => raw("POST", "live/update/check", {}),   // feature update: 202 { job }; the result is state.update
+    updateApply: () => raw("POST", "live/update/apply", {}),   // downloads and writes the version the last check found
+    clockSync: () => raw("POST", "live/clock/sync", {}),   // feature clock_sync: asks a time server again; the answer shows as a new clock.syncedAt
+    clockBase: (local) => raw("POST", "live/clock/base", { local: !!local }),   // feature clock_base: the hardware clock holds local time (true) or UTC (false)
     displayModes: async () => (await raw("GET", "live/display/modes")).modes || [],
     displayMode: (id) => raw("POST", "live/display/mode", { id }),   // reverts by itself after 15 s unless kept
     displayKeep: () => raw("POST", "live/display/mode/keep", {}),
@@ -179,6 +188,6 @@
     chainLeave: () => raw("POST", "live/chain/leave", {}),
     cancelArchive: () => raw("POST", "live/archive/cancel", {}),
     reset: (password) => raw("POST", "live/reset", { password }),     // 202 { job } (job "reset"); an older alpd answers 200
-    powerOff: () => raw("POST", "live/power/off", {}),   // 202 { job } (power.off); an older alpd answers {}
+    powerOff: (restart) => raw("POST", "live/power/off", restart === true ? { restart: true } : {}),   // 202 { job } (power.off); an older alpd answers {}
   };
 })();

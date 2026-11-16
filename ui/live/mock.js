@@ -12,7 +12,7 @@
   if (p.get("shot")) document.write('<img src="/__slow" alt="" hidden>');   // QA only: delays the load event so a headless screenshot waits for the screen
   const sl = (ms) => new Promise((r) => setTimeout(r, fast ? 30 : ms));
   const GB = 1e9;
-  const ALL_FEATURES = ["setup_progress", "recovery_commit", "password_change", "events", "gallery_session", "media_import", "natural_scrolling", "media_files", "terminal", "disks", "disk_check", "disk_eject", "status_levels", "prefs", "display_modes", "idle_lock_pref"];
+  const ALL_FEATURES = ["setup_progress", "recovery_commit", "password_change", "events", "gallery_session", "media_import", "natural_scrolling", "media_files", "terminal", "disks", "disk_check", "disk_eject", "status_levels", "prefs", "restore_ask", "display_modes", "idle_lock_pref", "clock", "connection_check", "clock_sync", "clock_base", "lock_hide", "update"];
   const FEATURES = p.get("features") === "none" ? [] : p.get("features") ? p.get("features").split(",") : ALL_FEATURES;
   let failOnce = p.get("fail");
   const E = (key, message, status, extra) => new ApiError(key, message, null, status || 400, extra);
@@ -31,7 +31,7 @@
         graphics: [{ vendor: "Intel", pci_id: "8086:46a3" }],
         network: [{ name: "wlan0", kind: "wifi", driver: "iwlwifi", usb: false, working: true }, { name: "enx00e04c680001", kind: "wired", driver: "r8152", usb: true, working: true }],
         tpm: "2.0", uefi: true, secure_boot: false, battery: { model: "L20M4PC1", health_percent: 91 } } },
-    system: { release: "ALP-OS Live alpha 0.2.5", build: "0650152a1b2c 2026-10-30", battery: p.get("battery") === "none" ? null : p.get("battery") === "low" ? { percent: 12, charging: false } : { percent: 76, charging: p.get("battery") === "charging" } },
+    system: { release: "ALP-OS Live alpha 0.2.61", build: "0650152a1b2c 2026-10-30", battery: p.get("battery") === "none" ? null : p.get("battery") === "low" ? { percent: 12, charging: false } : { percent: 76, charging: p.get("battery") === "charging" } },
     power: { state: "on", job: null },
     lock: { state: "open", retry_after_seconds: 0, tpm: "on", protection: p.get("protection") || "password" },
     console: { state: "open", idle_lock_seconds: p.get("idle") ? +p.get("idle") : 300 },
@@ -41,7 +41,7 @@
     immich: { state: "off", error: null, detail: null, seconds_starting: null, console_url: null },
     phone: { server_url: null, account: null, paired: false, phones: 0, photos: 0, last_upload: null, devices: [] },
     chain: { state: "none", chain_id: null, role: null, since: null },
-    features: FEATURES, setup: { complete: false, skipped: [] }, events: [], media: [], import_job: null, prefs: { natural_scrolling: true, ui_scale: null, home_background: "blue" }, display: { width_mm: 309, height_mm: 174, auto_scale: 1.25 }, alerts: [], status: null,
+    features: FEATURES, setup: { complete: false, skipped: [] }, update: { supported: p.get("update") !== "old", current: "0.2.7", checked: false, newer: null, error: null, job: null }, events: [], media: [], import_job: null, prefs: { natural_scrolling: true, ui_scale: null, home_background: "blue", time_zone: null, lock_hide: (new URLSearchParams(location.search).get("hide") || "").split(",").filter(Boolean) }, clock: { now: 1794650400, synced: !new URLSearchParams(location.search).has("noclock"), synced_at: new URLSearchParams(location.search).has("noclock") ? null : 1794650000, base: null }, display: { width_mm: 309, height_mm: 174, auto_scale: 1.25 }, alerts: [], status: null,
   });
   const W = base();
   const online = (kind) => { W.network.online = true; W.network.address = "192.168.1.23";
@@ -52,7 +52,7 @@
   const open = () => { Object.assign(W.archive, { state: "open", place: { partuuid: "p1", name: "sdb1", label: "Backup disk" }, size_bytes: 100 * GB, free_bytes: 90 * GB }); ready(); };
   // The photo service starting, with the plain sentences alpd gives (immich.detail, 2026-10-26).
   let immStart = 0;
-  const startImmich = () => { immStart = Date.now(); Object.assign(W.immich, { state: "starting", console_url: null }); };
+  const startImmich = () => { immStart = Date.now(); Object.assign(W.immich, { state: "starting", console_url: null, restore_ask: p.get("restore") === "ask" && FEATURES.includes("restore_ask") }); };
   const IMM_DETAIL = ["Unpacking the photo service for the first time (about 2.5 GB): part 1 of 3, 0.4 GB of 2.5 GB…", "Unpacking the photo service for the first time (about 2.5 GB): part 2 of 3, 1.1 GB of 2.5 GB…",
     "Unpacking the photo service for the first time (about 2.5 GB): part 3 of 3, 2.1 GB of 2.5 GB…", "Starting the photo service…", "Still starting: the first start sets up the photo database. This can take a few minutes more."];
   let offStart = 0;   // power/off: the job's steps, then alpd stops answering
@@ -85,7 +85,7 @@
   if (W.lock.state !== "setup" && !W.lock.protection) W.lock.protection = "password";
   if (p.get("protection")) W.lock.protection = p.get("protection");   // &protection=none|console|password|strong
   const lvp = p.get("level");   // &level=note|action|now|critical: T54 status from the server
-  if (lvp && FEATURES.includes("status_levels")) { W.status = { level: lvp, key: "mock." + lvp, message: "Mock status: " + lvp, code: "ALP-MOCK-1" }; W.alerts = [Object.assign({}, W.status)]; }
+  if (lvp && FEATURES.includes("status_levels")) { W.status = { level: lvp, key: "mock." + lvp, message: "Mock status: " + lvp, code: "ALP-STO-110" }; W.alerts = [Object.assign({}, W.status)]; }
   if (preset === "lock-warn" || preset === "home-warn") { W.archive.free_bytes = 6 * GB; W.archive.space = "low"; W.archive.health = "warn";
     if (!lvp) { W.status = { level: "action", key: "space.low", message: "The backup disk is getting full.", code: "ALP-STO-110" }; W.alerts = [Object.assign({}, W.status)]; } }
   if (preset === "home-full") { W.archive.free_bytes = 0; W.archive.space = "full"; W.archive.health = "warn"; W.immich.state = "paused"; }
@@ -134,7 +134,9 @@
       W.import_job = { id: "import", state: pc >= 100 ? "done" : "running", percent: pc, message: "Importing " + Math.round(pc * 13) + " of 1,276…", photos: 1240, videos: 36, skipped: 112, error: null };
       if (pc >= 100) { impAt = 0; W.phone.photos += 1276; }
     }
-    if (W.immich.state === "starting" && immStart) {
+    if (W.immich.state === "starting" && W.immich.restore_ask) {   // ?restore=ask: waits for the person's answer (feature restore_ask)
+      W.immich.restoring = true; W.immich.detail = "This backup disk holds a gallery from before. Choose whether to bring it back.";
+    } else if (W.immich.state === "starting" && immStart) {
       const sec = (Date.now() - immStart) / 1000, dur = fast ? 2 : p.get("immich") === "slow" || preset === "home-starting" ? 60 : 12;
       W.immich.seconds_starting = Math.round(sec);
       W.immich.detail = IMM_DETAIL[Math.min(IMM_DETAIL.length - 1, Math.floor((sec / dur) * IMM_DETAIL.length))];
@@ -185,7 +187,15 @@
       switch (method + " " + path) {
         case "GET live/state":
           if (offStart && Date.now() - offStart > (fast ? 900 : 9000)) throw new ApiError("api.unreachable", "", null, 0);
-          return JSON.parse(JSON.stringify(W));
+          { const v = JSON.parse(JSON.stringify(W));
+            if (v.console.state === "locked") {   // like alpd's locked view: what the person hides is not sent at all
+              const hd = v.prefs.lock_hide || []; v.console.hidden = hd;
+              if (hd.includes("phones")) { v.phone.devices = []; v.phone.phones = 0; }
+              if (hd.includes("network")) ((v.network || {}).ports || []).forEach((x) => { x.ssid = null; });
+              if (hd.includes("space")) { v.archive.free_bytes = null; v.archive.size_bytes = null; }
+              if (hd.includes("backup")) { v.phone.photos = 0; v.phone.last_upload = null; }
+            }
+            return v; }
         case "GET live/wifi/networks": await sl(900); return { networks: [
           { ssid: "Home-Fiber-5G", security: "psk", signal: 4, connected: false }, { ssid: "Neighbor-2.4G", security: "psk", signal: 3, connected: false },
           { ssid: "Neighbour_2.4", security: "psk", signal: 2, connected: false }, { ssid: "Cafe Guest", security: "open", signal: 1, connected: false },
@@ -286,11 +296,40 @@
           if ("natural_scrolling" in body) W.prefs.natural_scrolling = !!body.natural_scrolling;
           if ("ui_scale" in body) W.prefs.ui_scale = body.ui_scale;
           if ("idle_lock_seconds" in body) W.console.idle_lock_seconds = body.idle_lock_seconds;
+          if ("time_zone" in body) W.prefs.time_zone = body.time_zone;
+          if ("lock_hide" in body) W.prefs.lock_hide = body.lock_hide;
           return { prefs: W.prefs };
+        case "POST live/gallery/restore":   // feature restore_ask: the answer to "bring the gallery back?"
+          if (!W.immich.restore_ask) throw E("restore.not_asked", "There is no gallery waiting to be brought back.", 409);
+          W.immich.restore_ask = false; W.immich.restoring = !!body.restore; immStart = Date.now();
+          return {};
+        case "POST live/update/check":   // ?update=none|old|offline: nothing newer, a stick without room, no network
+          W.update.job = { id: "update.check", state: "running", message: "Looking for a new version…", percent: null }; W.update.error = null;
+          setTimeout(() => { W.update.job.state = "done"; W.update.checked = true;
+            if (p.get("update") === "offline") { W.update.job.state = "failed"; W.update.error = { key: "update.offline", message: "The update server could not be reached. Check the internet connection and try again." }; }
+            else W.update.newer = p.get("update") === "none" ? null : { version: "0.2.8", state: "available" }; }, fast ? 60 : 1200);
+          return { job: W.update.job };
+        case "POST live/update/apply":
+          if (!W.update.newer || W.update.newer.state !== "available") throw E("update.none", "There is no new version to install. Look for updates first.", 409);
+          W.update.job = { id: "update.apply", state: "running", message: "Downloading version 0.2.8…", percent: 0 };
+          { const tick = setInterval(() => { W.update.job.percent += 10; if (W.update.job.percent >= 100) { clearInterval(tick); W.update.job.state = "done"; W.update.newer.state = "installed"; } }, fast ? 30 : 500); }
+          return { job: W.update.job };
+        case "POST live/clock/sync": await sl(300);
+          if (p.get("sync") !== "fail") setTimeout(() => { W.clock.synced = true; W.clock.synced_at = (W.clock.synced_at || W.clock.now) + 60; W.clock.base = null; }, fast ? 60 : 1500);
+          return { clock: W.clock };
+        case "POST live/clock/base":
+          if (W.clock.synced) throw E("clock.synced", "The clock is already set from the internet.", 409);
+          if (body.local && !W.prefs.time_zone) throw E("clock.no_zone", "Choose a time zone first.", 409);
+          W.clock.base = body.local ? "local" : "utc"; (window.__clockBase = window.__clockBase || []).push(!!body.local);
+          return { clock: W.clock, prefs: W.prefs };
         case "GET live/display/modes": await sl(200); return { modes: MODES };
         case "POST live/display/mode": MODES.forEach((m) => (m.current = m.id === body.id)); return { revert_in: 15 };
         case "POST live/display/mode/keep": return {};
         case "POST live/display/mode/revert": return {};
+        case "GET live/phone/connection": await sl(400); return { addresses: ["192.168.1.50"], ports: [], index_open: true, only_paired_phones: false, nginx_active: true,
+          certificate: { sha256: "AA", names: [] }, ca_sha256: "BB", refused_requests: [],
+          served: [{ address: "192.168.1.50", answers: true, sha256: "AA", names: [], same_as_file: true, names_address: true, ok: p.get("conn") !== "bad" }],
+          clock: { now: Math.floor(Date.now() / 1000), synced: p.get("clock") !== "unsure" } };
         case "GET live/disks": await sl(300); return { disks: mockDisks() };
         case "POST live/disks/eject": await sl(300); ejected.add(body.disk_id); return {};
         case "POST live/disks/check": await sl(200); W.archive.job = { id: "disk.check", state: "done", percent: 100, message: "No errors found on this disk." }; return { job: W.archive.job };

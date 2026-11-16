@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Updates in place (ADR 0026): the read-only root of a new version, written
+# by systemd-sysupdate into a free root slot of the stick (label _empty), or
+# over the oldest one that is not running. The slot gets the label
+# alp-root-<version> and the partition UUID from the file name: the UKI finds
+# its root by that UUID (the first half of the dm-verity root hash).
+# The root the stick was written with (label root-x86-64) never matches and
+# is never rewritten: it stays as the last fallback.
+[Transfer]
+# SHA256SUMS must carry a good signature of the project's update key
+# (/usr/lib/systemd/import-pubring.gpg). No key in the image: no updates.
+Verify=yes
+# Never remove the version that runs now.
+ProtectVersion=%A
+
+[Source]
+Type=url-file
+Path=https://github.com/MrOwl43/ALP-OS/releases/download/updates/
+MatchPattern=alp-os_@v_@u.root.raw.xz
+
+[Target]
+Type=partition
+Path=auto
+MatchPattern=alp-root-@v
+MatchPartitionType=root
+ReadOnly=1
+InstancesMax=2

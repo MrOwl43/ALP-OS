@@ -145,19 +145,6 @@ pair02() { # base, immich token
         done
         return 1
     }
-    local san sip sfile sstale safter
-    san=$(mark SAN 180) || { echo "FAIL: T-PAIR-SAN: no result from the guest" >&2; return 1; }
-    sip=$(sed -n 's/.* ip=\([^ ]*\).*/\1/p' <<<"$san")
-    sfile=$(sed -n 's/.* file=\([^ ]*\).*/\1/p' <<<"$san")
-    sstale=$(sed -n 's/.* stale=\([^ ]*\).*/\1/p' <<<"$san")
-    safter=$(sed -n 's/.* after=\([^ ]*\).*/\1/p' <<<"$san")
-    [[ -n $sfile && -n $sstale && $sfile != "$sstale" ]] \
-        || { echo "FAIL: T-PAIR-SAN: could not make nginx serve an old certificate ($san)" >&2; return 1; }
-    [[ $safter == "$sfile" && $san == *"opened=1"* ]] \
-        || { echo "FAIL: T-PAIR-SAN: pair/open did not make nginx send the new certificate ($san)" >&2; return 1; }
-    [[ $san == *"IPAddress:$sip"* && $san == *'conn="ok":true'* ]] \
-        || { echo "FAIL: T-PAIR-SAN: the certificate sent does not name $sip, or phone/connection is not ok ($san)" >&2; return 1; }
-    echo "ok:   T-PAIR-SAN: a stale nginx certificate is replaced before the QR; it names $sip"
     uri=$(mark URI 120 | sed 's/.*PAIRAGENT URI //')
     ptok=$(sed -n 's/.*[?&]t=\([^&]*\).*/\1/p' <<<"$uri")
     [[ -n $ptok ]] || { echo "FAIL: T-PAIR-02: no pairing window: $(grep -a PAIRAGENT "$ALP_SERIAL_LOG" | tr -d '\r' | head -3)" >&2; return 1; }
@@ -202,6 +189,30 @@ pair02() { # base, immich token
     [[ $off == *"DONE {}"* ]] || { echo "FAIL: T-PAIR-02: turning strict mode off failed: ${off#*DONE }" >&2; return 1; }
     sleep 5
     echo "ok:   T-PAIR-02"
+    # T-PAIR-SAN runs last in the guest: it restarts nginx, which would cut
+    # the host's own requests short if they ran at the same time (CI run
+    # 42779698910: DELETE answered 000).
+    local san sip sfile sstale safter
+    san=$(mark SAN 240) || { echo "FAIL: T-PAIR-SAN: no result from the guest" >&2; return 1; }
+    sip=$(sed -n 's/.* ip=\([^ ]*\).*/\1/p' <<<"$san")
+    sfile=$(sed -n 's/.* file=\([^ ]*\).*/\1/p' <<<"$san")
+    sstale=$(sed -n 's/.* stale=\([^ ]*\).*/\1/p' <<<"$san")
+    safter=$(sed -n 's/.* after=\([^ ]*\).*/\1/p' <<<"$san")
+    [[ -n $sfile && -n $sstale && $sfile != "$sstale" ]] \
+        || { echo "FAIL: T-PAIR-SAN: could not make nginx serve an old certificate ($san)" >&2; return 1; }
+    [[ $safter == "$sfile" && $san == *"opened=1"* ]] \
+        || { echo "FAIL: T-PAIR-SAN: pair/open did not make nginx send the new certificate ($san)" >&2; return 1; }
+    [[ $san == *"IPAddress:$sip"* && $san == *'conn="ok":true'* ]] \
+        || { echo "FAIL: T-PAIR-SAN: the certificate sent does not name $sip, or phone/connection is not ok ($san)" >&2; return 1; }
+    echo "ok:   T-PAIR-SAN: a stale nginx certificate is replaced before the QR; it names $sip"
+    [[ $san == *" back=yes "* ]] \
+        || { echo "FAIL: T-PAIR-CLOCK: the CA or the certificate sent does not start a day back ($san)" >&2; return 1; }
+    echo "ok:   T-PAIR-CLOCK: the CA and the server certificate start a day before the computer's time"
+    local gal
+    gal=$(mark GAL 180) || { echo "FAIL: T-GAL-01: no result from the guest" >&2; return 1; }
+    [[ $gal == *"GAL gu=1 page=200 css=1 cssf=1 me=1 leak=0 anon=401 gate=401 del=403 out=403 locked=401 end"* ]] \
+        || { echo "FAIL: T-GAL-01: the console gallery on 8412 is not as expected (${gal#*PAIRAGENT })" >&2; return 1; }
+    echo "ok:   T-GAL-01: the gallery answers on 8412 only while the console is signed in; no delete, no key in the browser"
 }
 export -f pair02
 export -f hook
@@ -215,25 +226,6 @@ c() { curl -s -m 60 -b /run/pa-jar -c /run/pa-jar -H 'Origin: http://127.0.0.1:8
 say() { echo "PAIRAGENT \$*" >/dev/console; }
 sleep 30
 c -X POST \$A/console/signin -d '{"password":"$pw"}' >/dev/null
-# T-PAIR-SAN (0.2.5 field report): nginx kept sending an old certificate
-# without the computer's address. Make that happen (a new certificate file
-# that nginx was not told about), then pair/open must notice and fix it
-# before it gives a QR.
-tls=/var/lib/alp-index/alp/tls
-ip=\$(ip -4 -o addr show scope global | awk '{print \$4}' | cut -d/ -f1 | head -n 1)
-fp() { openssl x509 -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2; }
-leaf() { timeout 5 openssl s_client -connect "\$ip:443" -noservername </dev/null 2>/dev/null | sed -n '/BEGIN CERT/,/END CERT/p'; }
-# nginx runs only once Immich is up (its first start is slow).
-for i in \$(seq 450); do [ -n "\$(leaf)" ] && break; sleep 2; done
-rm -f \$tls/server.crt \$tls/server.key
-/usr/lib/alp/alp-live-tls "\$ip" >/dev/null
-file=\$(fp <\$tls/server.crt)
-stale=\$(leaf | fp)
-opened=\$(c -X POST \$A/pair/open -d '{}' | grep -c '"uri"')
-after=\$(leaf | fp)
-names=\$(leaf | openssl x509 -noout -ext subjectAltName 2>/dev/null | tr -d ' \n')
-conn=\$(c \$A/phone/connection | tr -d ' \n' | grep -o '"ok":[a-z]*' | head -n 1)
-say "SAN ip=\$ip file=\$file stale=\$stale after=\$after opened=\$opened conn=\$conn names=\$names"
 # A fresh window every 4 minutes until the phone (the host) comes: a
 # window lives 5 minutes, and the host reaches this after its photo checks.
 id=
@@ -252,6 +244,51 @@ sleep 30; c -X POST \$A/pair/strict -d '{"on":true}' >/dev/null; say STRICT
 sleep 40; c -X POST \$A/pair/revoke -d "{\"serial\":\"\$serial\"}" >/dev/null; say REVOKED
 sleep 25; c -X POST \$A/console/signin -d '{"password":"$pw"}' >/dev/null
 r=\$(c -X POST \$A/pair/strict -d '{"on":false}'); say "DONE \$r"
+# T-PAIR-SAN (0.2.5 field report): nginx kept sending an old certificate
+# without the computer's address. Make that happen (a new certificate file
+# that nginx was not told about), then pair/open must notice and fix it
+# before it gives a QR.
+tls=/var/lib/alp-index/alp/tls
+ip=\$(ip -4 -o addr show scope global | awk '{print \$4}' | cut -d/ -f1 | head -n 1)
+fp() { openssl x509 -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2; }
+leaf() { timeout 5 openssl s_client -connect "\$ip:443" -noservername </dev/null 2>/dev/null | sed -n '/BEGIN CERT/,/END CERT/p'; }
+rm -f \$tls/server.crt \$tls/server.key
+/usr/lib/alp/alp-live-tls "\$ip" >/dev/null
+file=\$(fp <\$tls/server.crt)
+stale=\$(leaf | fp)
+opened=\$(c -X POST \$A/pair/open -d '{}' | grep -c '"uri"')
+after=\$(leaf | fp)
+names=\$(leaf | openssl x509 -noout -ext subjectAltName 2>/dev/null | tr -d ' \n')
+conn=\$(c \$A/phone/connection | tr -d ' \n' | grep -o '"ok":[a-z]*' | head -n 1)
+# T-PAIR-CLOCK (0.2.5-test1 field report): a computer clock ahead of the
+# phone's made the certificates "not valid yet" there. Both must start at
+# least 23 hours before the guest's own time.
+age() { echo \$(( \$(date +%s) - \$(date -d "\$(openssl x509 -noout -startdate 2>/dev/null | cut -d= -f2)" +%s) )); }
+back=no
+[ "\$(age <\$tls/ca.crt)" -ge 82800 ] && [ "\$(leaf | age)" -ge 82800 ] && back=yes
+say "SAN ip=\$ip file=\$file stale=\$stale after=\$after opened=\$opened conn=\$conn back=\$back names=\$names"
+# T-GAL-01: the console's gallery on 127.0.0.1:8412 (nginx). Signed in, the
+# pages load and the API answers as the family account without the browser
+# holding a credential; with no console cookie, after a lock, or for a
+# delete, it is refused; alpd never gives the key to a browser request.
+G=http://127.0.0.1:8412
+code() { curl -s -m 30 -o /dev/null -w '%{http_code}' "\$@"; }
+c -X POST \$A/console/signin -d '{"password":"$pw"}' >/dev/null
+gu=\$(c \$A/state | tr -d '\n' | grep -c '"gallery_url": *"http://127.0.0.1:8412/"')
+page=\$(code \$G/)
+# The pages carry the console's stylesheet, also when the browser asks for a
+# compressed answer, and the stylesheet is served.
+css=\$(curl -s -m 30 --compressed -H 'Accept-Encoding: gzip, br' \$G/ | grep -c 'href="/alp-gallery.css"')
+cssf=\$(curl -s -m 30 \$G/alp-gallery.css | grep -c 'a\[href="/user-settings"\]')
+me=\$(curl -s -m 30 -b /run/pa-jar \$G/api/users/me | grep -c 'family@alparchive.local')
+leak=\$(curl -s -m 30 -D - -o /dev/null -b /run/pa-jar \$G/api/users/me | grep -ci 'x-alp-gallery-key')
+anon=\$(code \$G/api/users/me)
+gate=\$(code -b /run/pa-jar -H 'Sec-Fetch-Site: same-origin' \$A/gallery/gate)
+del=\$(code -b /run/pa-jar -X DELETE \$G/api/assets)
+out=\$(code -b /run/pa-jar -X POST \$G/api/auth/logout)
+c -X POST \$A/console/lock -d '{}' >/dev/null
+locked=\$(code -b /run/pa-jar \$G/api/users/me)
+say "GAL gu=\$gu page=\$page css=\$css cssf=\$cssf me=\$me leak=\$leak anon=\$anon gate=\$gate del=\$del out=\$out locked=\$locked end"
 AGENT
 agent_b64=$(base64 -w0 <<<"$agent")
 

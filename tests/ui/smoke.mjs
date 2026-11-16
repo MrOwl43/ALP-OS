@@ -351,12 +351,115 @@ for (const q of ["", "&features=recovery_commit,events"]) {
   if (await p3.locator(".setrow:has-text('Terminal')").count()) p3.errors.push("Terminal offered without the feature");
   await done(p3, "stagef-terminal-hidden");
 }
+// 14. 0.2.61: the time zone window (search, pick, confirm), "Sync now", the lock screen's hidden details
+{
+  // a. Clock from the internet: search, pick, the preview, nothing saved before Confirm; Cancel changes nothing.
+  const page = await open("&screen=settings");
+  await page.click(".setcat:has-text('Time & Language')"); await page.waitForTimeout(250);
+  await page.click(".setrow:has-text('Time zone') button"); await page.waitForSelector(".zonesheet");
+  await page.fill("#zq", "utc+2"); await page.waitForTimeout(150);
+  const n = await page.locator(".zonelist li[role=option]").count();
+  if (!n || n > 150) page.errors.push("search for UTC+2 shows " + n + " zones");
+  await page.fill("#zq", "no such place"); if (!(await page.locator("text=Nothing found").count())) page.errors.push("no empty-search line");
+  // Zones are picked by their offset here: the browser's list has no fixed-offset names.
+  await page.fill("#zq", "utc+2"); await page.locator(".zonelist li[role=option]").first().click();
+  const zone = await page.locator(".zonelist li[aria-selected=true] span").first().innerText();
+  if (!(await page.locator(".zoneprev:has-text('UTC+2')").count())) page.errors.push("no preview of the chosen zone");
+  if (await page.locator(".zoneprev input[type=radio]").count()) page.errors.push("asked about the hardware clock although the clock is from the internet");
+  if (await page.evaluate(async () => (await window.alp.state()).prefs.timeZone)) page.errors.push("the zone was saved before Confirm");
+  await page.screenshot({ path: path.join(out, "zone-picker.png") });
+  await page.click(".zonesheet button:has-text('Cancel')");
+  if (await page.evaluate(async () => (await window.alp.state()).prefs.timeZone)) page.errors.push("Cancel saved the zone");
+  await page.click(".setrow:has-text('Time zone') button"); await page.fill("#zq", "utc+2");
+  await page.locator(".zonelist li[role=option]").first().click(); await page.click(".zonesheet button:has-text('Confirm')");
+  await page.waitForSelector(".zonesheet", { state: "detached" });
+  if (((await page.evaluate(async () => (await window.alp.state()).prefs.timeZone)) || "").replace(/_/g, " ") !== zone) page.errors.push("Confirm did not save the zone");
+  await page.waitForTimeout(300);
+  if (!(await page.locator(".setrow:has-text('Time zone') .state").innerText()).includes(zone)) page.errors.push("the settings row does not show the new zone: " + (await page.locator(".setrow:has-text('Time zone')").innerText()));
+  if (await page.evaluate(() => (window.__clockBase || []).length)) page.errors.push("the clock was moved although it is from the internet");
+  await done(page, "zone-picker-confirmed");
+  // b. Clock not from the internet: two readings of the hardware clock, an answer is needed, alpd is told.
+  const p2 = await open("&screen=settings&noclock=1");
+  await p2.click(".setcat:has-text('Time & Language')"); await p2.waitForTimeout(250);
+  await p2.click(".setrow:has-text('Time zone') button"); await p2.fill("#zq", "utc-3");
+  await p2.locator(".zonelist li[role=option]").first().click();
+  if ((await p2.locator(".zoneprev input[type=radio]").count()) !== 3) p2.errors.push("no question about which time is right");
+  if (!(await p2.locator(".zonesheet button:has-text('Confirm')").isDisabled())) p2.errors.push("Confirm works before the time question is answered");
+  await p2.screenshot({ path: path.join(out, "zone-picker-which-time.png") });
+  await p2.locator(".zoneprev input[type=radio]").first().check({ force: true });
+  await p2.click(".zonesheet button:has-text('Confirm')"); await p2.waitForSelector(".zonesheet", { state: "detached" });
+  if (JSON.stringify(await p2.evaluate(() => window.__clockBase)) !== "[true]") p2.errors.push("alpd was not told that the hardware clock holds local time");
+  // c. Sync now: the time server answers.
+  await p2.click(".setrow:has-text('Date and time') button:has-text('Sync now')");
+  await p2.waitForSelector("text=The time was set from the internet just now", { timeout: 8000 });
+  await done(p2, "clock-sync-now");
+  const p3 = await open("&screen=settings&noclock=1&sync=fail");
+  await p3.click(".setcat:has-text('Time & Language')"); await p3.waitForTimeout(250);
+  await p3.click(".setrow:has-text('Date and time') button:has-text('Sync now')");
+  await p3.waitForSelector("text=No time server answered", { timeout: 8000 });
+  await done(p3, "clock-sync-fail");
+  // d. The first setup screen opens the same window.
+  const p4 = await open("&screen=welcome");
+  await p4.click(".clockrow .zonebtn"); await p4.waitForSelector(".zonesheet"); await p4.keyboard.press("Escape");
+  await p4.waitForSelector(".zonesheet", { state: "detached" });
+  await done(p4, "zone-picker-welcome");
+  // e. Lock screen: the note always says what is shortened; hidden details say so and are not in the state.
+  const p5 = await open("&screen=lock");
+  if (!(await p5.locator(".lk-note:has-text('names are shortened')").count())) p5.errors.push("the lock screen does not say that names are shortened");
+  if (await p5.locator(".lk-hidden").count()) p5.errors.push("a detail is hidden by default");
+  await done(p5, "lock-note");
+  const p6 = await open("&screen=lock&hide=phones,space,backup");
+  if ((await p6.locator(".lk-hidden").count()) !== 3) p6.errors.push("hidden lock screen details are not marked");
+  if (!(await p6.locator(".lk-note:has-text('phones, free room, backup activity')").count())) p6.errors.push("the lock screen does not list what is hidden");
+  const st = await p6.evaluate(async () => { const s = await window.alp.state(); return [s.phone.devices.length, s.phone.photos, s.arch.free]; });
+  if (st.some((x) => x)) p6.errors.push("hidden details were still sent to the locked screen: " + st);
+  await done(p6, "lock-hidden");
+  // f. Settings: the switches change the list.
+  const p7 = await open("&screen=settings");
+  await p7.click(".setcat:has-text('Display & Input')"); await p7.waitForTimeout(250);
+  await p7.locator(".setrow:has-text('Show free room') input").uncheck({ force: true }); await p7.waitForTimeout(200);
+  if (JSON.stringify(await p7.evaluate(async () => (await window.alp.state()).prefs.lockHide)) !== '["space"]') p7.errors.push("the lock screen switch was not saved");
+  await done(p7, "settings-lock-screen");
+}
 // 10. anti-browser: no context menu text selection outside fields
 {
   const page = await open("&screen=home");
   const sel = await page.evaluate(() => getComputedStyle(document.body).userSelect);
   if (sel !== "none") page.errors.push("text can be selected: " + sel);
   await done(page, "no-browser-feel");
+}
+
+// 0.2.7 (feature update, ADR 0026): Settings > About finds a new version, installs it and says what to do next; a
+// stick without room says so and offers no button.
+{
+  const page = await open("&screen=settings");
+  await page.click(".setcat:has-text('About')"); await page.waitForTimeout(250);
+  await page.click(".setrow:has-text('Updates') button:has-text('Look for updates')");
+  await page.waitForSelector("button:has-text('Install version 0.2.8')", { timeout: 8000 });
+  await page.screenshot({ path: path.join(out, "update-available.png") });
+  await page.click("button:has-text('Install version 0.2.8')");
+  await page.waitForSelector("text=Version 0.2.8 is on the stick", { timeout: 15000 });
+  await page.screenshot({ path: path.join(out, "update-installed.png") });
+  // The new version starts with "Restart now": asked once, then the shutdown screen says "Restarting".
+  await page.click(".setrow:has-text('Updates') button:has-text('Restart now')");
+  await page.click(".sheet button:has-text('Restart now')");
+  await page.waitForSelector("h1:has-text('Restarting')", { timeout: 8000 });
+  await done(page, "update-install");
+  const old = await open("&screen=settings&update=old");
+  await old.click(".setcat:has-text('About')"); await old.waitForTimeout(250);
+  await old.waitForSelector("text=This stick has no room for updates in place");
+  if (await old.locator(".setrow:has-text('Updates') button").count()) old.errors.push("a stick without room offers an update button");
+  await done(old, "update-unsupported");
+}
+
+// 0.2.7 (feature restore_ask, ADR 0025): a backup disk that is not encrypted asks before the gallery is put back.
+{
+  const page = await open("&screen=home-starting&restore=ask");
+  await page.waitForSelector("text=This backup disk holds a gallery from before", { timeout: 8000 });
+  await page.screenshot({ path: path.join(out, "restore-ask-question.png") });
+  await page.click("button:has-text('Bring my gallery back')");
+  await page.waitForSelector("text=This backup disk holds a gallery from before", { state: "detached", timeout: 8000 });
+  await done(page, "restore-ask");
 }
 
 await browser.close(); server.close();

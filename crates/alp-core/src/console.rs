@@ -19,9 +19,11 @@ pub const ORIGIN: &str = "http://127.0.0.1:8411";
 const HOSTS: [&str; 2] = ["127.0.0.1:8411", "localhost:8411"];
 const MAX_HEAD: usize = 16 << 10;
 pub const MAX_BODY: usize = 64 << 10;
-/// `frame-src`: only the Immich web gallery on loopback, shown under the
-/// console's own top bar in the kiosk (T16, `immich.console_url`).
-const CSP: &str = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; frame-src http://127.0.0.1:2283";
+/// `frame-src`: only the gallery proxy (nginx on 8412, `immich.gallery_url`)
+/// and the Terminal (ttyd, feature `terminal`) on loopback, shown under
+/// the console's own top bar in the kiosk. Never the photo service's own
+/// port: that would pass by the delete guard.
+const CSP: &str = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; frame-src http://127.0.0.1:8412 http://127.0.0.1:8413";
 
 #[derive(Debug, Default)]
 pub struct Request {
@@ -294,6 +296,7 @@ fn reason(status: u16) -> &'static str {
     match status {
         200 => "OK",
         202 => "Accepted",
+        206 => "Partial Content",
         302 => "Found",
         400 => "Bad Request",
         403 => "Forbidden",
@@ -302,6 +305,7 @@ fn reason(status: u16) -> &'static str {
         409 => "Conflict",
         411 => "Length Required",
         413 => "Content Too Large",
+        416 => "Range Not Satisfiable",
         421 => "Misdirected Request",
         422 => "Unprocessable Content",
         431 => "Request Header Fields Too Large",
