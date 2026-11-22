@@ -255,7 +255,13 @@ pub fn quirks_text(driver: &str) -> String {
 
 /// WPA3 is switched off for this computer's Wi-Fi.
 pub fn wpa3_off() -> bool {
-    Path::new(IWD_QUIRKS).exists()
+    fs::read_to_string(IWD_QUIRKS).is_ok_and(|t| quirks_say_wpa3_off(&t))
+}
+
+/// The settings file turns WPA3 off (an `SaeDisable=` line).
+pub fn quirks_say_wpa3_off(text: &str) -> bool {
+    text.lines()
+        .any(|l| l.trim_start().starts_with("SaeDisable="))
 }
 
 /// Switch WPA3 off for `driver` (Some) or back on (None), on the stick.
@@ -564,6 +570,8 @@ mod tests {
         let t = quirks_text("brcmfmac");
         assert!(t.contains("\n[DriverQuirks]\nSaeDisable=brcmfmac\n"));
         assert_eq!(t.lines().filter(|l| !l.starts_with('#')).count(), 2);
+        assert!(quirks_say_wpa3_off(&t));
+        assert!(!quirks_say_wpa3_off("[DriverQuirks]\nDefaultInterface=x\n"));
     }
 
     #[test]

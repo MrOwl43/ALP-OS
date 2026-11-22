@@ -24,8 +24,17 @@ image=${1:?usage: t-wifi-01.sh <disk-image>}
 
 # The access point: second radio, WPA2 passphrase, iwd's own AP mode.
 ap_script=$(base64 -w0 <<'GUEST'
+# iwd keeps the kernel's own interfaces (otherwise it deletes and makes
+# them again, and one came back as "Too many open files in system").
+printf '[DriverQuirks]\nDefaultInterface=mac80211_hwsim\n' > /var/lib/iwd/.alp-main.conf
+systemctl restart iwd.service
+sleep 3
 modprobe mac80211_hwsim radios=2 && echo HWSIM-OK || echo HWSIM-MISSING
-sleep 6
+for i in $(seq 20); do
+    [ "$(ls -d /sys/class/net/*/phy80211 2>/dev/null | wc -l)" -ge 2 ] && break
+    sleep 1
+done
+sleep 3
 radios=$(for d in /sys/class/net/*; do [ -e "$d/phy80211" ] && basename "$d"; done | sort)
 echo "RADIOS=$(echo $radios)"
 ap=$(echo "$radios" | tail -n 1)
