@@ -29,11 +29,22 @@ sleep 6
 radios=$(for d in /sys/class/net/*; do [ -e "$d/phy80211" ] && basename "$d"; done | sort)
 echo "RADIOS=$(echo $radios)"
 ap=$(echo "$radios" | tail -n 1)
+# Both radios powered (iwd may bring a new adapter up powered off).
+for a in $(timeout 10 iwctl adapter list | sed 's/\x1b\[[0-9;]*m//g' | grep -o 'phy[0-9]*' | sort -u); do
+    timeout 10 iwctl adapter "$a" set-property Powered on 2>&1 | sed 's/^/IWCTL /'
+done
+for d in $radios; do timeout 10 iwctl device "$d" set-property Powered on 2>&1 | sed 's/^/IWCTL /'; done
+sleep 2
 mkdir -p /var/lib/iwd/ap
 printf '[Security]\nPassphrase=alp-test-pass-1\n' > /var/lib/iwd/ap/ALPTEST.ap
-iwctl device "$ap" set-property Mode ap
-sleep 2
-iwctl ap "$ap" start-profile ALPTEST && echo AP-STARTED || echo AP-FAILED
+timeout 10 iwctl device "$ap" set-property Mode ap 2>&1 | sed 's/^/IWCTL /'
+sleep 3
+timeout 10 iwctl ap "$ap" start-profile ALPTEST 2>&1 | sed 's/^/IWCTL /'
+sleep 3
+timeout 10 iwctl ap "$ap" show 2>&1 | sed 's/\x1b\[[0-9;]*m//g; s/^/IWCTL /'
+timeout 10 iwctl ap "$ap" show 2>&1 | grep -q 'Started *yes' && echo AP-STARTED || echo AP-FAILED
+timeout 10 iwctl device list 2>&1 | sed 's/\x1b\[[0-9;]*m//g; s/^/IWCTL /'
+journalctl -b -u iwd.service --no-pager -o cat | tail -n 15 | sed 's/^/IWDJ /'
 sleep 4
 GUEST
 )
@@ -83,7 +94,7 @@ if jq -e '.network.ports[] | select(.kind == "wifi" and .ssid == "ALPTEST")' >/d
 else
     echo "FAIL: Live did not join ALPTEST: $(jq -c '.network.job' <<<"$state" 2>/dev/null)" >&2; fail=1
 fi
-if jq -e '.network.wpa3_off == false' >/dev/null 2>&1 <<<"$state"; then echo "ok:   WPA3 stays on after a first-try join"; else echo "FAIL: wpa3_off is not false" >&2; fail=1; fi
+if jq -e '.network.wpa3_off == false and any(.network.ports[]; .ssid == "ALPTEST")' >/dev/null 2>&1 <<<"$state"; then echo "ok:   WPA3 stays on after a first-try join"; else echo "FAIL: wpa3_off is not false" >&2; fail=1; fi
 expect "iwd reads the switch-off from the stick" 'IWDCONF=1' "$out"
 expect "without the file iwd has its defaults" 'IWDCONF2=0' "$out"
 if grep -qE '^DRIVER=.+' <<<"$out" && ! grep -q '^DRIVER=$' <<<"$out"; then
