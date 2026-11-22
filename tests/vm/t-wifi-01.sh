@@ -27,14 +27,15 @@ ap_script=$(base64 -w0 <<'GUEST'
 # iwd keeps the kernel's own interfaces (otherwise it deletes and makes
 # them again, and one came back as "Too many open files in system").
 printf '[DriverQuirks]\nDefaultInterface=mac80211_hwsim\n' > /var/lib/iwd/.alp-main.conf
-systemctl restart iwd.service
-sleep 3
+# Radios first, then iwd starts and finds both (when they came while iwd
+# was running, it took only the second one).
 modprobe mac80211_hwsim radios=2 && echo HWSIM-OK || echo HWSIM-MISSING
 for i in $(seq 20); do
     [ "$(ls -d /sys/class/net/*/phy80211 2>/dev/null | wc -l)" -ge 2 ] && break
     sleep 1
 done
-sleep 3
+systemctl restart iwd.service
+sleep 6
 radios=$(for d in /sys/class/net/*; do [ -e "$d/phy80211" ] && basename "$d"; done | sort)
 echo "RADIOS=$(echo $radios)"
 ap=$(echo "$radios" | tail -n 1)
@@ -53,6 +54,10 @@ sleep 3
 timeout 10 iwctl ap "$ap" show 2>&1 | sed 's/\x1b\[[0-9;]*m//g; s/^/IWCTL /'
 timeout 10 iwctl ap "$ap" show 2>&1 | grep -q 'Started *yes' && echo AP-STARTED || echo AP-FAILED
 timeout 10 iwctl device list 2>&1 | sed 's/\x1b\[[0-9;]*m//g; s/^/IWCTL /'
+sta=$(echo "$radios" | head -n 1)
+timeout 10 iwctl station "$sta" scan 2>&1 | sed 's/^/IWCTL /'
+sleep 5
+timeout 10 iwctl station "$sta" get-networks 2>&1 | sed 's/\x1b\[[0-9;]*m//g; s/^/IWCTL /'
 journalctl -b -u iwd.service --no-pager -o cat | tail -n 15 | sed 's/^/IWDJ /'
 sleep 4
 GUEST
