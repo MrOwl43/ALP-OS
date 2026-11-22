@@ -205,37 +205,178 @@ pub fn check_request(security: &str, password: &str) -> Result<(), crate::fail::
     }
 }
 
-/// Store the password (psk) and ask iwd to connect; waits up to 20 s for
-/// iwd to report "connected". `progress` gets step names.
-pub fn connect(dev: &str, net: &Network, password: &str) -> Result<(), crate::fail::Fail> {
-    use crate::fail::Fail;
-    check_request(&net.security, password)?;
-    if net.security == "psk" {
-        write_psk(&net.ssid, password).map_err(|e| {
-            Fail::new(
-                "wifi.failed",
-                format!("The password could not be stored ({e})."),
-            )
-        })?;
-    }
-    iwctl(&["station", dev, "connect", &net.ssid]);
+/// Ask iwd to join `ssid`; waits up to 20 s for iwd to report "connected".
+fn try_join(dev: &str, ssid: &str) -> bool {
+    iwctl(&["station", dev, "connect", ssid]);
     for _ in 0..20 {
-        if connected_ssid(dev).as_deref() == Some(net.ssid.as_str()) {
-            return Ok(());
+        if connected_ssid(dev).as_deref() == Some(ssid) {
+            return true;
         }
         sleep(Duration::from_secs(1));
     }
-    Err(if net.security == "psk" {
-        Fail::new(
-            "wifi.password_refused",
-            "The network did not accept this password. Please try again.",
-        )
-    } else {
+    false
+}
+
+/// iwd's settings override, on the stick next to the remembered networks.
+/// The iwd unit binds it read-only over `/etc/iwd/main.conf` when it exists
+/// (image: iwd.service.d/50-alp-live.conf), so a WPA3 switch-off made here
+/// stays across restarts. iwd only reads `*.psk`/`*.open`/`*.8021x` files
+/// in its state folder as networks; a dot file is not one.
+pub const IWD_QUIRKS: &str = "/var/lib/iwd/.alp-main.conf";
+
+/// The kernel driver of `dev`, as iwd matches it for `[DriverQuirks]`
+/// (the last part of the device's `driver` link). Only plain names: the
+/// value goes into a settings file and is a glob pattern there.
+pub fn driver_name(dev: &str) -> Option<String> {
+    let link = fs::read_link(Path::new("/sys/class/net").join(dev).join("device/driver")).ok()?;
+    let name = link.file_name()?.to_string_lossy().into_owned();
+    plain_driver(&name).then_some(name)
+}
+
+/// A driver name that is safe in an iwd settings file and has no glob
+/// characters: letters, digits, `_`, `-` and `.`, 1–64 characters.
+pub fn plain_driver(name: &str) -> bool {
+    (1..=64).contains(&name.len())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_-.".contains(c))
+}
+
+/// iwd main.conf text that turns WPA3 (SAE) off for one driver. iwd then
+/// joins mixed WPA2/WPA3 networks with WPA2 and cannot join WPA3-only ones
+/// (iwd.config(5), `[DriverQuirks].SaeDisable`, iwd 3.5 or later).
+pub fn quirks_text(driver: &str) -> String {
+    format!(
+        "# Written by ALPArchive: this computer's Wi-Fi did not finish WPA3 sign-in,\n\
+         # so iwd uses WPA2 with it (iwd.config(5), DriverQuirks).\n\
+         [DriverQuirks]\nSaeDisable={driver}\n"
+    )
+}
+
+/// WPA3 is switched off for this computer's Wi-Fi.
+pub fn wpa3_off() -> bool {
+    Path::new(IWD_QUIRKS).exists()
+}
+
+/// Switch WPA3 off for `driver` (Some) or back on (None), on the stick.
+fn set_wpa3_off(driver: Option<&str>) -> std::io::Result<()> {
+    let Some(d) = driver else {
+        return match fs::remove_file(IWD_QUIRKS) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => fs::File::open(IWD_DIR)?.sync_all(),
+        };
+    };
+    crate::archive::state_ready().map_err(std::io::Error::other)?;
+    let tmp = Path::new(IWD_DIR).join(".alp-main.tmp");
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o644)
+        .open(&tmp)?;
+    f.write_all(quirks_text(d).as_bytes())?;
+    f.sync_all()?;
+    fs::rename(&tmp, IWD_QUIRKS)?;
+    fs::File::open(IWD_DIR)?.sync_all()
+}
+
+/// Restart iwd (it reads main.conf only at start) and wait up to 15 s for
+/// a station again; then scan so the network is known. Returns the
+/// wireless interface, which iwd may have made again.
+fn restart_iwd(dev: &str) -> String {
+    let _ = Command::new("systemctl")
+        .args(["restart", "iwd.service"])
+        .stdin(Stdio::null())
+        .status();
+    for _ in 0..15 {
+        sleep(Duration::from_secs(1));
+        let d = device().unwrap_or_else(|| dev.to_string());
+        if strip_ansi(&iwctl(&["station", &d, "show"]))
+            .lines()
+            .any(|l| l.trim().starts_with("State"))
+        {
+            iwctl(&["station", &d, "scan"]);
+            sleep(Duration::from_secs(4));
+            return d;
+        }
+    }
+    device().unwrap_or_else(|| dev.to_string())
+}
+
+/// What a second try changes: switch WPA3 off when it was on, and back on
+/// when an earlier switch-off is in place (a WPA3-only network needs it).
+pub fn second_try_wpa3_off(now_off: bool) -> bool {
+    !now_off
+}
+
+/// The message when neither way joined a password network.
+pub const REFUSED: &str = "The network did not accept this password. Please check it and try again. \
+If your router uses WPA3 only, this computer's Wi-Fi may not support WPA3: \
+setting the router to WPA2/WPA3 (mixed), or using a network cable, will help.";
+
+/// Store the password (psk) and ask iwd to connect. If a password network
+/// does not join, try once more the other way: with WPA3 switched off for
+/// this computer's Wi-Fi driver (some drivers say they can do WPA3 but do
+/// not finish its sign-in; iwd then uses WPA2 on a mixed network), or with
+/// an earlier switch-off undone. The way that joins is kept on the stick;
+/// if neither joins, the earlier setting is put back. `progress` gets a
+/// message for the screen. Ok carries a note when WPA3 was switched off.
+pub fn connect(
+    dev: &str,
+    net: &Network,
+    password: &str,
+    progress: &dyn Fn(&str),
+) -> Result<Option<String>, crate::fail::Fail> {
+    use crate::fail::Fail;
+    check_request(&net.security, password)?;
+    let stored = |e: std::io::Error| {
         Fail::new(
             "wifi.failed",
-            "ALPArchive could not join this network. Please try again.",
+            format!("The password could not be stored ({e})."),
         )
-    })
+    };
+    if net.security == "psk" {
+        write_psk(&net.ssid, password).map_err(stored)?;
+    }
+    if try_join(dev, &net.ssid) {
+        return Ok(None);
+    }
+    if net.security != "psk" {
+        return Err(Fail::new(
+            "wifi.failed",
+            "ALPArchive could not join this network. Please try again.",
+        ));
+    }
+    let refused = || Fail::new("wifi.password_refused", REFUSED);
+    let Some(driver) = driver_name(dev) else {
+        return Err(refused());
+    };
+    let was_off = wpa3_off();
+    let off = second_try_wpa3_off(was_off);
+    progress("Trying again in another way…");
+    eprintln!(
+        "alp: Wi-Fi did not join; trying again with WPA3 {} for driver {driver}",
+        if off { "off" } else { "on" }
+    );
+    if set_wpa3_off(off.then_some(driver.as_str())).is_err() {
+        return Err(refused());
+    }
+    let dev2 = restart_iwd(dev);
+    // iwd may have rewritten the network file after the failed try.
+    write_psk(&net.ssid, password).map_err(stored)?;
+    if try_join(&dev2, &net.ssid) {
+        eprintln!(
+            "alp: Wi-Fi joined with WPA3 {}",
+            if off { "off" } else { "on" }
+        );
+        return Ok(off.then(|| {
+            "Connected with WPA2: this computer's Wi-Fi could not finish WPA3 sign-in.".to_string()
+        }));
+    }
+    eprintln!("alp: Wi-Fi did not join either way; the earlier setting is put back");
+    let _ = set_wpa3_off(was_off.then_some(driver.as_str()));
+    restart_iwd(&dev2);
+    Err(refused())
 }
 
 /// Interactive setup: scan, choose a network by number, type the password.
@@ -405,6 +546,30 @@ mod tests {
         assert_eq!(bars(-5500), 4);
         assert_eq!(bars(-70), 2);
         assert_eq!(bars(-9500), 0);
+    }
+
+    #[test]
+    fn driver_names_are_plain() {
+        assert!(plain_driver("iwlwifi"));
+        assert!(plain_driver("rtw89_8852be"));
+        assert!(plain_driver("mac80211_hwsim"));
+        assert!(!plain_driver(""));
+        assert!(!plain_driver("brcm*"));
+        assert!(!plain_driver("a\nSaeDisable=*"));
+        assert!(!plain_driver(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn quirks_turn_wpa3_off_for_one_driver() {
+        let t = quirks_text("brcmfmac");
+        assert!(t.contains("\n[DriverQuirks]\nSaeDisable=brcmfmac\n"));
+        assert_eq!(t.lines().filter(|l| !l.starts_with('#')).count(), 2);
+    }
+
+    #[test]
+    fn second_try_goes_the_other_way() {
+        assert!(second_try_wpa3_off(false));
+        assert!(!second_try_wpa3_off(true));
     }
 
     #[test]

@@ -2379,6 +2379,9 @@ impl Live {
                 "address": address,
                 "ports": ports_json,
                 "wifi_present": dev.is_some(),
+                // WPA3 switched off for this computer's Wi-Fi after a join
+                // only worked with WPA2 (wifi::connect).
+                "wpa3_off": wifi::wpa3_off(),
                 "addresses": addresses_json(&ports),
                 "job": wifi_job,
             },
@@ -2644,14 +2647,20 @@ impl Live {
                     f(j);
                 }
             };
-            if let Err(e) = wifi::connect(&dev, &net, &password) {
-                set(&|j| {
-                    j.state = "failed";
-                    j.message = e.message.clone();
-                    j.error = Some(e.clone());
-                });
-                return;
-            }
+            let progress = |m: &str| set(&|j| j.message = m.to_string());
+            let note = match wifi::connect(&dev, &net, &password, &progress) {
+                Ok(n) => n,
+                Err(e) => {
+                    set(&|j| {
+                        j.state = "failed";
+                        j.message = e.message.clone();
+                        j.error = Some(e.clone());
+                    });
+                    return;
+                }
+            };
+            // iwd may have made the interface again after a second try.
+            let dev = wifi::device().unwrap_or(dev);
             set(&|j| {
                 j.step = "address".into();
                 j.message = "Connected. Waiting for an address from the router…".into();
@@ -2664,7 +2673,10 @@ impl Live {
                     set(&|j| {
                         j.state = "done";
                         j.step = "done".into();
-                        j.message = "Connected. ALPArchive is on your home network.".into();
+                        j.message = match &note {
+                            Some(n) => format!("{n} ALPArchive is on your home network."),
+                            None => "Connected. ALPArchive is on your home network.".into(),
+                        };
                     });
                     return;
                 }

@@ -819,6 +819,7 @@
       const laterNote = () => (L.mode === "setup" && !L.netFrom ? h("p", { class: "fine later-note" }, t("net.later.note")) : null);
       function showConnected() {
         body.replaceChildren(h("div", { class: "banner ok" }, S.net.kind === "wifi" && S.net.ssid ? t("net.connected", { name: S.net.ssid }) : t("net.connected.cable")),
+          S.net.kind === "wifi" && S.net.wpa3Off ? h("p", { class: "fine" }, t("net.wifi.wpa2")) : null,
           h("div", { class: "actions" }, h("button", { class: "primary", "data-focus": "", onclick: leaveNet }, t("common.continue")),
             h("div", { class: "row" }, S.net.wifiPresent ? h("button", { class: "link", onclick: () => { cur.change = true; nets ? renderList() : look(); } }, t("net.another")) : null,
               h("button", { class: "link", "data-back": "", onclick: backFn }, t("common.back")))));
@@ -888,12 +889,12 @@
         body.replaceChildren(waiting(t("net.wifi.connecting", { name: net.ssid }), "wait.wifi.connect.slow", 20));
         const fail = (e) => { cur.busy = false; net.security === "open" ? renderList(e) : askPassword(e); };
         try { await alp.wifiConnect(net.ssid, password); } catch (e) { return fail(e); }
-        for (let i = 0; i < 90; i++) {            // the job runs up to about 60 s; progress is in the state
+        for (let i = 0; i < 150; i++) {           // the job runs up to about 2 min (a second try with WPA3 off or on, then the address); progress is in the state
           await sleep(1000); if (current !== cur) return;
           if (!(await refresh())) continue;
           const job = S.net.job;
           if (job && job.state === "failed") return fail(job.error);
-          if (S.net.online && (!job || job.state !== "running")) { body.replaceChildren(h("div", { class: "banner ok" }, t("net.wifi.connected"))); L.net.pw = ""; await sleep(1000); return leaveNet(); }
+          if (S.net.online && (!job || job.state !== "running")) { body.replaceChildren(h("div", { class: "banner ok" }, t("net.wifi.connected")), S.net.wpa3Off ? h("p", { class: "fine" }, t("net.wifi.wpa2")) : null); L.net.pw = ""; await sleep(S.net.wpa3Off ? 4000 : 1000); return leaveNet(); }
         }
         fail({ key: "wifi.no_address" });
       }

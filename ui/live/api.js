@@ -52,7 +52,7 @@
       power: { state: pw.state || "on", job: pw.job || null },
       update: w.update || null,   // feature update (ADR 0026): { supported, current, checked, newer: { version, state }, error, job }
       hw: { canRun: hw.verdict !== "fail", verdict: hw.verdict, machine: hw.machine, reportSaved: !!hw.report_file, pending: !!hw.pending, checks: hw.checks || [], specs: hw.specs || null },
-      net: { online: !!nw.online, address: nw.address, wifiPresent: !!nw.wifi_present, kind: wired ? "wired" : wifi ? "wifi" : null,
+      net: { online: !!nw.online, address: nw.address, wifiPresent: !!nw.wifi_present, wpa3Off: !!nw.wpa3_off, kind: wired ? "wired" : wifi ? "wifi" : null,
         ssid: wifi && wifi.ssid, signal: wifi && wifi.signal, waiting: ports.some((p) => p.state === "waiting"), job: nw.job, addresses: addrs },
       lock: { state: (w.lock || {}).state, wait: (w.lock || {}).retry_after_seconds || 0, tpm: (w.lock || {}).tpm || "none", protection: (w.lock || {}).protection || null },
       console: { state: (w.console || {}).state || "open", idle: (w.console || {}).idle_lock_seconds || 300, hidden: Array.isArray((w.console || {}).hidden) ? w.console.hidden : [] },

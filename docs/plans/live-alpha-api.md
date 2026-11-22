@@ -566,7 +566,7 @@ Served by `alpd` on `http://127.0.0.1:8411` only (console listener,
 
 ```json
 { "error": { "key": "wifi.password_refused",
-             "message": "The network did not accept this password. Please try again.",
+             "message": "The network did not accept this password. Please check it and try again. If your router uses WPA3 only, …",
              "code": null } }
 ```
 
@@ -610,6 +610,7 @@ area starts.
     "ports": [ { "name": "wlan0", "kind": "wifi", "state": "connected",
                  "address": "192.168.1.23", "ssid": "Home" } ],
     "wifi_present": true,
+    "wpa3_off": false,
     "addresses": [ { "address": "192.168.1.23", "url": "https://192.168.1.23",
                      "port": "wlan0", "kind": "wifi" } ],
     "job": null

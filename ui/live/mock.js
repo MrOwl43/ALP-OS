@@ -36,7 +36,7 @@
     lock: { state: "open", retry_after_seconds: 0, tpm: "on", protection: p.get("protection") || "password" },
     console: { state: "open", idle_lock_seconds: p.get("idle") ? +p.get("idle") : 300 },
     index: { size_bytes: 28 * GB, free_bytes: 27 * GB, space: "ok" },
-    network: { online: false, address: null, addresses: [], ports: [{ name: "wlan0", kind: "wifi", state: "off", address: null }], wifi_present: true, job: null },
+    network: { online: false, address: null, addresses: [], ports: [{ name: "wlan0", kind: "wifi", state: "off", address: null }], wifi_present: true, wpa3_off: new URLSearchParams(location.search).has("wpa2"), job: null },
     archive: { state: "none", space: "ok", health: "ok", recovery: "none", place: null, size_bytes: 0, free_bytes: 0, job: null, error: null },
     immich: { state: "off", error: null, detail: null, seconds_starting: null, console_url: null },
     phone: { server_url: null, account: null, paired: false, phones: 0, photos: 0, last_upload: null, devices: [] },
@@ -159,7 +159,7 @@
     }
     if (prepStart && Date.now() - prepStart > (fast ? 300 : 4000)) { prepStart = 0; prepared = true; W.archive.job = { id: "disk.prepare", state: "done", step: "done", percent: 100, message: "The disk is ready.", error: null }; }
     if (W.network.job && W.network.job.state === "running" && Date.now() - W.network.job.t > (fast ? 200 : 1800)) {
-      if (W.network.job.bad) { W.network.job = { id: "wifi.connect", state: "failed", step: "joining", percent: null, error: { key: "wifi.password_refused", message: "The network did not accept this password. Please try again." } }; }
+      if (W.network.job.bad) { W.network.job = { id: "wifi.connect", state: "failed", step: "joining", percent: null, error: { key: "wifi.password_refused", message: "The network did not accept this password. Please check it and try again." } }; }
       else { online("wifi"); W.network.job = { id: "wifi.connect", state: "done", step: "address", percent: 100, error: null }; }
     }
     if (pairStart && !W.phone.paired && Date.now() - pairStart > (fast ? 800 : 9000)) W.phone.paired = true;

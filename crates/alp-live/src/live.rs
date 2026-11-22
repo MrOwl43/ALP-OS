@@ -966,6 +966,8 @@ pub fn diag_text(now: &str) -> String {
         ],
     );
     t += &last_lines(&alpd, alpd_line_relevant, 300);
+    t += "\n\n== Wi-Fi ==\n";
+    t += &wifi_diag();
     t += "\n\n== Kernel (disks) ==\n";
     let kernel = out(
         "journalctl",
@@ -973,6 +975,42 @@ pub fn diag_text(now: &str) -> String {
     );
     t += &last_lines(&kernel, kernel_line_relevant, 300);
     t + "\n"
+}
+
+/// The diagnosis's Wi-Fi part: device, driver, whether WPA3 is switched
+/// off for it, iwd's view of the adapter and its recent messages (iwd logs
+/// no passwords; network names do appear).
+fn wifi_diag() -> String {
+    let Some(dev) = crate::wifi::device() else {
+        return "(no Wi-Fi device)\n".into();
+    };
+    let mut t = format!(
+        "device {dev}, driver {}, WPA3 {}\n",
+        crate::wifi::driver_name(&dev)
+            .as_deref()
+            .unwrap_or("(unknown)"),
+        if crate::wifi::wpa3_off() {
+            "switched off (WPA2 only)"
+        } else {
+            "on"
+        }
+    );
+    t += &out_bounded(10, "iwctl", &["station", &dev, "show"]);
+    t += &out_bounded(
+        10,
+        "journalctl",
+        &[
+            "-b",
+            "--no-pager",
+            "-o",
+            "short-iso",
+            "-u",
+            "iwd.service",
+            "-n",
+            "200",
+        ],
+    );
+    t
 }
 
 /// Save the diagnosis on the stick's ALP-REPORT drive; returns its name.
