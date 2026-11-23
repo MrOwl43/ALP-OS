@@ -425,7 +425,15 @@
   }
   // T09: setup progress is kept by alpd (feature setup_progress), so a reboot continues where it stopped and a
   // finished setup never comes back. Skipped steps become reminders on the home screen.
-  function saveSetup(body) { if (has("setup_progress")) alp.setupProgress(body).then(() => refresh()).catch((e) => Errs.add({ level: "warn", text: t("err.setup.save"), code: e.code, key: e.key })); }
+  // "Finished" is tried again (every 15 s, up to 20 times) when saving it fails: until alpd has it, the
+  // console keeps its longer setup sign-in time.
+  function saveSetup(body, tries) {
+    if (!has("setup_progress")) return;
+    alp.setupProgress(body).then(() => refresh()).catch((e) => {
+      Errs.add({ level: "warn", text: t("err.setup.save"), code: e.code, key: e.key });
+      if (body.complete && (tries || 0) < 20) setTimeout(() => saveSetup(body, (tries || 0) + 1), 15000);
+    });
+  }
   function skipStep(step) {
     L.skip[step] = true;
     saveSetup({ skipped: Object.keys(L.skip).filter((k) => L.skip[k]) });

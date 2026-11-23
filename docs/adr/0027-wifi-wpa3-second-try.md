@@ -48,3 +48,17 @@ and the router's mode are not known.
   T-WIFI-01 checks a real join on simulated radios and that the stick's file
   reaches iwd; unit tests cover the rest. Confirmation needs the tester's
   laptop.
+- Security review 2026-11-23, accepted for the alpha: someone nearby who
+  disturbs the WPA3 sign-in on purpose could make the second try keep WPA3
+  off, for every network, until a later failure turns it back on. On a mixed
+  network the owner has already allowed WPA2, so this lowers the protection
+  to what the router offers anyway; a strong Wi-Fi password still matters.
+  Deciding only on iwd's SAE log lines was rejected: they differ between
+  versions and a driver that fails SAE often logs only a timeout. Follow-up
+  for 0.2.8: a "Use WPA3 again" button next to the WPA2 line, and the
+  diagnosis file hides network names and hardware addresses.
+- `/etc/iwd/main.conf` from the image is replaced as a whole while the
+  stick's file exists: any setting added to the image's main.conf later must
+  also go into `quirks_text`.
+- If putting the earlier setting back fails (stick full or read-only), alpd
+  logs it and the console shows the setting that is really in place.

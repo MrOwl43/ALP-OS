@@ -34,6 +34,20 @@ struct Console {
     last: Option<Instant>,
 }
 
+/// Longest time without use that the console stays signed in while the
+/// setup screens are not finished.
+const SETUP_IDLE: Duration = Duration::from_secs(60 * 60);
+
+/// "Lock after" for the console: the person's choice, or at least
+/// SETUP_IDLE while setup is not finished.
+fn console_idle(chosen: Duration, in_setup: bool) -> Duration {
+    if in_setup {
+        chosen.max(SETUP_IDLE)
+    } else {
+        chosen
+    }
+}
+
 /// Seconds without progress after which a job says it is still waiting
 /// for the disk.
 const STILL_WORKING: u64 = 60;
@@ -758,13 +772,14 @@ impl Live {
             return true;
         }
         let mut c = lock(&self.console);
-        let idle = self.idle_lock();
         // Owner decision 2026-11-23 (0.2.6 report): no idle lock until the
         // setup screens are finished (or left with "Later"); a pause on a
         // setup step must not ask to sign in. The session cookie is still
-        // needed, and a restart still ends the session.
-        let in_setup = !archive::setup_done();
-        let fresh = in_setup || c.last.is_some_and(|t| t.elapsed() < idle);
+        // needed, and a restart still ends the session. Bounded (security
+        // review 2026-11-23): a setup left open on an unattended console
+        // still locks after SETUP_IDLE without use.
+        let idle = console_idle(self.idle_lock(), !archive::setup_done());
+        let fresh = c.last.is_some_and(|t| t.elapsed() < idle);
         let ok = fresh
             && c.token
                 .as_ref()
@@ -5421,6 +5436,15 @@ mod tests {
             .count();
         assert_eq!(sets, 5);
         let _ = std::fs::remove_file(&l.prefs_file);
+    }
+
+    #[test]
+    fn setup_waits_an_hour_but_not_forever() {
+        let five = Duration::from_secs(300);
+        assert_eq!(console_idle(five, false), five);
+        assert_eq!(console_idle(five, true), SETUP_IDLE);
+        let two_hours = Duration::from_secs(7200);
+        assert_eq!(console_idle(two_hours, true), two_hours);
     }
 
     #[test]

@@ -266,14 +266,16 @@ pub fn quirks_say_wpa3_off(text: &str) -> bool {
 
 /// Switch WPA3 off for `driver` (Some) or back on (None), on the stick.
 fn set_wpa3_off(driver: Option<&str>) -> std::io::Result<()> {
+    crate::archive::state_ready().map_err(std::io::Error::other)?;
     let Some(d) = driver else {
         return match fs::remove_file(IWD_QUIRKS) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
             _ => fs::File::open(IWD_DIR)?.sync_all(),
         };
     };
-    crate::archive::state_ready().map_err(std::io::Error::other)?;
     let tmp = Path::new(IWD_DIR).join(".alp-main.tmp");
+    // A file left by an earlier, broken write keeps its mode: start anew.
+    let _ = fs::remove_file(&tmp);
     let mut f = fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -380,7 +382,12 @@ pub fn connect(
         }));
     }
     eprintln!("alp: Wi-Fi did not join either way; the earlier setting is put back");
-    let _ = set_wpa3_off(was_off.then_some(driver.as_str()));
+    if let Err(e) = set_wpa3_off(was_off.then_some(driver.as_str())) {
+        eprintln!(
+            "alp: Wi-Fi: the earlier WPA3 setting could not be put back ({e}); WPA3 stays {}",
+            if off { "off" } else { "on" }
+        );
+    }
     restart_iwd(&dev2);
     Err(refused())
 }
