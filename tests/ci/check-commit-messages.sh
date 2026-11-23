@@ -25,6 +25,10 @@ while read -r hash; do
             echo "FAIL: merge ${hash:0:7} names a tool, a session or a co-author" >&2
             bad=1
         fi
+        if [[ $(git log -1 --format='%ad %cd' --date=format:%z "$hash") != "+0000 +0000" ]]; then
+            echo "FAIL: merge ${hash:0:7} carries a local time zone; use Actions > Fast-forward main instead of the Merge button" >&2
+            bad=1
+        fi
         continue
     fi
     if git log -1 --format='%an <%ae>%n%cn <%ce>%n%B' "$hash" \

@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The owner's "merge" button: Actions > Fast-forward main > Run workflow.
+# Moves main and live-alpha forward to a working branch that already
+# contains them (fast-forward only: no merge commit, no force, nothing
+# rewritten). A merge made with GitHub's Merge button carries the time zone
+# of the person's browser, which this public repository must not show.
+# Pushes made with the workflow's token do not start CI again: run CI on
+# the branch before pressing this.
+name: Fast-forward main
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Working branch to move main and live-alpha to'
+        required: true
+        default: 'claude/project-thread-6e05pr'
+
+permissions:
+  contents: read
+
+jobs:
+  fast-forward:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Check and fast-forward
+        env:
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          [[ $BRANCH =~ ^[A-Za-z0-9._/-]{1,100}$ && $BRANCH != main && $BRANCH != live-alpha ]] || { echo "::error::not a working branch name: $BRANCH"; exit 1; }
+          git fetch -q origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" main live-alpha
+          tip=$(git rev-parse "refs/remotes/origin/$BRANCH")
+          for b in main live-alpha; do
+            git merge-base --is-ancestor "refs/remotes/origin/$b" "$tip" \
+              || { echo "::error::$b is not contained in $BRANCH: merge $b into the branch first"; exit 1; }
+          done
+          tests/ci/check-commit-messages.sh "$tip"
+          git push origin "$tip:refs/heads/main" "$tip:refs/heads/live-alpha"
+          echo "main and live-alpha are now ${tip::7}"
