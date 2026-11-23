@@ -68,6 +68,28 @@ What this settles:
    own.
 6. **Off by default**, one switch: "Reach my archive away from home".
 
+## Advanced: the family's own way in (owner, 2026-11-23)
+
+People who do not want to trust our service set up their own, under
+Settings > Advanced > Remote access. Our relay stays the simple default.
+
+1. **Own iroh relay** (0.2.9): one field, "Relay address". The family runs
+   the open source `iroh-relay` on their own server; nothing else changes
+   (same alp-tunnel, same phone pairing; the QR carries their address).
+   Cheapest option, so it comes first.
+2. **Own WireGuard** (after 0.2.9): the family imports a WireGuard config
+   file (from their router or VPN server). The kernel's WireGuard and
+   `systemd-networkd` bring it up, with nftables letting only the photo
+   door (nginx 443) in on that interface. No relay of ours is used.
+3. **Tailscale / Headscale** (later, decide then): needs the Tailscale
+   client in the image (another pinned component); with Headscale the
+   family runs the control server too. Only if testers ask for it.
+
+Rules for all three: off by default; only one way active at a time; the
+phone still checks the archive's pinned certificate and sends its own, so
+a family VPN never weakens the two locks at the door; the Settings screen
+says plainly who can see what (IP addresses, never photos or keys).
+
 ## Still to verify before product code (trial steps 2 to 4)
 
 - Static build of iroh for `x86_64-unknown-linux-musl` (how alpd and
