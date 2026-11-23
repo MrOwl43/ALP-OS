@@ -221,6 +221,7 @@ jobs:
         run: |
           name="ALP-OS-Live-alpha-${VERSION}.img"
           notes="ALP-OS Live alpha ${VERSION}, built from ${GITHUB_SHA::7} on ${GITHUB_REF_NAME}. Write ${name}.xz to a USB stick with Rufus or balenaEtcher (they unpack .xz themselves). SHA-256 of the unpacked image and of the .xz: see ${name}.sha256."
+          notes="${notes}"$'\n\n'"Alpha software. ALP-OS has not yet had an external security review. The focus right now is building the system and making it stable; in-depth penetration testing will follow as an integral part of development. Updates in place are signed with an alpha key, which will be replaced by a better-guarded key before the beta, and an update is only installed when you press Update."
           gh release create "alpha-${VERSION}" --target "$GITHUB_SHA" --prerelease \
             --title "ALP-OS Live alpha ${VERSION}" --notes "$notes" \
             "out/${name}.xz" "out/${name}.sha256"

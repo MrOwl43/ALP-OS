@@ -35,6 +35,11 @@ writing the stick again, which empties the index.
    public release the key moves offline, with a rotation and revocation
    plan (spec `open-items.md`). The private key never enters the
    repository, a log, or a chat.
+   Owner, 2026-11-23: the first key (made for 0.2.7) is the **alpha key**.
+   It is replaced by a new, better-guarded key before the beta, after the
+   security review. An update is only ever installed when the user
+   presses "Update"; nothing checks or installs in the background (the
+   sysupdate timers stay masked).
    Security review, 2026-11-16: a plain repository secret can be read by
    any workflow file on any branch, so by everyone who can push. The key
    is therefore a secret of the GitHub **environment `release`**, which
