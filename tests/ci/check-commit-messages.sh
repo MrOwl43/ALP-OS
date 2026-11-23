@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Commit messages in this public repository name no author but the project
 # and no tool: no "Co-Authored-By", no session links, no assistant or model
-# names. Checks every commit made since 2026-11-11 that HEAD reaches (the
-# 14 commits of the day before, when the repository was made public, are
-# known and listed in docs/PROGRESS.md).
+# names. Author and commit times are in UTC (+0000): a local time zone
+# would hint where the work was done. Checks every commit made since
+# 2026-11-11 that HEAD reaches (the 14 commits of the day before, when the
+# repository was made public, are known and listed in docs/PROGRESS.md).
 #
 # Usage: tests/ci/check-commit-messages.sh [revision]   (default HEAD)
 set -euo pipefail
@@ -24,6 +25,10 @@ while read -r hash; do
         echo "FAIL: commit ${hash:0:7} is not authored and committed as ALP-OS <noreply@alparchive.local>" >&2
         bad=1
     fi
+    if [[ $(git log -1 --format='%ad %cd' --date=format:%z "$hash") != "+0000 +0000" ]]; then
+        echo "FAIL: commit ${hash:0:7} is not dated in UTC (+0000); commit with TZ=UTC" >&2
+        bad=1
+    fi
 done < <(git log --since=2026-11-11T00:00:00Z --format=%H "$rev")
 (( bad == 0 )) || exit 1
-echo "ok:   commit messages and authors are clean"
+echo "ok:   commit messages, authors and time zones are clean"
