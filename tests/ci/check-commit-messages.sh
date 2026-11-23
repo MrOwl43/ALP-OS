@@ -16,6 +16,17 @@ if [[ $(git rev-parse --is-shallow-repository) == true ]]; then
 fi
 bad=0
 while read -r hash; do
+    # A merge made with the Merge button on GitHub: committed by GitHub
+    # itself, with GitHub's own message (it names the branch). Its parents
+    # are checked like every other commit.
+    if [[ $(git log -1 --format='%P' "$hash" | wc -w) -ge 2 && $(git log -1 --format='%cn <%ce>' "$hash") == "GitHub <noreply@github.com>" ]] \
+        && git log -1 --format=%s "$hash" | grep -Eq '^Merge pull request #[0-9]+ from '; then
+        if git log -1 --format=%B "$hash" | grep -Eiq 'co-authored-by:|anthropic|session_[0-9A-Za-z]{8}|generated with|requested by'; then
+            echo "FAIL: merge ${hash:0:7} names a tool, a session or a co-author" >&2
+            bad=1
+        fi
+        continue
+    fi
     if git log -1 --format='%an <%ae>%n%cn <%ce>%n%B' "$hash" \
         | grep -Eiq 'co-authored-by:|claude|anthropic|session_[0-9A-Za-z]{8}|generated with|requested by'; then
         echo "FAIL: commit ${hash:0:7} names a tool, a session or a co-author: $(git log -1 --format=%s "$hash")" >&2
