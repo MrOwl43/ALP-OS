@@ -15,3 +15,7 @@ the secret `UPDATE_SIGNING_KEY` of the GitHub environment `release`
 environment allows only the main branch and asks the owner to approve each
 run, so a workflow file on another branch cannot read the key. It moves
 offline before the public release.
+
+The current key is the **alpha key** (owner, 2026-11-23), made for 0.2.7:
+ed25519, fingerprint `3016 870C 1586 8376 1DFD  B9F7 04AD F4FC 6CF1 9307`.
+It is replaced by a better-guarded key before the beta (ADR 0026 item 4).
