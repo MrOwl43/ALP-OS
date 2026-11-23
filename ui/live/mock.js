@@ -70,6 +70,8 @@
   if (preset === "welcome-fail") { W.hardware.verdict = "fail"; W.hardware.checks[0] = { id: "memory", item: "Memory", status: "fail", value: "2 GB", advice: "" }; }
   if (["password", "where", "where-empty", "where-blocked", "progress", "phone", "recovery", "done", "home-empty", "disks", "admin", "lock", "lock-warn", "home", "home-warn", "home-full", "home-starting", "home-missing", "settings", "settings-chain", "confirm", "saver", "files"].includes(preset)) { online(preset === "home-empty" ? "wifi" : "wired"); W.lock = { state: "open", retry_after_seconds: 0, protection: "password" }; }
   if (["lock", "lock-warn", "saver"].includes(preset)) W.console.state = "locked";
+  // &expired: the console's sign-in ran out during setup (0.2.6 report: setup then only said "Please sign in first").
+  if (p.has("expired") && ["where", "phone", "recovery", "done"].includes(preset)) W.console.state = "locked";
   if (["home", "home-warn", "home-full", "home-starting", "settings", "settings-chain", "confirm", "disks", "admin", "lock", "lock-warn", "saver", "files"].includes(preset)) W.archive.recovery = "set";
   if (preset === "progress") { W.archive.state = "creating"; jobStart = Date.now(); }
   if (["phone", "recovery", "done", "lock", "lock-warn", "home", "home-warn", "home-full", "home-starting", "home-missing", "settings", "settings-chain", "confirm", "saver", "disks", "admin", "files"].includes(preset)) open();

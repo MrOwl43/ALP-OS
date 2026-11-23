@@ -566,9 +566,16 @@
   }
 
   /* ---------- routing ---------- */
+  // Setup with a password already chosen, the stick open, and the console's sign-in ended (idle): sign in again.
+  // Not while "Delete everything" runs: its own screen follows the job and setup starts over after it.
+  function setupSignIn() { return L.mode === "setup" && S.lock.state !== "setup" && S.lock.state !== "locked" && !!S.console && S.console.state === "locked" && !(S.arch.job && S.arch.job.id === "reset") && !(current && current.name === "reset"); }
   function computeScreen() {
     if (!S.hw.canRun && L.mode === "setup") return "toosmall";
     if (S.lock.state === "locked" && !L.signed) return "unlock";
+    // 0.2.6 report: the console's sign-in ends after "Lock after" without use, during setup too (the password is
+    // set by then). Setup had no sign-in screen, so its next step only said "Please sign in first". Now the lock
+    // screen comes, and setup goes on where it was after signing in.
+    if (setupSignIn()) return "lock";
     if (L.mode === "setup") {
       if (L.view) return L.view;
       if (!L.welcomed) return "welcome";
@@ -1704,7 +1711,7 @@
           go.disabled = true; res.replaceChildren(h("div", { class: "banner warn", role: "alert" }, t("unlock.wait", { n }))); }; tick(); timer = setInterval(tick, 1000); };
       const form = h("form", { class: "lk-form hidden", onsubmit: async (ev) => {
         ev.preventDefault(); if (go.disabled || !pw.value) return; go.disabled = true;
-        try { await alp.verify(pw.value); pw.value = ""; L.signed = true; touch(); L.view = null; route(true); }
+        try { await alp.verify(pw.value); pw.value = ""; L.signed = true; touch(); if (L.mode === "setup") await refresh(); else L.view = null; route(true); }
         catch (e) { pw.value = ""; go.disabled = false; if (e.key === "password.wait" && e.retryAfter) return wait(e.retryAfter); res.replaceChildren(banner("bad", e)); pw.focus(); }
       } }, h("div", { class: "lk-user" }, h("span", { class: "lk-avatar" }, iconEl("logo")), h("b", {}, t("lock.user"))),
         h("div", { class: "input-row" }, pw, go), res);
@@ -2730,6 +2737,7 @@
     if (await refresh() && current) {
       if (current.name === "progress" && S.arch.state !== "creating") route(true);
       else if (L.mode === "everyday" && ((!L.signed && current.name !== "lock" && current.name !== "unlock" && current.name !== "confirm") || (L.signed && current.name === "lock"))) route(true);
+      else if (L.mode === "setup" && setupSignIn() !== (current.name === "lock")) route(true);
       else current.update(S);
       renderTray();
       Errs.sync(S); offerImport(S);
@@ -2739,7 +2747,7 @@
     pollTimer = setTimeout(loop, 2000);
   }
 
-  window.addEventListener("alp-locked", async () => { await refresh(); if (L.mode === "everyday") { L.signed = false; hist.length = 0; closeModal(); route(true); } });
+  window.addEventListener("alp-locked", async () => { await refresh(); if (L.mode === "everyday") { L.signed = false; hist.length = 0; closeModal(); route(true); } else if (setupSignIn()) { closeModal(); route(true); } });
 
   /* ---------- keyboard ---------- */
   document.addEventListener("keydown", (ev) => {

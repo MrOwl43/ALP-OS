@@ -462,6 +462,15 @@ for (const q of ["", "&features=recovery_commit,events"]) {
   await done(page, "restore-ask");
 }
 
+// The console's sign-in ran out during setup (0.2.6 report): the lock screen comes, and setup goes on after signing in.
+{
+  const page = await open("&screen=where&expired=1");
+  await page.waitForSelector(".lk-hint", { timeout: 8000 });
+  await page.click(".lk-hint"); await page.fill("#lpw", "a-good-password"); await page.click(".lk-form button[type=submit]");
+  await page.waitForSelector("text=Where should your backup live?", { timeout: 8000 });
+  await done(page, "setup-signin-again");
+}
+
 await browser.close(); server.close();
 if (failures.length) { console.log(`FAIL: T-UI-SMOKE (${failures.length})`); process.exit(1); }
 console.log("PASS: T-UI-SMOKE");
