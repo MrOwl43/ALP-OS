@@ -112,7 +112,7 @@ if jq -e '.network.ports[] | select(.kind == "wifi" and .ssid == "ALPTEST")' >/d
 else
     echo "note: Live did not join the simulated network: $(jq -c '.network.job' <<<"$state" 2>/dev/null)"
 fi
-jq -e '.network | has("wpa3_off")' >/dev/null 2>&1 <<<"$state" && echo "ok:   live/state reports wpa3_off" || { echo "FAIL: live/state has no wpa3_off" >&2; fail=1; }
+if jq -e '.network | has("wpa3_off")' >/dev/null 2>&1 <<<"$state"; then echo "ok:   live/state reports wpa3_off"; else echo "FAIL: live/state has no wpa3_off" >&2; fail=1; fi
 expect "iwd reads the switch-off from the stick" 'IWDCONF=1' "$out"
 expect "without the file iwd has its defaults" 'IWDCONF2=0' "$out"
 if grep -qE '^DRIVER=.+' <<<"$out" && ! grep -q '^DRIVER=$' <<<"$out"; then
