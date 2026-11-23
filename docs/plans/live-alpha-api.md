@@ -660,7 +660,10 @@ area starts.
 - `console` is about the screen: `state`: `open` | `locked` (lock screen:
   sign in with the admin password). `idle_lock_seconds`: the screen locks
   by itself after this many seconds without `console/activity` or another
-  call that needs the console open (`GET state` does not count).
+  call that needs the console open (`GET state` does not count). Not
+  while setup is unfinished (`setup.complete` false): the idle lock starts
+  once the setup screens are done or left (owner decision 2026-11-23); a
+  restart still ends the session.
 - `archive.recovery`: `none` (no recovery code made yet) | `set`; `none`
   unless `open`. `archive.serious`: `true` when the archive was made with
   serious encryption (recovery needs the code and the passphrase).

@@ -759,7 +759,12 @@ impl Live {
         }
         let mut c = lock(&self.console);
         let idle = self.idle_lock();
-        let fresh = c.last.is_some_and(|t| t.elapsed() < idle);
+        // Owner decision 2026-11-23 (0.2.6 report): no idle lock until the
+        // setup screens are finished (or left with "Later"); a pause on a
+        // setup step must not ask to sign in. The session cookie is still
+        // needed, and a restart still ends the session.
+        let in_setup = !archive::setup_done();
+        let fresh = in_setup || c.last.is_some_and(|t| t.elapsed() < idle);
         let ok = fresh
             && c.token
                 .as_ref()
