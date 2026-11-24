@@ -1,6 +1,17 @@
 # Scale test data plan (draft)
 
-Status: plan only, nothing implemented. Target: 0.2.8 (installed system, RAID1, tens of TB).
+Status: plan only, nothing implemented. The full run below is for AFTER the beta versions
+(owner decision 2026-11-24). Until then, automated test data stays at or below 1 GB in total,
+and the owner tests large files himself on real hardware.
+
+## Now (before beta): small variant
+
+- About 10,000 tiny photos (the generator below, 320x240) and a few short videos, under 1 GB
+  in total, on small virtual disks (for example two 8 GB disks for RAID1).
+- Same checks as the full run, at this size: every item lands once, the gallery lists them
+  all, a disk pulled from the mirror loses nothing.
+
+## Later (after beta): full scale
 
 ## Goal
 
