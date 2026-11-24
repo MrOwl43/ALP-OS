@@ -166,19 +166,10 @@ pub fn scan(dev: &str) -> Vec<Network> {
 
 /// The network `dev` is connected to (`iwctl station <dev> show`).
 pub fn connected_ssid(dev: &str) -> Option<String> {
-    let out = strip_ansi(&iwctl(&["station", dev, "show"]));
-    let mut connected = false;
-    let mut ssid = None;
-    for l in out.lines() {
-        let t = l.trim();
-        if let Some(v) = t.strip_prefix("State") {
-            connected = v.trim() == "connected";
-        }
-        if let Some(v) = t.strip_prefix("Connected network") {
-            ssid = Some(v.trim().to_string());
-        }
+    match station(&iwctl(&["station", dev, "show"])) {
+        (Some(state), ssid) if state == "connected" => ssid,
+        _ => None,
     }
-    ssid.filter(|_| connected)
 }
 
 /// Check a connect request before anything is stored.
@@ -205,12 +196,59 @@ pub fn check_request(security: &str, password: &str) -> Result<(), crate::fail::
     }
 }
 
-/// Ask iwd to join `ssid`; waits up to 20 s for iwd to report "connected".
+/// `State` and `Connected network` of `iwctl station <dev> show`.
+fn station(out: &str) -> (Option<String>, Option<String>) {
+    let mut state = None;
+    let mut ssid = None;
+    for l in strip_ansi(out).lines() {
+        let t = l.trim();
+        if let Some(v) = t.strip_prefix("State") {
+            state = Some(v.trim().to_string());
+        }
+        if let Some(v) = t.strip_prefix("Connected network") {
+            ssid = Some(v.trim().to_string());
+        }
+    }
+    (state, ssid)
+}
+
+/// What one look at the station says about a join that iwd already
+/// answered: joined, refused (iwd is back to "disconnected"), or still
+/// working (connecting, roaming, or no answer).
+#[derive(Debug, PartialEq, Eq)]
+enum Join {
+    Joined,
+    Refused,
+    Working,
+}
+
+fn join_state(out: &str, ssid: &str) -> Join {
+    match station(out) {
+        (Some(s), Some(n)) if s == "connected" && n == ssid => Join::Joined,
+        (Some(s), _) if s == "disconnected" => Join::Refused,
+        _ => Join::Working,
+    }
+}
+
+/// Ask iwd to join `ssid`. `iwctl station connect` waits for iwd's answer,
+/// so a refused password (iwd back to "disconnected") is known at once;
+/// otherwise this waits up to 20 s for "connected". (0.2.7 laptop test: a
+/// wrong password took a full minute to report.)
 fn try_join(dev: &str, ssid: &str) -> bool {
     iwctl(&["station", dev, "connect", ssid]);
+    let mut refused = 0;
     for _ in 0..20 {
-        if connected_ssid(dev).as_deref() == Some(ssid) {
-            return true;
+        match join_state(&iwctl(&["station", dev, "show"]), ssid) {
+            Join::Joined => return true,
+            // Twice in a row, so a state between two steps is not taken
+            // for an answer.
+            Join::Refused => {
+                refused += 1;
+                if refused >= 2 {
+                    return false;
+                }
+            }
+            Join::Working => refused = 0,
         }
         sleep(Duration::from_secs(1));
     }
@@ -598,5 +636,41 @@ mod tests {
         assert_eq!(iwd_file_name("Home WiFi_5G-2", "psk"), "Home WiFi_5G-2.psk");
         assert_eq!(iwd_file_name("Café", "psk"), "=436166c3a9.psk");
         assert_eq!(iwd_file_name("a/b", "open"), "=612f62.open");
+    }
+
+    #[test]
+    fn a_refused_join_is_known_at_once() {
+        let show = |state: &str, net: &str| {
+            format!(
+                "                            Station: wlan0\n\
+                 --------------------------------------------------------------------------------\n\
+                   Settable  Property              Value\n\
+                 --------------------------------------------------------------------------------\n\
+                             Scanning              no\n\
+                             State                 {state}\n\
+                             Connected network     {net}\n"
+            )
+        };
+        assert_eq!(join_state(&show("connected", "Home"), "Home"), Join::Joined);
+        assert_eq!(
+            join_state(&show("connected", "Other"), "Home"),
+            Join::Working
+        );
+        assert_eq!(
+            join_state(&show("connecting", "Home"), "Home"),
+            Join::Working
+        );
+        assert_eq!(
+            join_state("State                 disconnected", "Home"),
+            Join::Refused
+        );
+        assert_eq!(join_state("", "Home"), Join::Working);
+        assert_eq!(
+            join_state(
+                "\x1b[0m    State   \x1b[1mconnected\x1b[0m\n Connected network  Home",
+                "Home"
+            ),
+            Join::Joined
+        );
     }
 }
