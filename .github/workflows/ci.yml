@@ -104,7 +104,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: ${{ fromJSON(inputs.vm_groups || '["base", "ui", "immich", "update"]') }}
+        group: ${{ fromJSON(inputs.vm_groups || '["base", "ui", "immich", "update", "installed"]') }}
     name: image (${{ matrix.group }})
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -145,6 +145,10 @@ jobs:
           path: out/raw-samples
           key: raw-samples-${{ hashFiles('tests/vm/formats/raw-samples.lock') }}
       - run: just build-image
+        env:
+          # The "installed" group builds the 0.2.8 installed version (native
+          # screen and installer); every other group the Live image.
+          ALP_PROFILE: ${{ matrix.group == 'installed' && 'installed' || 'live' }}
       - run: cat out/SHA256SUMS
       - run: just test-vm-${{ matrix.group }}
         env:

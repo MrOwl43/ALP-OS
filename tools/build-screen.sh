@@ -22,6 +22,7 @@ engine=$(command -v podman || command -v docker || true)
 [[ -n $engine ]] || { echo "build-screen: needs podman or docker" >&2; exit 1; }
 mkdir -p "$OUT"
 
+# shellcheck disable=SC2016  # the script runs inside the container
 tests/lib/locks.sh cargo "$engine" run --rm \
     -v "$PWD:/src:ro" -v "$PWD/$OUT:/out" \
     -e SNAPSHOT="$SNAPSHOT" -e TOOLCHAIN="$TOOLCHAIN" \
@@ -33,7 +34,8 @@ tests/lib/locks.sh cargo "$engine" run --rm \
         # The toolchain of rust-toolchain.toml, from rustup (same as CI).
         curl -fsSL https://sh.rustup.rs | sh -s -- -y -q --profile minimal --default-toolchain "$TOOLCHAIN"
         . "$HOME/.cargo/env"
-        cp -r /src /build && cd /build
+        # The sources without build output (target/ and out/ can be many GB).
+        mkdir /build && tar -C /src --exclude=./target --exclude=./out --exclude=./.git -cf - . | tar -C /build -xf - && cd /build
         CARGO_PROFILE_RELEASE_STRIP=symbols RUSTFLAGS="--remap-path-prefix=/build=/alp-os" \
             cargo build --release --locked -p alp-screen --features gui
         install -m 0755 target/release/alp-screen /out/alp-screen

@@ -6,6 +6,9 @@ image := out / "alp-os.raw"
 # Immich images in the image build (ADR 0015): `ALP_IMMICH_IMPORT=0 just
 # build-image` builds without them (no download; Immich cannot start).
 export ALP_IMMICH_IMPORT := env_var_or_default("ALP_IMMICH_IMPORT", "1")
+# Which image (image/mkosi.profiles): "live" (frozen at 0.2.7, Chromium kiosk)
+# or "installed" (0.2.8, ADR 0028: native screen and the installer).
+profile := env_var_or_default("ALP_PROFILE", "live")
 
 default:
     @just --list
@@ -40,7 +43,7 @@ _build dir: _stage
     mkdir -p {{dir}}
     # Each output directory has its own package cache, so repro builds start clean.
     # At most one image build at a time on this machine (tests/lib/locks.sh).
-    tests/lib/locks.sh image-build mkosi -C image --image-version="${ALP_IMAGE_VERSION:-$(tools/update-version.sh)}" --output-directory={{dir}} --package-cache-dir={{dir}}/pkgcache -f build
+    tests/lib/locks.sh image-build mkosi -C image --profile={{profile}} --image-version="${ALP_IMAGE_VERSION:-$(tools/update-version.sh)}" --output-directory={{dir}} --package-cache-dir={{dir}}/pkgcache -f build
     # Hash only build artifacts (test results such as budget.json are not artifacts).
     cd {{dir}} && rm -f budget.json && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS
 
@@ -49,7 +52,16 @@ _build dir: _stage
 # trixie; the Live UI (ui/live, without the browser-only mock) for alpd.
 _stage:
     CARGO_PROFILE_RELEASE_STRIP=symbols RUSTFLAGS="--remap-path-prefix={{justfile_directory()}}=/alp-os --remap-path-prefix=$HOME/.cargo=/cargo" \
-        tests/lib/locks.sh cargo cargo build --release --locked --target x86_64-unknown-linux-musl -p alpctl -p alp-core
+        tests/lib/locks.sh cargo cargo build --release --locked --target x86_64-unknown-linux-musl -p alpctl -p alp-core -p alp-installer
+    # The installed version's own programs (mkosi.profiles/installed): the
+    # installer (static, like alpctl) and the native screen, built against
+    # the image's own GTK in a pinned container (tools/build-screen.sh).
+    rm -rf target/alp-installed-tree && mkdir -p target/alp-installed-tree
+    if [ "{{profile}}" = installed ]; then \
+        install -D -m 0755 target/x86_64-unknown-linux-musl/release/alp-installer target/alp-installed-tree/usr/bin/alp-installer && \
+        mkdir -p target/alp-installed-tree/usr/lib/alp && cp -r --no-preserve=mode,ownership image/install-layout target/alp-installed-tree/usr/lib/alp/install-layout && \
+        tools/build-screen.sh target/alp-screen && \
+        install -D -m 0755 target/alp-screen/alp-screen target/alp-installed-tree/usr/lib/alp/alp-screen; fi
     rm -rf target/alp-image-tree
     install -D -m 0755 target/x86_64-unknown-linux-musl/release/alpctl target/alp-image-tree/usr/bin/alpctl
     install -D -m 0755 target/x86_64-unknown-linux-musl/release/alpd target/alp-image-tree/usr/bin/alpd
@@ -114,6 +126,11 @@ test-vm-update:
     tests/vm/t-upd-01.sh {{image}}
     ALP_IMAGE_VERSION=9.9.90 just _build {{out}}/next
     tests/vm/t-upd-02.sh {{image}} {{out}}/next/alp-os.raw 9.9.90
+
+# The installed version (ALP_PROFILE=installed, 0.2.8): T-INST-01 installs
+# onto a virtual disk next to a fake Windows disk that must stay untouched.
+test-vm-installed:
+    tests/vm/t-inst-01.sh {{image}}
 
 # T-LIVE-04 (reset, cancel, real wipe), T-LIVE-05 (T49 quick and secure
 # format) and T-LIVE-06 (read-only Files): external disks, in their own CI job.
