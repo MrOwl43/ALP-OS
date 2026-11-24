@@ -149,6 +149,134 @@ impl Settings {
     }
 }
 
+/// The installer as `alpd` passes it on (`alp_installer::view`).
+pub mod install {
+    use serde_json::Value;
+
+    fn s(v: &Value) -> String {
+        v.as_str().unwrap_or_default().to_string()
+    }
+
+    fn lines(v: &Value) -> Vec<String> {
+        v.as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|l| l.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[derive(Debug, Clone, PartialEq, Default)]
+    pub struct Disk {
+        pub name: String,
+        pub model: String,
+        pub size: String,
+        pub usb: bool,
+        /// False: greyed out, with [`Disk::reason`].
+        pub usable: bool,
+        pub can_be_system: bool,
+        pub can_be_data: bool,
+        /// What is on it now (erased if chosen); empty when blank.
+        pub contents: Vec<String>,
+        /// Why it is greyed out: translation key and English text.
+        pub reason: Option<(String, String)>,
+    }
+
+    /// `GET install/disks`: every disk, in alpd's order.
+    pub fn disks(w: &Value) -> Vec<Disk> {
+        w["disks"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter(|d| d.is_object())
+                    .map(|d| {
+                        let roles = lines(&d["roles"]);
+                        let has = |r: &str| roles.iter().any(|x| x == r);
+                        let usable = d["usable"].as_bool().unwrap_or(false);
+                        Disk {
+                            name: s(&d["name"]),
+                            model: s(&d["model"]),
+                            size: s(&d["size"]),
+                            usb: d["transport"] == "usb",
+                            usable,
+                            can_be_system: usable && (has("system") || has("system_and_data")),
+                            can_be_data: usable && has("data"),
+                            contents: lines(&d["contents"]),
+                            reason: (!usable)
+                                .then(|| (s(&d["reason"]["key"]), s(&d["reason"]["text"]))),
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[derive(Debug, Clone, PartialEq, Default)]
+    pub struct Plan {
+        /// (name, model, size, contents) of every disk that is erased.
+        pub erases: Vec<(String, String, String, Vec<String>)>,
+        /// Some erased disk holds files: strong warning and the slide.
+        pub strong_warning: bool,
+        pub usable: String,
+        /// `none`, `bit_rot_only` or `disk_failure`.
+        pub protection: String,
+    }
+
+    /// `POST install/plan`.
+    pub fn plan(w: &Value) -> Plan {
+        Plan {
+            erases: w["erases"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .map(|e| {
+                            (
+                                s(&e["name"]),
+                                s(&e["model"]),
+                                s(&e["size"]),
+                                lines(&e["contents"]),
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            // Unknown means warn: never skip the slide by mistake.
+            strong_warning: w["strong_warning"].as_bool().unwrap_or(true),
+            usable: s(&w["pool"]["usable"]),
+            protection: s(&w["pool"]["protection"]),
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Default)]
+    pub struct Job {
+        pub running: bool,
+        pub percent: u8,
+        pub key: String,
+        pub message: String,
+        /// `ok` or an `ALP-INST-*` code once finished.
+        pub result: Option<String>,
+        pub detail: String,
+    }
+
+    /// `state.install`: whether this system can install, and the job.
+    pub fn state(w: &Value) -> (bool, Option<Job>) {
+        let i = &w["install"];
+        let job = i["job"].as_object().map(|_| {
+            let j = &i["job"];
+            Job {
+                running: j["running"].as_bool().unwrap_or(false),
+                percent: j["percent"].as_u64().unwrap_or(0).min(100) as u8,
+                key: s(&j["key"]),
+                message: s(&j["message"]),
+                result: j["result"].as_str().map(str::to_string),
+                detail: s(&j["detail"]),
+            }
+        });
+        (i["available"].as_bool().unwrap_or(false), job)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,5 +353,39 @@ mod tests {
         let s = Screen::from_state(&json!({"status": {"level": "note"}}));
         assert!(!s.level.needs_user());
         assert_eq!(s.home_keys().0, "lock.msg.ok");
+    }
+
+    #[test]
+    fn install_disks_and_plan() {
+        let w = json!({"disks": [
+            {"name": "sda", "model": "Disk", "size": "500 GB", "transport": "sata",
+             "usable": true, "roles": ["system_and_data", "system", "data"], "contents": []},
+            {"name": "sdb", "size": "1 TB", "usable": true, "roles": ["data"],
+             "contents": ["ntfs \"Photos\" (1000 GB)"]},
+            {"name": "nvme0n1", "usable": false,
+             "reason": {"key": "holds_windows", "text": "Holds Windows."}},
+            "junk"
+        ]});
+        let d = install::disks(&w);
+        assert_eq!(d.len(), 3);
+        assert!(d[0].can_be_system && d[0].can_be_data && d[0].contents.is_empty());
+        assert!(!d[1].can_be_system && d[1].can_be_data);
+        assert!(!d[2].usable && !d[2].can_be_data);
+        assert_eq!(d[2].reason.as_ref().unwrap().0, "holds_windows");
+
+        let p = install::plan(&json!({
+            "erases": [{"name": "sdb", "model": "M", "size": "1 TB", "contents": ["x"]}],
+            "strong_warning": true, "pool": {"usable": "1 TB", "protection": "bit_rot_only"}
+        }));
+        assert!(p.strong_warning);
+        assert_eq!(p.erases[0].3, ["x"]);
+        // A plan without the flag never skips the warning.
+        assert!(install::plan(&json!({})).strong_warning);
+
+        let (avail, job) = install::state(&json!({"install": {"available": true,
+            "job": {"running": true, "percent": 40, "key": "k", "message": "m", "result": null}}}));
+        assert!(avail);
+        assert_eq!(job.unwrap().percent, 40);
+        assert_eq!(install::state(&json!({})), (false, None));
     }
 }

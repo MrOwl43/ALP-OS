@@ -275,6 +275,7 @@
  "lock.signin": "Sign in",
  "lock.user": "ALPArchive",
  "lock.msg.ok": "All good",
+ "install.open": "Install ALP-OS",
  "lock.msg.warn": "Your photos are safe, but something needs a look",
  "lock.msg.bad": "ALPArchive needs your attention",
  "lock.devices": "Devices",

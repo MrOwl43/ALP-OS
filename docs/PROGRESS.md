@@ -13,8 +13,20 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
 - Open field bugs (0.2.7 laptop tests): uploads stall; shutdown did not power off; old laptops (2013/2016)
   do not boot; Wi-Fi on TP-Link Smart Connect; old archive refused the ALP password; kiosk escapes (moot
   once Chromium leaves). Home screen "All good" text; gallery "Upload more photos" blocked by kiosk policy.
-- Next: plan for block 7 (installer, OS-disk detection) and the native screen, with VERIFY of GTK 4,
-  libadwaita, gtk4-rs and WebKitGTK versions in the pinned Debian snapshot.
+- Done since: installer disk list, plan and executor (`alp-installer`, mocks only; T-INST-01 written, not
+  yet in CI); pool plan digest (`alp-hw`, SHA3-256, golden test); alpd `install/disks|plan|start` +
+  `state.install`; native screen (`crates/alp-screen`): sign-in, home, settings, install pages (disk list
+  with greyed reasons, confirm with warning and slide, progress). App: files over 80 MB one at a time.
+- Owner's 0.2.7 test notes (2026-11-24), to carry into the 0.2.8 screens: (1) Wi-Fi wrong password takes a
+  full minute; answer as soon as the router answers. (2) Backup USB disk: no NTFS option; default and only
+  choice is format to exFAT; an empty ext4 disk may become an archive without formatting. (3) Recovery
+  code check said "No new recovery code is waiting" right after generating; on return the flow restarted
+  (bug in recovery/create -> check state). (4) Phone steps: say a restart of the phone is needed after
+  installing the certificate. (5) Phone scan: the message blinks every 1-1.5 s; keep one steady
+  "Looking for your phone..." with a spinner. (6) Home dashboard too crammed in the middle; spread the
+  panels, uneven grid.
+- Next: install pages checked by screenshot; image profile for the installed system (alp-screen in,
+  Chromium out, alp-installer shipped); recovery code bug (3); Wi-Fi fast fail (1).
 
 ## Alpha 0.2.7 (started 2026-11-15, same branch, on top of 0.2.61)
 

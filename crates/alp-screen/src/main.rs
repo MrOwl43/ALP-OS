@@ -6,9 +6,11 @@
 //! GTK main loop through a channel polled with a timeout, so the screen never
 //! waits on alpd.
 
+mod install;
+
 use alp_screen::api::{ApiError, Client};
 use alp_screen::i18n::{self, Texts};
-use alp_screen::model::{Screen, Settings};
+use alp_screen::model::{self, Screen, Settings};
 use gtk4::prelude::*;
 use gtk4::{gio, glib};
 use libadwaita as adw;
@@ -30,10 +32,11 @@ enum Msg {
     SignedIn(Result<Value, ApiError>),
     /// The answer to a settings action (sync clock, update, power).
     Done(Result<Value, ApiError>),
+    Install(install::InstallMsg),
 }
 
 struct Ui {
-    texts: Texts,
+    texts: Rc<Texts>,
     stack: gtk4::Stack,
     status: gtk4::Label,
     password: gtk4::PasswordEntry,
@@ -41,6 +44,8 @@ struct Ui {
     error: gtk4::Label,
     home_title: gtk4::Label,
     home_line: gtk4::Label,
+    install_btn: gtk4::Button,
+    inst: Rc<install::InstallUi>,
     set: SettingsUi,
 }
 
@@ -75,7 +80,7 @@ fn build(app: &adw::Application) {
     {
         st.set_gtk_xft_dpi(96 * 1024);
     }
-    let texts = Texts::load(Path::new(i18n::DIR), "en");
+    let texts = Rc::new(Texts::load(Path::new(i18n::DIR), "en"));
     let client = Arc::new(Client::default());
     let (tx, rx) = mpsc::channel::<Msg>();
 
@@ -122,16 +127,23 @@ fn build(app: &adw::Application) {
         .label(texts.t("home.settings"))
         .css_classes(["pill"])
         .build();
+    let install_btn = gtk4::Button::builder()
+        .label(texts.t("install.open"))
+        .css_classes(["suggested-action", "pill"])
+        .visible(false)
+        .build();
     let home_page = column(&[
         home_title.clone().upcast(),
         home_line.clone().upcast(),
+        install_btn.clone().upcast(),
         settings_btn.clone().upcast(),
         lock_btn.clone().upcast(),
     ]);
 
-    let (settings_page, set, back) = settings_page(&texts, &client, &tx);
-
     let stack = gtk4::Stack::new();
+    let (settings_page, set, back) = settings_page(&texts, &client, &tx);
+    let inst = install::InstallUi::new(texts.clone(), client.clone(), tx.clone(), &stack);
+
     stack.add_named(&lock_page, Some("lock"));
     stack.add_named(&home_page, Some("home"));
     stack.add_named(&settings_page, Some("settings"));
@@ -151,8 +163,11 @@ fn build(app: &adw::Application) {
         error,
         home_title,
         home_line,
+        install_btn: install_btn.clone(),
+        inst: inst.clone(),
         set,
     });
+    install_btn.connect_clicked(move |_| inst.open());
 
     {
         // Look for an update, or install the one found (only on a press:
@@ -247,6 +262,9 @@ fn handle(ui: &Ui, m: Msg) {
                     _ => String::new(),
                 });
                 show_settings(&ui.set, &ui.texts, &Settings::from_state(&w));
+                let (can_install, job) = model::install::state(&w);
+                ui.install_btn.set_visible(can_install);
+                ui.inst.show_job(&job);
                 if ui.stack.visible_child_name().as_deref() == Some("lock") {
                     ui.stack.set_visible_child_name("home");
                 }
@@ -263,6 +281,7 @@ fn handle(ui: &Ui, m: Msg) {
         Msg::State(Err(e)) => {
             ui.status.set_label(&ui.texts.t(&e.key));
         }
+        Msg::Install(m) => ui.inst.handle(m),
         Msg::Done(r) => {
             ui.set.note.set_label(&match r {
                 Ok(_) => String::new(),
