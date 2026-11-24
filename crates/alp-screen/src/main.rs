@@ -299,14 +299,22 @@ fn settings_page(
     };
     let row = |title: &str| adw::ActionRow::builder().title(title).build();
 
-    let page = adw::PreferencesPage::new();
+    // A plain column of groups in a clamp: wide enough to read on the
+    // archive's screen, scrolling when it gets long.
+    let page = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .spacing(24)
+        .margin_top(24)
+        .margin_bottom(24)
+        .hexpand(true)
+        .build();
 
     let about = adw::PreferencesGroup::builder()
         .title(texts.t("set.h.about"))
         .build();
     let version = row(&texts.t("about.version"));
     about.add(&version);
-    page.add(&about);
+    page.append(&about);
 
     let computer = adw::PreferencesGroup::builder()
         .title(texts.t("set.h.computer"))
@@ -341,7 +349,7 @@ fn settings_page(
     power.append(&restart);
     power.append(&off);
     computer.add(&power);
-    page.add(&computer);
+    page.append(&computer);
     confirm(
         &restart,
         &texts.t("power.restart.title"),
@@ -360,7 +368,7 @@ fn settings_page(
     let phones = adw::PreferencesGroup::builder()
         .title(texts.t("set.h.phones"))
         .build();
-    page.add(&phones);
+    page.append(&phones);
 
     let back = gtk4::Button::builder()
         .label(texts.t("common.back"))
@@ -376,9 +384,18 @@ fn settings_page(
         .build();
     b.append(&back);
     b.append(&note);
-    page.set_vexpand(true);
-    page.set_hexpand(true);
-    b.append(&page);
+    let clamp = adw::Clamp::builder()
+        .maximum_size(720)
+        .hexpand(true)
+        .tightening_threshold(560)
+        .child(&page)
+        .build();
+    let scroll = gtk4::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk4::PolicyType::Never)
+        .vexpand(true)
+        .child(&clamp)
+        .build();
+    b.append(&scroll);
     let ui = SettingsUi {
         version,
         clock,
