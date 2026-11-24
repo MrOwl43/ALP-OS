@@ -73,6 +73,8 @@ check "phone waits" '"state": ?"pending"' "$(curl -s -H 'Content-Type: applicati
 c -X POST $A/pair/approve -d "{\"id\":\"$rid\"}" >appr
 check "console approves" '"serial": ?"[0-9A-F]{32}"' "$(cat appr)"
 serial=$(sed -n 's/.*"serial": *"\([0-9A-F]*\)".*/\1/p' appr)
+check "approved request still reads pending while nginx reloads" '"state": ?"pending"' "$(curl -s -H 'Content-Type: application/json' -X POST $A/pair/v1/status -d "{\"id\":\"$rid\"}")"
+sleep 4
 s=$(curl -s -H 'Content-Type: application/json' -X POST $A/pair/v1/status -d "{\"id\":\"$rid\"}")
 check "phone gets its certificate" '"state": ?"approved"' "$s"
 sed -n 's/.*"certificate": *"\([^"]*\)".*/\1/p' <<<"$s" | sed 's/\\n/\n/g' >phone.crt

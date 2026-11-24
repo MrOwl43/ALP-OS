@@ -156,8 +156,9 @@ pair02() { # base, immich token
     rid=$(jq -r .id <<<"$r")
     [[ -n $rid && $rid != null ]] || { echo "FAIL: T-PAIR-02: pairing request through nginx: $r" >&2; return 1; }
     mark APPROVED 120 >/dev/null || { echo "FAIL: T-PAIR-02: the console did not approve" >&2; return 1; }
+    sleep 4   # an approved request reads pending until nginx has reloaded
     $c -H 'Content-Type: application/json' -X POST "$base/alp/pair/v1/status" -d "{\"id\":\"$rid\"}" | jq -r .certificate >"$T_WORK/phone.crt"
-    sleep 5   # nginx reload
+    # No extra wait: the phone app calls the server at once (0.2.7 field report).
     local m=(--cert "$T_WORK/phone.crt" --key "$T_WORK/phone.key")
     [[ $($c "${m[@]}" -o /dev/null -w '%{http_code}' "$base/api/server/ping") == 200 ]] \
         || { echo "FAIL: T-PAIR-02: paired phone refused" >&2; return 1; }

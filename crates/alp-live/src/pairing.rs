@@ -26,6 +26,9 @@ use crate::immich::TLS_DIR;
 pub const WINDOW: Duration = Duration::from_secs(5 * 60);
 /// How long an unanswered request waits for the console.
 pub const REQUEST_TTL: Duration = Duration::from_secs(5 * 60);
+/// How long an approved request still reads as pending, so nginx has loaded
+/// the new allowlist before the phone gets its certificate.
+const APPROVE_SETTLE: Duration = Duration::from_secs(3);
 /// Wrong tokens before an open window closes.
 pub const MAX_WRONG: u32 = 10;
 /// Days a device certificate is valid. Long until phones renew their own
@@ -283,6 +286,13 @@ impl Pairing {
             None => json!({"state": "unknown"}),
             Some(r) => match &r.state {
                 RequestState::Pending => json!({"state": "pending", "code": r.code}),
+                // nginx loads the new allowlist a moment after the approval
+                // (`nginx -s reload` only signals it): a phone that got its
+                // certificate at once was refused on its first call (0.2.7
+                // field report: "server not reachable" right after the slide).
+                RequestState::Approved { .. } if r.created.elapsed() < APPROVE_SETTLE => {
+                    json!({"state": "pending", "code": r.code})
+                }
                 RequestState::Rejected => json!({"state": "rejected"}),
                 RequestState::Approved { cert } => {
                     let ident = identity();
