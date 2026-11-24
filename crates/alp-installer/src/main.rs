@@ -3,6 +3,9 @@
 //! tests (T-INST-*) until the native screen drives the same library.
 //!
 //!   alp-installer list
+//!   alp-installer disks                      (JSON, for alpd and the screen)
+//!   alp-installer plan --system <disk> [--data <disk>]...   (JSON; writes nothing)
+//!   alp-installer plan --keep-running [--data <disk>]...
 //!   alp-installer install --system <disk> [--data <disk>]... --confirm-erase <disk,disk,...>
 //!   alp-installer keep-running --data <disk>... --confirm-erase <disk,...>
 //!
@@ -98,24 +101,39 @@ fn main() -> ExitCode {
         }
         return ExitCode::SUCCESS;
     }
+    if cmd == "disks" {
+        println!("{}", alp_installer::view::disks(&disks));
+        return ExitCode::SUCCESS;
+    }
     let mut system = None;
+    let mut keep = false;
     let mut data = Vec::new();
     let mut confirm = Vec::new();
     let mut it = args.iter().skip(1);
     while let Some(flag) = it.next() {
+        if flag == "--keep-running" {
+            keep = true;
+            continue;
+        }
         let Some(value) = it.next() else {
             return fail("ALP-INST-402", &format!("{flag} needs a value"));
         };
         match flag.as_str() {
             "--system" => system = Some(value.clone()),
             "--data" => data.push(value.clone()),
-            "--confirm-erase" => confirm = value.split(',').map(str::to_string).collect(),
+            "--confirm-erase" => {
+                confirm = value
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            }
             _ => return fail("ALP-INST-402", &format!("unknown option {flag}")),
         }
     }
-    let path = match (cmd.as_str(), system) {
-        ("install", Some(s)) => StartPath::InstallTo { system_disk: s },
-        ("keep-running", None) => StartPath::KeepRunning,
+    let path = match (cmd.as_str(), system, keep) {
+        ("install" | "plan", Some(s), false) => StartPath::InstallTo { system_disk: s },
+        ("keep-running", None, _) | ("plan", None, true) => StartPath::KeepRunning,
         _ => {
             return fail(
                 "ALP-INST-402",
@@ -132,6 +150,10 @@ fn main() -> ExitCode {
         Ok(p) => p,
         Err(e) => return fail(e.code, &e.detail),
     };
+    if cmd == "plan" {
+        println!("{}", alp_installer::view::plan(&p));
+        return ExitCode::SUCCESS;
+    }
     let erased: Vec<String> = p.erases.iter().map(|e| e.disk.clone()).collect();
     if erased != confirm {
         return fail(

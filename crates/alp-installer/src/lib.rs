@@ -12,3 +12,4 @@ pub mod exec;
 pub mod plan;
 pub mod run;
 pub mod seed;
+pub mod view;

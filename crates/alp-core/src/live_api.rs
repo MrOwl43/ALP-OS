@@ -16,6 +16,7 @@ use alp_live::{
 use serde_json::{Value, json};
 
 use crate::console::{Request, Response};
+use crate::live_install;
 use crate::live_media;
 use crate::live_terminal;
 
@@ -1740,6 +1741,22 @@ impl Live {
                 self.need_open().and_then(|()| self.disks_format_estimate(req))
             }
             "disks/format" if post => self.need_open().and_then(|()| self.disks_format(req)),
+            // Installing from the start stick (0.2.8): signed in only; the
+            // installer program checks the disks again before writing.
+            "install/disks" if get => self
+                .need_open()
+                .and_then(|()| live_install::disks())
+                .map(|v| Response::json(200, &v)),
+            "install/plan" if post => self
+                .need_open()
+                .and_then(|()| body(req))
+                .and_then(|b| live_install::plan(&b))
+                .map(|v| Response::json(200, &v)),
+            "install/start" if post => self
+                .need_open()
+                .and_then(|()| body(req))
+                .and_then(|b| live_install::start(&b))
+                .map(|v| Response::json(202, &json!({"install": v}))),
             // Stage F Files (feature media_files): read only (live_media.rs).
             "media/open" if post => body(req).and_then(|b| live_media::open(&b)),
             "media/list" if post => body(req).and_then(|b| live_media::list(&b)),
@@ -1892,6 +1909,9 @@ impl Live {
             | "disks/prepare"
             | "disks/format/estimate"
             | "disks/format"
+            | "install/disks"
+            | "install/plan"
+            | "install/start"
             | "media/open"
             | "media/list"
             | "media/file"
@@ -2422,6 +2442,7 @@ impl Live {
             "prefs": lock(&self.prefs).json(),
             "clock": clock_json(),
             "update": self.update_json(),
+            "install": live_install::state_json(),
             "display": display::state_json(),
             // Never the session's address (plan, build note 3).
             "terminal": live_terminal::state_json(),
