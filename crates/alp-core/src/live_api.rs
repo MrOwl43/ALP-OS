@@ -194,7 +194,9 @@ impl FamilySync {
 }
 
 /// How long a new recovery code waits for its words to be confirmed.
-const RECOVERY_PENDING_FOR: Duration = Duration::from_secs(15 * 60);
+/// Writing 15 words down carefully can take a while (0.2.7 laptop test:
+/// the check failed with "no new code is waiting"), so half an hour.
+const RECOVERY_PENDING_FOR: Duration = Duration::from_secs(30 * 60);
 /// Wrong confirmations before a pending code is thrown away.
 const RECOVERY_COMMIT_TRIES: u8 = 5;
 
@@ -279,6 +281,9 @@ pub struct Live {
     /// A new recovery code shown but not yet confirmed (T42): its words
     /// live only here, so a restart forgets it and the old code stays.
     pending_recovery: Mutex<Option<PendingRecovery>>,
+    /// The last pending code ran out of time (thrown away on a state poll),
+    /// so a late check says so instead of "no new code is waiting".
+    recovery_expired: AtomicBool,
     /// One-time format confirmations (review R4), dropped at lock and sign-in.
     confirms: Mutex<format::Confirms>,
     /// The archive disk's own health from the last background check
@@ -704,6 +709,7 @@ impl Live {
             console: Mutex::new(Console::default()),
             recovery: Mutex::new(None),
             pending_recovery: Mutex::new(None),
+            recovery_expired: AtomicBool::new(false),
             confirms: Mutex::new(format::Confirms::default()),
             archive_health: Mutex::new(None),
             rec: ARCHIVE_RECOVERY,
@@ -997,6 +1003,7 @@ impl Live {
                 "This archive has a recovery code already. Replacing it makes the old words stop working.",
             ));
         }
+        self.recovery_expired.store(false, Ordering::SeqCst);
         // A code shown earlier and never confirmed is forgotten first.
         if pending.take().is_some() {
             (self.rec.cancel)();
@@ -1024,7 +1031,7 @@ impl Live {
     /// `POST recovery/commit {words: {"<position>": "<word>", …}}` (T42):
     /// the three words asked for by `recovery/create` are typed back; then
     /// the new code replaces the old one. Wrong words keep the old code;
-    /// after a few tries, or 15 minutes, the new code is thrown away.
+    /// after a few tries, or 30 minutes, the new code is thrown away.
     fn recovery_commit(&self, req: &Request) -> Result<Response, Fail> {
         let b = body(req)?;
         let typed = b
@@ -1033,6 +1040,9 @@ impl Live {
             .ok_or_else(|| Fail::new("request.json", "\"words\" must be an object."))?;
         let mut pending = lock(&self.pending_recovery);
         let Some(p) = pending.as_mut() else {
+            if self.recovery_expired.swap(false, Ordering::SeqCst) {
+                return Err(recovery_expired());
+            }
             return Err(Fail::new(
                 "recovery.no_pending",
                 "No new recovery code is waiting. Your current code still works.",
@@ -1041,10 +1051,7 @@ impl Live {
         if p.made.elapsed() > RECOVERY_PENDING_FOR {
             *pending = None;
             (self.rec.cancel)();
-            return Err(Fail::new(
-                "recovery.expired",
-                "The new code was not confirmed in time, so it was thrown away. Your current code still works.",
-            ));
+            return Err(recovery_expired());
         }
         let right = p.ask.iter().fold(true, |ok, &i| {
             let w = typed
@@ -1094,6 +1101,7 @@ impl Live {
         {
             *p = None;
             (self.rec.cancel)();
+            self.recovery_expired.store(true, Ordering::SeqCst);
         }
     }
 
@@ -3817,6 +3825,13 @@ fn recovery_input(typed: &str, passphrase: &str) -> Result<RecoveryInput, Fail> 
     Ok(RecoveryInput::Secret(code.unlock_secret(passphrase)))
 }
 
+fn recovery_expired() -> Fail {
+    Fail::new(
+        "recovery.expired",
+        "The new code was not confirmed in time, so it was thrown away. Your current code still works; you can make a new one.",
+    )
+}
+
 /// The storage seam's answers as API errors.
 fn recovery_fail(e: &str) -> Fail {
     if e == recovery::NOT_OPEN {
@@ -4673,6 +4688,35 @@ mod tests {
         assert_eq!(
             key(&call(&l, "POST", "recovery/commit", &answer(true))),
             (409, Some("recovery.no_pending"))
+        );
+
+        // A code that ran out of time on a state poll: a late check says
+        // so (0.2.7 test: it said "no new code is waiting").
+        assert_eq!(
+            call(
+                &l,
+                "POST",
+                "recovery/create",
+                r#"{"password": "right password", "replace": true}"#
+            )
+            .0,
+            200
+        );
+        if let Some(p) = lock(&l.pending_recovery).as_mut() {
+            p.made = Instant::now()
+                .checked_sub(RECOVERY_PENDING_FOR + Duration::from_secs(1))
+                .unwrap();
+        }
+        l.expire_pending_recovery();
+        assert_eq!(STORE.load(Ordering::SeqCst), 1, "thrown away");
+        assert_eq!(
+            key(&call(&l, "POST", "recovery/commit", &answer(true))).1,
+            Some("recovery.expired")
+        );
+        assert_eq!(
+            key(&call(&l, "POST", "recovery/commit", &answer(true))).1,
+            Some("recovery.no_pending"),
+            "said once"
         );
     }
 
