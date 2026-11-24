@@ -407,19 +407,116 @@ impl PowerBackend for GenericPcPower {
 
 impl PlanDigest for PoolPlan {
     fn plan_digest(&self) -> [u8; 32] {
-        todo!("block 4: canonical SHA3-256 of the plan")
+        let mut e = digest::Enc::new("pool");
+        // Btrfs does not care in which order devices join, and a plan read
+        // back at first boot may list them differently: sort them.
+        let mut members: Vec<Vec<u8>> = self.members.iter().map(digest::member).collect();
+        members.sort();
+        e.u64(members.len() as u64);
+        for m in &members {
+            e.bytes(m);
+        }
+        e.str(digest::profile(self.data_profile));
+        e.str(digest::profile(self.metadata_profile));
+        e.u64(self.usable_bytes);
+        e.str(digest::protection(self.protection));
+        e.finish()
     }
 }
 
 impl PlanDigest for ExpansionPlan {
     fn plan_digest(&self) -> [u8; 32] {
-        todo!("block 4: canonical SHA3-256 of the plan")
+        let mut e = digest::Enc::new("expansion");
+        e.str(&self.pool.0);
+        e.str(&self.new_disk.id.0);
+        e.u64(self.usable_bytes_before);
+        e.u64(self.usable_bytes_after);
+        e.finish()
     }
 }
 
 impl PlanDigest for DiskReplacement {
     fn plan_digest(&self) -> [u8; 32] {
-        todo!("block 4: canonical SHA3-256 of the plan")
+        let mut e = digest::Enc::new("replacement");
+        e.str(&self.pool.0);
+        e.str(&self.old.0);
+        e.str(&self.new_disk.id.0);
+        e.finish()
+    }
+}
+
+/// The canonical plan encoding: a versioned domain tag, then each field
+/// length-prefixed (big-endian u64), so no two different plans encode to
+/// the same bytes. Disk serials and sizes stay out (see [`PlanDigest`]).
+mod digest {
+    use super::{PoolMember, Protection, RaidProfile};
+    use sha3::{Digest, Sha3_256};
+
+    pub(super) struct Enc(Sha3_256);
+
+    impl Enc {
+        pub(super) fn new(kind: &str) -> Self {
+            let mut e = Enc(Sha3_256::new());
+            e.str("alp-os plan digest v1");
+            e.str(kind);
+            e
+        }
+        pub(super) fn u64(&mut self, v: u64) {
+            self.0.update(v.to_be_bytes());
+        }
+        pub(super) fn bytes(&mut self, b: &[u8]) {
+            self.u64(b.len() as u64);
+            self.0.update(b);
+        }
+        pub(super) fn str(&mut self, s: &str) {
+            self.bytes(s.as_bytes());
+        }
+        pub(super) fn finish(self) -> [u8; 32] {
+            self.0.finalize().into()
+        }
+    }
+
+    /// One member's own encoding (sorted by the caller).
+    pub(super) fn member(m: &PoolMember) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut field = |b: &[u8]| {
+            out.extend_from_slice(&(b.len() as u64).to_be_bytes());
+            out.extend_from_slice(b);
+        };
+        match m {
+            PoolMember::WholeDisk(d) => {
+                field(b"whole-disk");
+                field(d.0.as_bytes());
+            }
+            PoolMember::ExistingPartition {
+                disk,
+                partition_uuid,
+            } => {
+                field(b"partition");
+                field(disk.0.as_bytes());
+                // UUIDs are case-insensitive; lsblk and blkid differ.
+                field(partition_uuid.to_ascii_lowercase().as_bytes());
+            }
+        }
+        out
+    }
+
+    pub(super) fn profile(p: RaidProfile) -> &'static str {
+        match p {
+            RaidProfile::Single => "single",
+            RaidProfile::Dup => "dup",
+            RaidProfile::Raid1 => "raid1",
+            RaidProfile::Raid1c3 => "raid1c3",
+            RaidProfile::Raid10 => "raid10",
+        }
+    }
+
+    pub(super) fn protection(p: Protection) -> &'static str {
+        match p {
+            Protection::None => "none",
+            Protection::BitRotOnly => "bit-rot-only",
+            Protection::DiskFailure => "disk-failure",
+        }
     }
 }
 
@@ -445,4 +542,83 @@ mod tests {
         let err = Confirmed::by_user(Plan(2), evidence).unwrap_err();
         assert_eq!(err.code, "ALP-STO-007");
     }
+
+    fn pool(members: Vec<PoolMember>) -> PoolPlan {
+        PoolPlan {
+            members,
+            data_profile: RaidProfile::Raid1,
+            metadata_profile: RaidProfile::Raid1,
+            usable_bytes: 4_000_000_000_000,
+            protection: Protection::DiskFailure,
+        }
+    }
+
+    fn part(disk: &str, uuid: &str) -> PoolMember {
+        PoolMember::ExistingPartition {
+            disk: DiskId(disk.into()),
+            partition_uuid: uuid.into(),
+        }
+    }
+
+    #[test]
+    fn sha3_is_sha3_256() {
+        use sha3::{Digest, Sha3_256};
+        // FIPS 202 test vector for "abc".
+        let d: [u8; 32] = Sha3_256::digest(b"abc").into();
+        assert_eq!(d[..4], [0x3a, 0x98, 0x5d, 0xa7], "{d:02x?}");
+    }
+
+    #[test]
+    fn pool_digest_is_canonical() {
+        let a = pool(vec![part("ata-A", "AAAA-1"), part("ata-B", "bbbb-2")]);
+        let b = pool(vec![part("ata-B", "BBBB-2"), part("ata-A", "aaaa-1")]);
+        // Member order and UUID case do not change what the plan does.
+        assert_eq!(a.plan_digest(), b.plan_digest());
+        // Frozen encoding: first boot and older installers must agree.
+        let hex: String = a.plan_digest().iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(hex.len(), 64);
+        assert_eq!(hex, GOLDEN, "the canonical plan encoding changed");
+    }
+
+    #[test]
+    fn every_field_changes_the_pool_digest() {
+        let base = pool(vec![part("ata-A", "aaaa-1"), part("ata-B", "bbbb-2")]);
+        let d = base.plan_digest();
+        let mut v = Vec::new();
+        let mut p = base.clone();
+        p.members.pop();
+        v.push(p);
+        let mut p = base.clone();
+        p.members[0] = part("ata-C", "aaaa-1");
+        v.push(p);
+        let mut p = base.clone();
+        p.members[0] = part("ata-A", "aaaa-9");
+        v.push(p);
+        let mut p = base.clone();
+        p.members[0] = PoolMember::WholeDisk(DiskId("ata-A".into()));
+        v.push(p);
+        let mut p = base.clone();
+        p.data_profile = RaidProfile::Raid10;
+        v.push(p);
+        let mut p = base.clone();
+        p.metadata_profile = RaidProfile::Raid1c3;
+        v.push(p);
+        let mut p = base.clone();
+        p.usable_bytes += 1;
+        v.push(p);
+        let mut p = base.clone();
+        p.protection = Protection::BitRotOnly;
+        v.push(p);
+        for (i, p) in v.iter().enumerate() {
+            assert_ne!(p.plan_digest(), d, "change {i} kept the digest");
+        }
+        // Length prefixes: moving bytes between fields changes the digest.
+        assert_ne!(
+            pool(vec![part("ata-Aa", "a")]).plan_digest(),
+            pool(vec![part("ata-A", "aa")]).plan_digest()
+        );
+    }
+
+    // Cross-checked with Python hashlib.sha3_256 over the same encoding.
+    const GOLDEN: &str = "8826fa62585d5b7f824ab1f710716d64adb93d54b4798f03fa2641c9c3daf97f";
 }

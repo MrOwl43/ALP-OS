@@ -12,6 +12,8 @@ publish.workspace = true
 alp-crypto.workspace = true
 # Reads `lsblk --json` for the installer's disk list (inspect::blockdev; already pinned in the workspace).
 serde_json.workspace = true
+# SHA3-256 of the canonical plan encoding (PlanDigest; pinned in the workspace).
+sha3.workspace = true
 
 [lints]
 workspace = true

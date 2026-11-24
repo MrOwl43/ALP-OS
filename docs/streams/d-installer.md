@@ -21,8 +21,8 @@ tens of TB, VERIFY status).
   with re-check and by-id comparison, device guard, codes
   `ALP-INST-403`..`408`), `seed.rs` (seed TOML), scripted `alp-installer`
   CLI, `tests/vm/t-inst-01.sh` (CI only).
-- Blocked: a real install refuses with `ALP-INST-407` until block 4's
-  `PlanDigest for PoolPlan` exists (stream B). The image must ship the
+- Block 4's `PlanDigest for PoolPlan` now exists, so the preflight passes
+  `ALP-INST-407`. Still blocked on stream A: the image must ship the
   installer, `install-layout` and install-time sysupdate definitions
   (stream A).
 - Next: install-time sysupdate spike with stream A; T-INST-02..05.

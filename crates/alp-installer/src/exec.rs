@@ -184,16 +184,14 @@ pub trait Digester {
     fn digest(&self, plan: &PoolPlan) -> [u8; 32];
 }
 
-/// The contract implementation. `PlanDigest for PoolPlan` is still
-/// `todo!("block 4")` in `alp-hw`; calling it would panic, so `ready()`
-/// says no until stream B lands it (then flip it and the VM test runs to
-/// the end).
+/// The contract implementation: `alp_hw::PlanDigest for PoolPlan`, the
+/// one first boot also uses.
 #[derive(Debug, Default)]
 pub struct ContractDigest;
 
 impl Digester for ContractDigest {
     fn ready(&self) -> bool {
-        false
+        true
     }
     fn digest(&self, plan: &PoolPlan) -> [u8; 32] {
         alp_hw::PlanDigest::plan_digest(plan)
@@ -895,7 +893,7 @@ mod tests {
         let e = run_it(&p, &mut m, &TestDigest(false)).0.unwrap_err();
         assert_eq!((e.code, e.step), (CODE_NOT_READY, 0));
         assert!(m.calls.is_empty());
-        assert!(!ContractDigest.ready());
+        assert!(ContractDigest.ready());
 
         // A disk changed since the confirm screen.
         let mut m = mock();

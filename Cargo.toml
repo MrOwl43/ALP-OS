@@ -40,6 +40,9 @@ bip39 = { version = "=3.0.0", default-features = false, features = ["std"] }
 # SHA-256 for the 8-bit checksum of the 8-word chain code (ADR 0013). rust-bitcoin's
 # hashes crate, already in the tree as bip39's dependency (same pinned version; CC0-1.0).
 bitcoin_hashes = { version = "=0.14.101", default-features = false }
+# SHA3-256 for plan digests (spec block 4: one canonical digest per confirmed plan;
+# RustCrypto's implementation, no own cryptography; MIT OR Apache-2.0).
+sha3 = { version = "=0.11.0", default-features = false }
 alp-core = { path = "crates/alp-core", version = "=0.0.0" }
 alp-crypto = { path = "crates/alp-crypto", version = "=0.0.0" }
 alp-hw = { path = "crates/alp-hw", version = "=0.0.0" }
