@@ -182,10 +182,13 @@
     const el = h("div", { class: "waitline", role: "status", "aria-live": "polite" }, h("span", { class: "spinner" }), h("span", { class: "wl-text" }, now, why));
     const t0 = Date.now(); let forced = false, seen = false;
     el.now = (txt) => { if (txt && now.textContent !== txt) now.textContent = txt; };
-    el.why = (txt) => { forced = !!txt; if (txt) { if (why.textContent !== txt) why.textContent = txt; why.classList.remove("hidden"); } else why.classList.add("hidden"); };
+    // Once the slow hint is due it stays (0.2.7 test: clearing it on every state poll made it blink).
+    const slow = () => !!slowKey && Date.now() - t0 > (slowAfter || 30) * 1000;
+    const showSlow = () => { const txt = t(slowKey); if (why.textContent !== txt) why.textContent = txt; why.classList.remove("hidden"); };
+    el.why = (txt) => { forced = !!txt; if (txt) { if (why.textContent !== txt) why.textContent = txt; why.classList.remove("hidden"); } else if (slow()) showSlow(); else why.classList.add("hidden"); };
     const timer = setInterval(() => {
       if (el.isConnected) seen = true; else if (seen || Date.now() - t0 > 60000) { clearInterval(timer); return; }
-      if (!forced && slowKey && Date.now() - t0 > (slowAfter || 30) * 1000) { why.textContent = t(slowKey); why.classList.remove("hidden"); }
+      if (!forced && slow()) showSlow();
     }, 1000);
     return el;
   }
