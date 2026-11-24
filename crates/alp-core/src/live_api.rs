@@ -3421,12 +3421,13 @@ impl Live {
                     }
                 }
                 Err(e) => {
-                    if e == archive::RECOVERY_WRONG {
+                    if e == archive::RECOVERY_WRONG || e == archive::PASSWORD_WRONG {
                         // Wrong words or password count like wrong passwords.
                         lock(&me.tries).failed();
                     }
                     let f = if [
                         archive::RECOVERY_WRONG,
+                        archive::PASSWORD_WRONG,
                         archive::PASSWORD_NONE,
                         archive::RECOVERY_NEEDS_WORDS,
                         archive::RECOVERY_NEEDS_KEY,

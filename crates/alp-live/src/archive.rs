@@ -2452,6 +2452,9 @@ fn recover_vault_with(
     let pw = new_password()?;
     let recovered = dir.join("gocryptfs.conf.recovered");
     crate::vault::copy_rewrapped(&rconf, &recovered, &data, secret, &pw).map_err(|e| match e {
+        crate::vault::Error::WrongPassword if conf_name == PASSWORD_CONF => {
+            PASSWORD_WRONG.to_string()
+        }
         crate::vault::Error::WrongPassword => RECOVERY_WRONG.to_string(),
         e => e.to_string(),
     })?;
@@ -2490,6 +2493,9 @@ pub const PLAIN_ON_ENCRYPTED: &str = "This backup disk holds an unencrypted arch
 pub const ENCRYPTED_ON_PLAIN: &str = "This backup disk holds an encrypted archive, and this stick was set up without encryption. Start over with encryption to reopen it.";
 pub const PASSWORD_NONE: &str = "This archive cannot be opened with a password (it was made with strong protection or before this version). Use its recovery code.";
 pub const RECOVERY_WRONG: &str = "This recovery key does not open this archive.";
+/// The ALP password typed to reopen an archive (level 3) is not the one the
+/// archive knows.
+pub const PASSWORD_WRONG: &str = "This password does not open this archive. It needs the ALP password that was last used with it on the stick that made it; if that is not known, use the archive's recovery code.";
 /// The 64-letter key typed for a new archive, words for an old one, or a
 /// new archive without a recovery code (also `recovery.wrong`).
 pub const RECOVERY_NEEDS_WORDS: &str =

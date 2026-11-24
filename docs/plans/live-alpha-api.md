@@ -1036,7 +1036,8 @@ The recovery key keeps working. Job id `archive.recover`, steps:
 Errors: `409 archive.exists`, `404 archive.not_found`,
 `400 recovery.format` (not 64 letters), `409 archive.busy`,
 `422 archive.refused`. Failed job keys: `recovery.wrong` ("This recovery
-key does not open this archive."), `archive.failed`.
+key does not open this archive.", or for `{password}` "This password does
+not open this archive. …"), `archive.failed`.
 
 ### `POST /api/v1/live/recovery/create` → 200
 
