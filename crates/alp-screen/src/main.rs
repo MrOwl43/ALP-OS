@@ -66,6 +66,15 @@ fn main() -> glib::ExitCode {
 }
 
 fn build(app: &adw::Application) {
+    // Without a desktop (cage has no settings service) GTK may report no
+    // text DPI (-1); libadwaita then turns every size given in text units
+    // into zero and squeezes its columns to their narrowest. Use the
+    // standard 96 DPI, which GTK stores times 1024.
+    if let Some(st) = gtk4::Settings::default()
+        && st.gtk_xft_dpi() <= 0
+    {
+        st.set_gtk_xft_dpi(96 * 1024);
+    }
     let texts = Texts::load(Path::new(i18n::DIR), "en");
     let client = Arc::new(Client::default());
     let (tx, rx) = mpsc::channel::<Msg>();
@@ -299,22 +308,16 @@ fn settings_page(
     };
     let row = |title: &str| adw::ActionRow::builder().title(title).build();
 
-    // A plain column of groups in a clamp: wide enough to read on the
-    // archive's screen, scrolling when it gets long.
-    let page = gtk4::Box::builder()
-        .orientation(gtk4::Orientation::Vertical)
-        .spacing(24)
-        .margin_top(24)
-        .margin_bottom(24)
-        .hexpand(true)
-        .build();
+    // libadwaita's own settings page: a centred, width-limited column
+    // that scrolls when it gets long.
+    let page = adw::PreferencesPage::new();
 
     let about = adw::PreferencesGroup::builder()
         .title(texts.t("set.h.about"))
         .build();
     let version = row(&texts.t("about.version"));
     about.add(&version);
-    page.append(&about);
+    page.add(&about);
 
     let computer = adw::PreferencesGroup::builder()
         .title(texts.t("set.h.computer"))
@@ -349,7 +352,7 @@ fn settings_page(
     power.append(&restart);
     power.append(&off);
     computer.add(&power);
-    page.append(&computer);
+    page.add(&computer);
     confirm(
         &restart,
         &texts.t("power.restart.title"),
@@ -368,7 +371,7 @@ fn settings_page(
     let phones = adw::PreferencesGroup::builder()
         .title(texts.t("set.h.phones"))
         .build();
-    page.append(&phones);
+    page.add(&phones);
 
     let back = gtk4::Button::builder()
         .label(texts.t("common.back"))
@@ -384,18 +387,8 @@ fn settings_page(
         .build();
     b.append(&back);
     b.append(&note);
-    let clamp = adw::Clamp::builder()
-        .maximum_size(720)
-        .hexpand(true)
-        .tightening_threshold(560)
-        .child(&page)
-        .build();
-    let scroll = gtk4::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk4::PolicyType::Never)
-        .vexpand(true)
-        .child(&clamp)
-        .build();
-    b.append(&scroll);
+    page.set_vexpand(true);
+    b.append(&page);
     let ui = SettingsUi {
         version,
         clock,
