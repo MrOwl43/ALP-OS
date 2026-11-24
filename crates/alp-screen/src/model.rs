@@ -101,6 +101,54 @@ pub fn alert_list(w: &Value) -> Vec<Alert> {
     list
 }
 
+/// What the settings page shows (read-only; actions go to alpd).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Settings {
+    pub release: Option<String>,
+    pub build: Option<String>,
+    /// The computer's clock, seconds since 1970 (UTC), and whether the
+    /// network set it.
+    pub clock: Option<(u64, bool)>,
+    pub update_supported: bool,
+    pub update_current: Option<String>,
+    /// A newer version that can be installed, if one was found.
+    pub update_newer: Option<String>,
+    /// Paired phones: (serial, name, model).
+    pub devices: Vec<(String, String, String)>,
+}
+
+impl Settings {
+    pub fn from_state(w: &Value) -> Self {
+        let s = |v: &Value| v.as_str().map(str::to_string);
+        let u = &w["update"];
+        Settings {
+            release: s(&w["system"]["release"]),
+            build: s(&w["system"]["build"]),
+            clock: w["clock"]["now"]
+                .as_u64()
+                .map(|n| (n, w["clock"]["synced"].as_bool().unwrap_or(false))),
+            update_supported: u["supported"].as_bool().unwrap_or(false),
+            update_current: s(&u["current"]),
+            update_newer: s(&u["newer"]["version"]),
+            devices: w["pairing"]["devices"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter(|d| !d["revoked"].as_bool().unwrap_or(false))
+                        .filter_map(|d| {
+                            Some((
+                                s(&d["serial"])?,
+                                s(&d["name"]).unwrap_or_default(),
+                                s(&d["model"]).unwrap_or_default(),
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,6 +169,29 @@ mod tests {
         assert_eq!(l[0].code.as_deref(), Some("ALP-INST-001"));
         assert_eq!(l[3].level, Level::Ok);
         assert!(alert_list(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn settings_from_state() {
+        let w = json!({
+            "system": {"release": "ALP-OS 0.2.8", "build": "abc 2026-11-24"},
+            "clock": {"now": 1_795_000_000u64, "synced": true},
+            "update": {"supported": true, "current": "0.2.8", "newer": {"version": "0.2.9", "state": "ready"}},
+            "pairing": {"devices": [
+                {"serial": "10AB", "name": "Phone", "model": "Pixel"},
+                {"serial": "10CD", "name": "Old", "revoked": true},
+                {"name": "no serial"}
+            ]}
+        });
+        let s = Settings::from_state(&w);
+        assert_eq!(s.release.as_deref(), Some("ALP-OS 0.2.8"));
+        assert_eq!(s.clock, Some((1_795_000_000, true)));
+        assert_eq!(s.update_newer.as_deref(), Some("0.2.9"));
+        assert_eq!(
+            s.devices,
+            vec![("10AB".into(), "Phone".into(), "Pixel".into())]
+        );
+        assert_eq!(Settings::from_state(&json!({})), Settings::default());
     }
 
     #[test]

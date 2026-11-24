@@ -8,11 +8,13 @@
 
 use alp_screen::api::{ApiError, Client};
 use alp_screen::i18n::{self, Texts};
-use alp_screen::model::Screen;
+use alp_screen::model::{Screen, Settings};
 use gtk4::prelude::*;
 use gtk4::{gio, glib};
 use libadwaita as adw;
+use libadwaita::prelude::*;
 use serde_json::{Value, json};
+use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -26,6 +28,8 @@ const POLL: Duration = Duration::from_secs(2);
 enum Msg {
     State(Result<Value, ApiError>),
     SignedIn(Result<Value, ApiError>),
+    /// The answer to a settings action (sync clock, update, power).
+    Done(Result<Value, ApiError>),
 }
 
 struct Ui {
@@ -37,6 +41,19 @@ struct Ui {
     error: gtk4::Label,
     home_title: gtk4::Label,
     home_line: gtk4::Label,
+    set: SettingsUi,
+}
+
+/// The settings page's changing parts.
+struct SettingsUi {
+    version: adw::ActionRow,
+    clock: adw::ActionRow,
+    update: adw::ActionRow,
+    update_btn: gtk4::Button,
+    phones: adw::PreferencesGroup,
+    phone_rows: RefCell<Vec<adw::ActionRow>>,
+    last: RefCell<Settings>,
+    note: gtk4::Label,
 }
 
 fn main() -> glib::ExitCode {
@@ -92,15 +109,29 @@ fn build(app: &adw::Application) {
         .label(texts.t("home.lock"))
         .css_classes(["pill"])
         .build();
+    let settings_btn = gtk4::Button::builder()
+        .label(texts.t("home.settings"))
+        .css_classes(["pill"])
+        .build();
     let home_page = column(&[
         home_title.clone().upcast(),
         home_line.clone().upcast(),
+        settings_btn.clone().upcast(),
         lock_btn.clone().upcast(),
     ]);
+
+    let (settings_page, set, back) = settings_page(&texts, &client, &tx);
 
     let stack = gtk4::Stack::new();
     stack.add_named(&lock_page, Some("lock"));
     stack.add_named(&home_page, Some("home"));
+    stack.add_named(&settings_page, Some("settings"));
+    {
+        let st = stack.clone();
+        settings_btn.connect_clicked(move |_| st.set_visible_child_name("settings"));
+        let st = stack.clone();
+        back.connect_clicked(move |_| st.set_visible_child_name("home"));
+    }
 
     let ui = Rc::new(Ui {
         texts,
@@ -111,8 +142,25 @@ fn build(app: &adw::Application) {
         error,
         home_title,
         home_line,
+        set,
     });
 
+    {
+        // Look for an update, or install the one found (only on a press:
+        // owner decision, ADR 0026).
+        let (u, client, tx) = (ui.clone(), client.clone(), tx.clone());
+        ui.set.update_btn.connect_clicked(move |_| {
+            let path = if u.set.last.borrow().update_newer.is_some() {
+                "live/update/apply"
+            } else {
+                "live/update/check"
+            };
+            let (client, tx) = (client.clone(), tx.clone());
+            std::thread::spawn(move || {
+                let _ = tx.send(Msg::Done(client.post(path, &json!({}))));
+            });
+        });
+    }
     {
         let (u, client, tx) = (ui.clone(), client.clone(), tx.clone());
         let send = move || {
@@ -170,6 +218,8 @@ fn build(app: &adw::Application) {
     let win = adw::ApplicationWindow::builder()
         .application(app)
         .content(&stack)
+        .default_width(1280)
+        .default_height(800)
         .build();
     win.fullscreen();
     win.present();
@@ -187,7 +237,10 @@ fn handle(ui: &Ui, m: Msg) {
                     (_, Some(k)) => ui.texts.t(k),
                     _ => String::new(),
                 });
-                ui.stack.set_visible_child_name("home");
+                show_settings(&ui.set, &ui.texts, &Settings::from_state(&w));
+                if ui.stack.visible_child_name().as_deref() == Some("lock") {
+                    ui.stack.set_visible_child_name("home");
+                }
             } else {
                 let key = if s.level.needs_user() {
                     "lock.msg.bad"
@@ -200,6 +253,13 @@ fn handle(ui: &Ui, m: Msg) {
         }
         Msg::State(Err(e)) => {
             ui.status.set_label(&ui.texts.t(&e.key));
+        }
+        Msg::Done(r) => {
+            ui.set.note.set_label(&match r {
+                Ok(_) => String::new(),
+                Err(e) if e.message.is_empty() => ui.texts.t(&e.key),
+                Err(e) => e.message,
+            });
         }
         Msg::SignedIn(r) => {
             ui.sign_in.set_sensitive(true);
@@ -219,6 +279,178 @@ fn handle(ui: &Ui, m: Msg) {
             }
         }
     }
+}
+
+/// The settings page: About, date and time, updates, phones, power.
+fn settings_page(
+    texts: &Texts,
+    client: &Arc<Client>,
+    tx: &mpsc::Sender<Msg>,
+) -> (gtk4::Box, SettingsUi, gtk4::Button) {
+    // One alpd action on a worker thread; its answer comes back as Done.
+    let act = |path: &'static str, body: Value| {
+        let (client, tx) = (client.clone(), tx.clone());
+        move || {
+            let (client, tx, body) = (client.clone(), tx.clone(), body.clone());
+            std::thread::spawn(move || {
+                let _ = tx.send(Msg::Done(client.post(path, &body)));
+            });
+        }
+    };
+    let row = |title: &str| adw::ActionRow::builder().title(title).build();
+
+    let page = adw::PreferencesPage::new();
+
+    let about = adw::PreferencesGroup::builder()
+        .title(texts.t("set.h.about"))
+        .build();
+    let version = row(&texts.t("about.version"));
+    about.add(&version);
+    page.add(&about);
+
+    let computer = adw::PreferencesGroup::builder()
+        .title(texts.t("set.h.computer"))
+        .build();
+    let clock = row(&texts.t("set.clock"));
+    let sync = gtk4::Button::builder()
+        .label(texts.t("set.sync"))
+        .valign(gtk4::Align::Center)
+        .build();
+    let f = act("live/clock/sync", json!({}));
+    sync.connect_clicked(move |_| f());
+    clock.add_suffix(&sync);
+    computer.add(&clock);
+    let update = row(&texts.t("upd.title"));
+    let update_btn = gtk4::Button::builder().valign(gtk4::Align::Center).build();
+    update.add_suffix(&update_btn);
+    computer.add(&update);
+    let restart = gtk4::Button::builder()
+        .label(texts.t("power.restart.yes"))
+        .valign(gtk4::Align::Center)
+        .build();
+    let off = gtk4::Button::builder()
+        .label(texts.t("power.yes"))
+        .css_classes(["destructive-action"])
+        .valign(gtk4::Align::Center)
+        .build();
+    let power = gtk4::Box::builder()
+        .spacing(12)
+        .halign(gtk4::Align::End)
+        .margin_top(12)
+        .build();
+    power.append(&restart);
+    power.append(&off);
+    computer.add(&power);
+    page.add(&computer);
+    confirm(
+        &restart,
+        &texts.t("power.restart.title"),
+        &texts.t("power.restart.sub"),
+        &texts.t("power.restart.yes"),
+        act("live/power/off", json!({"restart": true})),
+    );
+    confirm(
+        &off,
+        &texts.t("power.title"),
+        &texts.t("power.sub"),
+        &texts.t("power.yes"),
+        act("live/power/off", json!({"restart": false})),
+    );
+
+    let phones = adw::PreferencesGroup::builder()
+        .title(texts.t("set.h.phones"))
+        .build();
+    page.add(&phones);
+
+    let back = gtk4::Button::builder()
+        .label(texts.t("common.back"))
+        .halign(gtk4::Align::Start)
+        .build();
+    let note = gtk4::Label::builder()
+        .css_classes(["error"])
+        .wrap(true)
+        .build();
+    let b = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .spacing(12)
+        .build();
+    b.append(&back);
+    b.append(&note);
+    page.set_vexpand(true);
+    page.set_hexpand(true);
+    b.append(&page);
+    let ui = SettingsUi {
+        version,
+        clock,
+        update,
+        update_btn,
+        phones,
+        phone_rows: RefCell::new(Vec::new()),
+        last: RefCell::new(Settings::default()),
+        note,
+    };
+    (b, ui, back)
+}
+
+/// Asks before switching off or restarting; [yes] runs only after "yes".
+fn confirm(button: &gtk4::Button, title: &str, body: &str, yes: &str, f: impl Fn() + 'static) {
+    let (title, body, yes) = (title.to_string(), body.to_string(), yes.to_string());
+    let f = Rc::new(f);
+    button.connect_clicked(move |b| {
+        let d = adw::AlertDialog::new(Some(&title), Some(&body));
+        d.add_responses(&[("cancel", "Cancel"), ("yes", &yes)]);
+        d.set_response_appearance("yes", adw::ResponseAppearance::Destructive);
+        d.set_default_response(Some("cancel"));
+        d.set_close_response("cancel");
+        let f = f.clone();
+        d.connect_response(None, move |_, r| {
+            if r == "yes" {
+                f();
+            }
+        });
+        d.present(Some(b));
+    });
+}
+
+fn show_settings(ui: &SettingsUi, texts: &Texts, s: &Settings) {
+    if *ui.last.borrow() == *s {
+        return;
+    }
+    ui.version.set_subtitle(
+        &[s.release.as_deref(), s.build.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · "),
+    );
+    ui.clock.set_subtitle(&match s.clock {
+        Some((_, true)) => texts.t("set.clock.synced"),
+        Some((_, false)) => texts.t("set.clock.unsure"),
+        None => String::new(),
+    });
+    ui.update.set_visible(s.update_supported);
+    ui.update
+        .set_subtitle(s.update_current.as_deref().unwrap_or_default());
+    match &s.update_newer {
+        Some(v) => ui
+            .update_btn
+            .set_label(&texts.fill("upd.install", &[("v", v)])),
+        None => ui.update_btn.set_label(&texts.t("upd.check")),
+    }
+    if ui.last.borrow().devices != s.devices {
+        for r in ui.phone_rows.borrow_mut().drain(..) {
+            ui.phones.remove(&r);
+        }
+        for (_, name, model) in &s.devices {
+            let r = adw::ActionRow::builder()
+                .title(name.as_str())
+                .subtitle(model.as_str())
+                .build();
+            ui.phones.add(&r);
+            ui.phone_rows.borrow_mut().push(r);
+        }
+    }
+    *ui.last.borrow_mut() = s.clone();
 }
 
 fn column(children: &[gtk4::Widget]) -> gtk4::Box {
