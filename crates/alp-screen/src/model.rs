@@ -111,14 +111,14 @@ mod tests {
         let w = json!({"alerts": [
             {"level": "note", "key": "a", "message": "A"},
             "junk",
-            {"level": "now", "key": "b", "message": "B", "code": "ALP-LIVE-1"},
+            {"level": "now", "key": "b", "message": "B", "code": "ALP-INST-001"},
             {"level": "note", "key": "c", "message": "C"},
             {"level": "strange", "key": "d"}
         ]});
         let l = alert_list(&w);
         let keys: Vec<&str> = l.iter().map(|a| a.key.as_str()).collect();
         assert_eq!(keys, ["b", "a", "c", "d"]);
-        assert_eq!(l[0].code.as_deref(), Some("ALP-LIVE-1"));
+        assert_eq!(l[0].code.as_deref(), Some("ALP-INST-001"));
         assert_eq!(l[3].level, Level::Ok);
         assert!(alert_list(&json!({})).is_empty());
     }
