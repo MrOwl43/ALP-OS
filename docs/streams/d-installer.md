@@ -17,9 +17,15 @@ tens of TB, VERIFY status).
 - Done: `alp_installer::plan` (install plan for both paths, erase list,
   strict re-check, codes `ALP-INST-401`/`402`) and
   `alp_installer::capacity` (usable bytes). Unit tests only.
-- Next: the executor (run lsblk, boot disk from `inspect`, compare by-id
-  names in the re-check, repart, image copy, first-boot seed with
-  `PlanDigest`) and the VM tests T-INST-01..05 from the plan.
+- Done: `alp_installer::exec` (executor through `run::Runner`, preflight
+  with re-check and by-id comparison, device guard, codes
+  `ALP-INST-403`..`408`), `seed.rs` (seed TOML), scripted `alp-installer`
+  CLI, `tests/vm/t-inst-01.sh` (CI only).
+- Blocked: a real install refuses with `ALP-INST-407` until block 4's
+  `PlanDigest for PoolPlan` exists (stream B). The image must ship the
+  installer, `install-layout` and install-time sysupdate definitions
+  (stream A).
+- Next: install-time sysupdate spike with stream A; T-INST-02..05.
 
 ## Open problems
 

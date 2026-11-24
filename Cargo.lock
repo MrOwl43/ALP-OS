@@ -33,7 +33,10 @@ dependencies = [
 name = "alp-installer"
 version = "0.0.0"
 dependencies = [
+ "alp-core",
  "alp-hw",
+ "serde_json",
+ "toml",
 ]
 
 [[package]]
