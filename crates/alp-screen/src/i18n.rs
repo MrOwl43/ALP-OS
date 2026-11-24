@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 /// Where the image installs the console's texts.
-pub const DIR: &str = "/usr/share/alp/ui/i18n";
+pub const DIR: &str = "/usr/share/alp/ui/live/i18n";
 
 #[derive(Default)]
 pub struct Texts {
@@ -63,9 +63,32 @@ impl Texts {
     }
 }
 
+/// Languages written right to left (the layout mirrors for them).
+pub fn is_rtl(lang: &str) -> bool {
+    let base = lang
+        .split(['-', '_'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        base.as_str(),
+        "ar" | "he" | "fa" | "ur" | "ps" | "yi" | "dv" | "ckb" | "sd" | "ug"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn right_to_left_languages() {
+        for l in ["ar", "he", "fa", "ar-EG", "HE_il", "ckb"] {
+            assert!(is_rtl(l), "{l}");
+        }
+        for l in ["en", "de", "", "arn", "en-US"] {
+            assert!(!is_rtl(l), "{l}");
+        }
+    }
 
     #[test]
     fn reads_the_console_texts() {

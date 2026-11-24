@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The native screen on the computer's own display (ADR 0028 #5): cage runs
+# only alp-screen (GTK 4), which talks to alpd. Replaces alp-kiosk.service
+# (Chromium) on the installed system; the frozen Live line keeps the kiosk.
+# Not part of alp-healthy.target (spec "Local console" rule 1); restarts on
+# its own; if graphics never work, the text screen takes tty1 over.
+[Unit]
+Description=ALP-OS: the screen on this computer
+After=alpd.service systemd-user-sessions.service systemd-logind.service
+Wants=alpd.service
+Conflicts=getty@tty1.service alp-kiosk.service
+After=getty@tty1.service
+OnFailure=alp-live-screen.service
+StartLimitIntervalSec=300
+StartLimitBurst=4
+
+[Service]
+User=alp-kiosk
+PAMName=alp-kiosk
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty1
+UtmpMode=user
+RuntimeDirectory=alp-kiosk
+RuntimeDirectoryMode=0700
+# Software rendering when no GPU driver loads (old laptops): wlroots' own
+# fallback, and GTK's cairo renderer. VERIFY GSK_RENDERER=cairo on GTK 4.18.
+Environment=HOME=/run/alp-kiosk XDG_SESSION_TYPE=wayland WLR_RENDERER_ALLOW_SOFTWARE=1
+ExecStartPre=/bin/sh -c 'for i in $(seq 30); do for c in /dev/dri/card*; do [ -e "$c" ] && exit 0; done; sleep 1; done; echo "ALP-OS: no graphics device" >&2; exit 1'
+# -s: Ctrl+Alt+F<n> switches consoles (maintenance login on tty2).
+ExecStart=/usr/bin/cage -d -s -- /usr/lib/alp/alp-screen
+Restart=always
+RestartSec=3
+TimeoutStopSec=10s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -72,10 +72,56 @@ impl Screen {
     }
 }
 
+/// One alert as the screen lists it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Alert {
+    pub level: Level,
+    pub key: String,
+    pub message: String,
+    pub code: Option<String>,
+}
+
+/// The wire `alerts` list, worst first (same level: alpd's order).
+pub fn alert_list(w: &Value) -> Vec<Alert> {
+    let mut list: Vec<Alert> = w["alerts"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|v| v.is_object())
+                .map(|v| Alert {
+                    level: Level::from_wire(v["level"].as_str().unwrap_or("ok")),
+                    key: v["key"].as_str().unwrap_or_default().to_string(),
+                    message: v["message"].as_str().unwrap_or_default().to_string(),
+                    code: v["code"].as_str().map(str::to_string),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    list.sort_by_key(|a| std::cmp::Reverse(a.level));
+    list
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn alerts_worst_first_keeping_order() {
+        let w = json!({"alerts": [
+            {"level": "note", "key": "a", "message": "A"},
+            "junk",
+            {"level": "now", "key": "b", "message": "B", "code": "ALP-LIVE-1"},
+            {"level": "note", "key": "c", "message": "C"},
+            {"level": "strange", "key": "d"}
+        ]});
+        let l = alert_list(&w);
+        let keys: Vec<&str> = l.iter().map(|a| a.key.as_str()).collect();
+        assert_eq!(keys, ["b", "a", "c", "d"]);
+        assert_eq!(l[0].code.as_deref(), Some("ALP-LIVE-1"));
+        assert_eq!(l[3].level, Level::Ok);
+        assert!(alert_list(&json!({})).is_empty());
+    }
 
     #[test]
     fn older_alpd_means_safe_defaults() {
