@@ -18,7 +18,7 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   `state.install`; native screen (`crates/alp-screen`): sign-in, home, settings, install pages (disk list
   with greyed reasons, confirm with warning and slide, progress). App: files over 80 MB one at a time.
 - Owner's 0.2.7 test notes (2026-11-24), to carry into the 0.2.8 screens: (1) Wi-Fi wrong password takes a
-  full minute; answer as soon as the router answers. (2) Backup USB disk: no NTFS option; default and only
+  full minute; answer as soon as the router answers. (2) Backup USB disk (installed system only; Live keeps other formats): no NTFS option; default and only
   choice is format to exFAT; an empty ext4 disk may become an archive without formatting. (3) Recovery
   code check said "No new recovery code is waiting" right after generating; on return the flow restarted
   (bug in recovery/create -> check state). (4) Phone steps: say a restart of the phone is needed after
