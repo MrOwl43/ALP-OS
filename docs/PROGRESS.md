@@ -25,6 +25,11 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   installing the certificate. (5) Phone scan: the message blinks every 1-1.5 s; keep one steady
   "Looking for your phone..." with a spinner. (6) Home dashboard too crammed in the middle; spread the
   panels, uneven grid.
+- 0.2.7 ALP-REPORT (2026-11-24): uploads stopped because the laptop suspended 18:06-21:15 (lid); fixed:
+  logind/sleep.conf.d never sleep (T-LIVE-01 checks). Shutdown: alpd steps ok (immich 34 s); the report
+  was cut during the stop, so what hung later is still unknown. Postgres/valkey health checks time out
+  (slow stick I/O). Fixed too: Wi-Fi wrong password fast fail; recovery check window 30 min + clear
+  "expired" answer (cause not in the log).
 - Next: install pages checked by screenshot; image profile for the installed system (alp-screen in,
   Chromium out, alp-installer shipped); recovery code bug (3); Wi-Fi fast fail (1).
 
