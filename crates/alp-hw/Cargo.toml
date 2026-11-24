@@ -10,6 +10,8 @@ publish.workspace = true
 
 [dependencies]
 alp-crypto.workspace = true
+# Reads `lsblk --json` for the installer's disk list (inspect::blockdev; already pinned in the workspace).
+serde_json.workspace = true
 
 [lints]
 workspace = true

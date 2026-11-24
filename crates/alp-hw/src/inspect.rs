@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 
 use crate::{DiskId, DiskInfo, DiskTransport, PartitionInfo};
 
+pub mod blockdev;
+
 /// `SecureBoot` variable in the EFI global variable namespace (UEFI spec,
 /// `EFI_GLOBAL_VARIABLE`), as named by efivarfs.
 const SECURE_BOOT_VAR: &str = "SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c";

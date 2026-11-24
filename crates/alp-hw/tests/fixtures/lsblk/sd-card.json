@@ -1,0 +1,47 @@
+{
+   "blockdevices": [
+      {
+         "name": "mmcblk0", "path": "/dev/mmcblk0", "type": "disk", "size": 63864569856,
+         "model": null, "tran": "mmc", "rm": false, "hotplug": false,
+         "rota": false, "ro": false, "pttype": "dos", "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null],
+         "children": [
+            {"name": "mmcblk0p1", "path": "/dev/mmcblk0p1", "type": "part", "size": 63860375552,
+             "model": null, "tran": "mmc", "rm": false, "hotplug": false, "rota": false, "ro": false,
+             "pttype": "dos", "parttype": "0xc", "partlabel": null, "partflags": null,
+             "fstype": "vfat", "label": "CAMERA", "mountpoints": [null]}
+         ]
+      },
+      {
+         "name": "mmcblk0boot0", "path": "/dev/mmcblk0boot0", "type": "disk", "size": 4194304,
+         "model": null, "tran": "mmc", "rm": false, "hotplug": false,
+         "rota": false, "ro": true, "pttype": null, "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null]
+      },
+      {
+         "name": "sdb", "path": "/dev/sdb", "type": "disk", "size": 30752000000,
+         "model": "Cruzer Blade", "tran": "usb", "rm": true, "hotplug": true,
+         "rota": false, "ro": false, "pttype": "gpt", "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null],
+         "children": [
+            {"name": "sdb2", "path": "/dev/sdb2", "type": "part", "size": 8589934592,
+             "model": null, "tran": "usb", "rm": true, "hotplug": true, "rota": false, "ro": false,
+             "pttype": "gpt", "parttype": "4f68bce3-e8cd-4db1-96e7-fbcaf984b709",
+             "partlabel": "alp-os_0.2.8", "partflags": null, "fstype": "erofs", "label": null,
+             "mountpoints": ["/"]}
+         ]
+      },
+      {
+         "name": "sdc", "path": "/dev/sdc", "type": "disk", "size": 0,
+         "model": "USB3.0 CRW-SD", "tran": "usb", "rm": true, "hotplug": true,
+         "rota": false, "ro": false, "pttype": null, "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null]
+      },
+      {
+         "name": "mmcblk1", "path": "/dev/mmcblk1", "type": "disk", "size": 31914983424,
+         "model": null, "tran": "mmc", "rm": false, "hotplug": false,
+         "rota": false, "ro": true, "pttype": null, "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null]
+      }
+   ]
+}

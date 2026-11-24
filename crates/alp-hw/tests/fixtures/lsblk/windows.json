@@ -1,0 +1,61 @@
+{
+   "blockdevices": [
+      {
+         "name": "nvme0n1", "path": "/dev/nvme0n1", "type": "disk", "size": 512110190592,
+         "model": "SAMSUNG MZVLB512HBJQ-000L7", "tran": "nvme", "rm": false, "hotplug": false,
+         "rota": false, "ro": false, "pttype": "gpt", "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null],
+         "children": [
+            {"name": "nvme0n1p1", "path": "/dev/nvme0n1p1", "type": "part", "size": 272629760,
+             "model": null, "tran": "nvme", "rm": false, "hotplug": false, "rota": false, "ro": false,
+             "pttype": "gpt", "parttype": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+             "partlabel": "EFI system partition", "partflags": "0x8000000000000000",
+             "fstype": "vfat", "label": "SYSTEM", "mountpoints": [null]},
+            {"name": "nvme0n1p2", "path": "/dev/nvme0n1p2", "type": "part", "size": 16777216,
+             "model": null, "tran": "nvme", "rm": false, "hotplug": false, "rota": false, "ro": false,
+             "pttype": "gpt", "parttype": "e3c9e316-0b5c-4db8-817d-f92df00215ae",
+             "partlabel": "Microsoft reserved partition", "partflags": "0x8000000000000000",
+             "fstype": null, "label": null, "mountpoints": [null]},
+            {"name": "nvme0n1p3", "path": "/dev/nvme0n1p3", "type": "part", "size": 510770266112,
+             "model": null, "tran": "nvme", "rm": false, "hotplug": false, "rota": false, "ro": false,
+             "pttype": "gpt", "parttype": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
+             "partlabel": "Basic data partition", "partflags": null,
+             "fstype": "ntfs", "label": "Windows", "mountpoints": [null]},
+            {"name": "nvme0n1p4", "path": "/dev/nvme0n1p4", "type": "part", "size": 1048576000,
+             "model": null, "tran": "nvme", "rm": false, "hotplug": false, "rota": false, "ro": false,
+             "pttype": "gpt", "parttype": "de94bba4-06d1-4d40-a16a-bfd50179d6ac",
+             "partlabel": null, "partflags": "0x8000000000000001",
+             "fstype": "ntfs", "label": "Recovery", "mountpoints": [null]}
+         ]
+      },
+      {
+         "name": "sda", "path": "/dev/sda", "type": "disk", "size": 1000204886016,
+         "model": "WDC WD10EZEX-08WN4A0", "tran": "sata", "rm": false, "hotplug": false,
+         "rota": true, "ro": false, "pttype": "gpt", "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null],
+         "children": [
+            {"name": "sda1", "path": "/dev/sda1", "type": "part", "size": 1000202043392,
+             "model": null, "tran": "sata", "rm": false, "hotplug": false, "rota": true, "ro": false,
+             "pttype": "gpt", "parttype": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
+             "partlabel": "Basic data partition", "partflags": null,
+             "fstype": "BitLocker", "label": null, "mountpoints": [null]}
+         ]
+      },
+      {
+         "name": "sdc", "path": "/dev/sdc", "type": "disk", "size": 250059350016,
+         "model": "ST250DM000-1BD141", "tran": "sata", "rm": false, "hotplug": false,
+         "rota": true, "ro": false, "pttype": "dos", "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null],
+         "children": [
+            {"name": "sdc1", "path": "/dev/sdc1", "type": "part", "size": 524288000,
+             "model": null, "tran": "sata", "rm": false, "hotplug": false, "rota": true, "ro": false,
+             "pttype": "dos", "parttype": "0x7", "partlabel": null, "partflags": "0x80",
+             "fstype": "ntfs", "label": "System Reserved", "mountpoints": [null]},
+            {"name": "sdc2", "path": "/dev/sdc2", "type": "part", "size": 249533956096,
+             "model": null, "tran": "sata", "rm": false, "hotplug": false, "rota": true, "ro": false,
+             "pttype": "dos", "parttype": "0x7", "partlabel": null, "partflags": null,
+             "fstype": "ntfs", "label": null, "mountpoints": [null]}
+         ]
+      }
+   ]
+}

@@ -1,0 +1,56 @@
+{
+   "blockdevices": [
+      {
+         "name": "sda", "path": "/dev/sda", "type": "disk", "size": 30752000000,
+         "model": "SanDisk 3.2Gen1", "tran": "usb", "rm": true, "hotplug": true,
+         "rota": false, "ro": false, "pttype": "gpt", "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null],
+         "children": [
+            {"name": "sda2", "path": "/dev/sda2", "type": "part", "size": 8589934592,
+             "model": null, "tran": "usb", "rm": true, "hotplug": true, "rota": false, "ro": false,
+             "pttype": "gpt", "parttype": "4f68bce3-e8cd-4db1-96e7-fbcaf984b709",
+             "partlabel": "alp-os_0.2.8", "partflags": null, "fstype": "erofs", "label": null,
+             "mountpoints": ["/"]}
+         ]
+      },
+      {
+         "name": "sdb", "path": "/dev/sdb", "type": "disk", "size": 4000787030016,
+         "model": "My Passport 2626", "tran": "usb", "rm": false, "hotplug": true,
+         "rota": true, "ro": false, "pttype": "gpt", "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null],
+         "children": [
+            {"name": "sdb1", "path": "/dev/sdb1", "type": "part", "size": 4000785104896,
+             "model": null, "tran": "usb", "rm": false, "hotplug": true, "rota": true, "ro": false,
+             "pttype": "gpt", "parttype": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
+             "partlabel": "My Passport", "partflags": null, "fstype": "ntfs", "label": "Photos",
+             "mountpoints": [null]}
+         ]
+      },
+      {
+         "name": "sdc", "path": "/dev/sdc", "type": "disk", "size": 20000000000000,
+         "model": "WDC WUH722020BLE6L4", "tran": "sata", "rm": false, "hotplug": false,
+         "rota": true, "ro": false, "pttype": "gpt", "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null],
+         "children": [
+            {"name": "sdc1", "path": "/dev/sdc1", "type": "part", "size": 19999998951424,
+             "model": null, "tran": "sata", "rm": false, "hotplug": false, "rota": true, "ro": false,
+             "pttype": "gpt", "parttype": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+             "partlabel": null, "partflags": null, "fstype": "ext4", "label": "backup",
+             "mountpoints": [null]}
+         ]
+      },
+      {
+         "name": "sdd", "path": "/dev/sdd", "type": "disk", "size": 1000204886016,
+         "model": "ST1000DM010-2EP102", "tran": "sata", "rm": false, "hotplug": false,
+         "rota": true, "ro": false, "pttype": "gpt", "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null],
+         "children": [
+            {"name": "sdd1", "path": "/dev/sdd1", "type": "part", "size": 1000202043392,
+             "model": null, "tran": "sata", "rm": false, "hotplug": false, "rota": true, "ro": false,
+             "pttype": "gpt", "parttype": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
+             "partlabel": "Basic data partition", "partflags": null, "fstype": null, "label": null,
+             "mountpoints": [null]}
+         ]
+      }
+   ]
+}

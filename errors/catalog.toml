@@ -54,6 +54,12 @@ title = "The disks changed since installation"
 action = "Reconnect the disks exactly as they were during installation and restart the server. Nothing was changed on your disks."
 technician = "First boot rediscovered disks that do not match the first-boot seed (missing member, different serial/size/partition, or safety check refused); no pool was created. Logs: journalctl -t alpd; firstboot-seed.toml."
 
+[ALP-INST-400]
+severity = "action"
+title = "The list of disks could not be read"
+action = "Restart the computer from the USB stick and try again. Nothing on this computer was changed. If it happens again, write down this code and ask for help."
+technician = "lsblk --json output was missing or not lsblk's JSON (alp_hw::inspect::blockdev::parse_lsblk); no disk was offered or touched. Logs: journalctl -b -t alp-installer; run lsblk --json --bytes --tree by hand."
+
 # ---------------------------------------------------------------- BOOT
 
 [ALP-BOOT-001]
