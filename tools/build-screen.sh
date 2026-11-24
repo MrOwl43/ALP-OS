@@ -29,7 +29,12 @@ tests/lib/locks.sh cargo "$engine" run --rm \
     "$IMAGE" bash -euo pipefail -c '
         rm -f /etc/apt/sources.list.d/debian.sources
         echo "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/$SNAPSHOT/ trixie main" >/etc/apt/sources.list
+        # The container is newer than the snapshot: pin everything to the
+        # snapshot and step its base packages back, so the -dev packages
+        # match and the binary links what the image ships.
+        printf "Package: *\nPin: origin snapshot.debian.org\nPin-Priority: 1001\n" >/etc/apt/preferences.d/snapshot
         apt-get update -q
+        apt-get -y -q --allow-downgrades dist-upgrade
         apt-get install -y -q --no-install-recommends ca-certificates curl gcc libc6-dev pkg-config libgtk-4-dev libadwaita-1-dev
         # The toolchain of rust-toolchain.toml, from rustup (same as CI).
         curl -fsSL https://sh.rustup.rs | sh -s -- -y -q --profile minimal --default-toolchain "$TOOLCHAIN"

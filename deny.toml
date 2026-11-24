@@ -15,6 +15,10 @@ yanked = "deny"
 # dependencies.
 allow = ["MIT", "Apache-2.0", "Unicode-3.0", "CC0-1.0"]
 confidence-threshold = 0.9
+# target-lexicon: a build-time helper of the GTK bindings' pkg-config lookup
+# (system-deps, alp-screen only); Apache-2.0 with the LLVM exception, which
+# only widens Apache-2.0.
+exceptions = [{ allow = ["Apache-2.0 WITH LLVM-exception"], crate = "target-lexicon" }]
 # Our own crates are unpublished (license: AGPL-3.0-or-later, see ADR 0002).
 private = { ignore = true }
 
