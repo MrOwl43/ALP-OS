@@ -51,3 +51,4 @@ Icon?
 
 # Per-device Claude Code instructions (not shared)
 CLAUDE.local.md
+.claude/worktrees/
