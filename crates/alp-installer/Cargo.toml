@@ -15,6 +15,12 @@ path = "src/main.rs"
 [dependencies]
 # Disk discovery (inspect::blockdev) and the pool types (RaidProfile, Protection).
 alp-hw.workspace = true
+# First-boot seed contract types and state paths (alp_core::firstboot, alp_core::state).
+alp-core.workspace = true
+# Reads lsblk's JSON (identities, partitions after repart).
+serde_json.workspace = true
+# Writes the first-boot seed (TOML, contract firstboot-seed.md).
+toml.workspace = true
 
 [lints]
 workspace = true

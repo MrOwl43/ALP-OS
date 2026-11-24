@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# T-INST-01: one-disk install (plan docs/plans/0.2.8-installer.md, VM tests).
+# CI only. Boots the installer image with two virtual disks, both sparse
+# files in this script's own work directory (never a disk of this machine):
+#   vdb  64 GiB, empty: the install target;
+#   vdc  40 GiB, a fake Windows disk (GPT: ESP with a Windows boot loader
+#        file, Microsoft reserved, NTFS).
+# The guest runs the scripted installer:
+#   alp-installer list
+#   alp-installer install --system vdb --confirm-erase vdb
+# Passes when:
+#   - the Windows disk is listed as not usable (holds_windows),
+#   - the Windows disk is bit-for-bit unchanged afterwards,
+#   - the installer reports RESULT ok and vdb holds exactly the partitions of
+#     the disk-layout contract: esp, slot 1 filled (alp-os_<version> and its
+#     _verity), slot 2 _empty (root and verity), alp-state, alp-data.
+# Until block 4's pool plan digest exists the installer refuses before any
+# write with ALP-INST-407; the script then checks that vdb is unchanged too
+# and exits 3 (not ready), not 0.
+# The image must ship /usr/bin/alp-installer, /usr/lib/alp/install-layout and
+# the install-time sysupdate definitions (stream A); without the binary the
+# script exits 3 as well.
+#
+# Usage: tests/vm/t-inst-01.sh <disk-image>
+set -euo pipefail
+here=$(dirname "$(realpath "$0")")
+image=${1:?usage: t-inst-01.sh <disk-image>}
+[[ -f $image ]] || { echo "FAIL: image not found: $image" >&2; exit 2; }
+
+work=$(mktemp -d -p "$(dirname "$(realpath "$image")")" t-inst-01.XXXXXX)
+trap 'rm -rf "$work"' EXIT
+target="$work/target.raw" windows="$work/windows.raw"
+
+truncate -s 64G "$target"
+target_before=$(sha256sum "$target" | cut -d' ' -f1)
+
+# Fake Windows disk (same recipe as T-LIVE-02, plus Microsoft reserved).
+truncate -s 40G "$windows"
+sfdisk -q "$windows" <<SFDISK
+label: gpt
+start=2048, size=131072, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B
+start=133120, size=32768, type=E3C9E316-0B5C-4DB8-817D-F92DF00215AE
+start=165888, size=1900000, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7
+SFDISK
+mkfs.vfat -F 32 --offset 2048 "$windows" 65536 >/dev/null
+mmd -i "$windows@@$((2048 * 512))" ::/EFI ::/EFI/Microsoft ::/EFI/Microsoft/Boot
+echo MZ >"$work/bootmgfw.efi"
+mcopy -i "$windows@@$((2048 * 512))" "$work/bootmgfw.efi" ::/EFI/Microsoft/Boot/bootmgfw.efi
+dd if=/dev/zero of="$work/ntfs.img" bs=512 count=1900000 conv=sparse status=none
+mkfs.ntfs -q -F -L Windows "$work/ntfs.img"
+dd if="$work/ntfs.img" of="$windows" bs=512 seek=165888 conv=notrunc status=none
+rm -f "$work/ntfs.img"
+windows_before=$(sha256sum "$windows" | cut -d' ' -f1)
+
+# Serials give the disks /dev/disk/by-id names; the installer refuses a
+# disk without one (ALP-INST-403). VERIFY: virtio-blk-pci serial= property.
+args="-drive if=none,id=tgt,format=raw,file=$target -device virtio-blk-pci,drive=tgt,serial=ALPTARGET01"
+args+=" -drive if=none,id=win,format=raw,file=$windows -device virtio-blk-pci,drive=win,serial=ALPWINDOWS01"
+
+probe='-/usr/bin/sh -c "test -x /usr/bin/alp-installer && echo INSTALLER=yes || echo INSTALLER=no"
+-/usr/bin/alp-installer list
+-/usr/bin/alp-installer install --system vdb --confirm-erase vdb'
+
+status=0
+out=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe" ALP_PROBE_DELAY=10 ALP_QEMU_ARGS="$args" \
+    "$here/run-vm.sh" "$image" 900) || status=$?
+echo "$out"
+(( status == 0 )) || { echo "FAIL: T-INST-01 (VM run failed)" >&2; exit 1; }
+
+fail=0
+expect() {
+    if grep -qE -- "$2" <<<"$out"; then echo "ok:   $1"; else echo "FAIL: $1" >&2; fail=1; fi
+}
+same() { # label, file, hash before
+    if [[ $(sha256sum "$2" | cut -d' ' -f1) == "$3" ]]; then echo "ok:   $1 unchanged"; else echo "FAIL: $1 changed" >&2; fail=1; fi
+}
+
+if grep -q 'INSTALLER=no' <<<"$out"; then
+    echo "NOT READY: the image has no /usr/bin/alp-installer (stream A)" >&2
+    same "Windows disk" "$windows" "$windows_before"
+    same "target disk" "$target" "$target_before"
+    exit 3
+fi
+
+expect "Windows disk is greyed out" '^DISK vdc .*not usable: holds_windows'
+expect "target disk is offered" '^DISK vdb .*usable \[SystemAndData'
+same "Windows disk" "$windows" "$windows_before"
+
+if grep -q '^RESULT ALP-INST-407' <<<"$out"; then
+    same "target disk" "$target" "$target_before"
+    (( fail == 0 )) || { echo "FAIL: T-INST-01" >&2; exit 1; }
+    echo "NOT READY: installer refused before writing (block 4 plan digest missing)" >&2
+    exit 3
+fi
+expect "installer finished" '^RESULT ok'
+expect "progress reached the end" '^PROGRESS 100 .*install\.done'
+
+if python3 -I - "$target" <<'PY'
+import json, re, subprocess, sys
+parts = json.loads(subprocess.run(["sfdisk", "--json", sys.argv[1]], check=True,
+                                  capture_output=True, text=True).stdout)["partitiontable"]["partitions"]
+want = [r"esp", r"alp-os_[0-9.]+", r"alp-os_[0-9.]+_verity", r"_empty", r"_empty",
+        r"alp-state", r"alp-data"]
+got = [p.get("name", "") for p in parts]
+print("partitions:", got)
+ok = len(got) == len(want) and all(re.fullmatch(w, g) for w, g in zip(want, got))
+sys.exit(0 if ok else 1)
+PY
+then echo "ok:   target has the contract layout"; else echo "FAIL: target layout" >&2; fail=1; fi
+
+(( fail == 0 )) || { echo "FAIL: T-INST-01" >&2; exit 1; }
+echo "PASS: T-INST-01"

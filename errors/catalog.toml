@@ -72,6 +72,42 @@ title = "This choice of disks is not possible"
 action = "Choose again from the disks the screen offers. Nothing was written."
 technician = "plan::plan refused the choice: a disk not usable for its role (operating system, start stick, too small, USB as system disk), a disk chosen twice, keep-running without a found start stick or its alp-state partition, or a protection profile that does not fit the number of disks. Logs: journalctl -b -t alp-installer."
 
+[ALP-INST-403]
+severity = "action"
+title = "A disk could not be identified safely"
+action = "ALP-OS only installs on disks it can recognise for sure. Nothing was written. Connect the disk directly to the computer (not through a hub or adapter) and try again, or choose another disk."
+technician = "A disk in the plan has no /dev/disk/by-id name (lsblk ID-LINK empty), so a swapped disk could not be detected (alp_installer::exec preflight). Virtual disks need a serial. Logs: journalctl -b -t alp-installer; lsblk -o NAME,ID-LINK,SERIAL."
+
+[ALP-INST-404]
+severity = "action"
+title = "A disk could not be prepared"
+action = "The installation stopped while preparing a disk. Disks you did not choose were not touched. Restart from the USB stick and try again; if it happens again, try another disk."
+technician = "systemd-repart, udevadm settle or the partition read-back failed, or the new partitions did not match image/install-layout (labels, unique partition UUIDs). The detail names the disk and the program's last error lines. Logs: journalctl -b -t alp-installer."
+
+[ALP-INST-405]
+severity = "action"
+title = "ALP-OS could not be copied to the disk"
+action = "The installation stopped while copying ALP-OS. Disks you did not choose were not touched. Restart from the USB stick and try again."
+technician = "systemd-sysupdate (install-time transfer definitions) or bootctl install failed on the system disk. Logs: journalctl -b -t alp-installer; journalctl -b -u systemd-sysupdate."
+
+[ALP-INST-406]
+severity = "action"
+title = "Your choices could not be saved for the first start"
+action = "The installation stopped at the last step. Disks you did not choose were not touched. Restart from the USB stick and try again."
+technician = "Writing firstboot-seed.toml to alp-state failed (mount, install, sync or umount), or a member's alp-data partition or identity was missing. Logs: journalctl -b -t alp-installer."
+
+[ALP-INST-407]
+severity = "action"
+title = "This test version cannot install yet"
+action = "This version of the installer is not finished. Nothing was written. Use a newer installer stick."
+technician = "alp_installer::exec::ContractDigest::ready() is false: alp_hw::PlanDigest for PoolPlan (block 4, stream B) is not implemented, so the first-boot seed cannot carry a plan digest. Refused before any write."
+
+[ALP-INST-408]
+severity = "now"
+title = "Safety stop"
+action = "The installer stopped itself before touching a disk you did not choose. Write down this code and ask for help; do not try again with this stick."
+technician = "alp_installer::exec refused to pass a device outside the plan's erase list to a program. This is a bug in the installer; the detail names the device. Logs: journalctl -b -t alp-installer."
+
 # ---------------------------------------------------------------- BOOT
 
 [ALP-BOOT-001]

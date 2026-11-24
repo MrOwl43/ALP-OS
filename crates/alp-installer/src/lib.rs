@@ -4,8 +4,11 @@
 //!
 //! Disk discovery lives in `alp_hw::inspect::blockdev` (stream rule 12).
 //! This crate turns the disk list and the user's choice into an explicit
-//! install plan. Nothing here touches a disk yet: the executor (repart,
-//! image copy, first-boot seed) comes next and runs only in the VM tests.
+//! install plan, and the executor carries it out through [`run::Runner`]
+//! (unit tests use a recording mock; real disks only in the VM tests).
 
 pub mod capacity;
+pub mod exec;
 pub mod plan;
+pub mod run;
+pub mod seed;
