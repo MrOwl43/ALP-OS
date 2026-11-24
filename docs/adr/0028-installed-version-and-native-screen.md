@@ -52,6 +52,11 @@ also set the scale target for the final system: tens of terabytes per home.
    origin (no tabs, no address bar, no navigation elsewhere, no file
    dialogs except a later removable-media-only picker). Phones are not
    affected: they talk to Immich and the pairing API, not to this screen.
+   Debian versions in the pinned snapshot 20261016T023245Z (trixie main,
+   amd64, read from its Packages.xz on 2026-11-24): libgtk-4-1 4.18.6+ds-2,
+   libadwaita-1-0 1.7.6-1~deb13u1, libwebkitgtk-6.0-4 2.52.6-1~deb13u1,
+   cage 0.2.0-2 (chromium 150.0.7871.181-1~deb13u1, to be removed).
+   trixie-security not checked yet.
    This replaces the "kiosk browser engine" of spec block 1 and the
    localhost web front end of block 7 and "Local console". **VERIFY** the
    pinned Debian versions of GTK 4, libadwaita, gtk4-rs and WebKitGTK
