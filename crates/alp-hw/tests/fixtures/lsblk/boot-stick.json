@@ -1,0 +1,40 @@
+{
+   "blockdevices": [
+      {
+         "name": "sda", "path": "/dev/sda", "type": "disk", "size": 256060514304,
+         "model": "TOSHIBA THNSNK256GVN8", "tran": "sata", "rm": false, "hotplug": false,
+         "rota": false, "ro": false, "pttype": null, "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null]
+      },
+      {
+         "name": "sdb", "path": "/dev/sdb", "type": "disk", "size": 30752000000,
+         "model": "SanDisk 3.2Gen1", "tran": "usb", "rm": true, "hotplug": true,
+         "rota": false, "ro": false, "pttype": "gpt", "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null],
+         "children": [
+            {"name": "sdb1", "path": "/dev/sdb1", "type": "part", "size": 1073741824,
+             "model": null, "tran": "usb", "rm": true, "hotplug": true, "rota": false, "ro": false,
+             "pttype": "gpt", "parttype": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+             "partlabel": "esp", "partflags": null, "fstype": "vfat", "label": null,
+             "mountpoints": [null]},
+            {"name": "sdb2", "path": "/dev/sdb2", "type": "part", "size": 8589934592,
+             "model": null, "tran": "usb", "rm": true, "hotplug": true, "rota": false, "ro": false,
+             "pttype": "gpt", "parttype": "4f68bce3-e8cd-4db1-96e7-fbcaf984b709",
+             "partlabel": "alp-os_0.2.8", "partflags": null, "fstype": "erofs", "label": null,
+             "mountpoints": [null],
+             "children": [
+                {"name": "root", "path": "/dev/mapper/root", "type": "crypt", "size": 8589934592,
+                 "model": null, "tran": null, "rm": false, "hotplug": false, "rota": false, "ro": true,
+                 "pttype": null, "parttype": null, "partlabel": null, "partflags": null,
+                 "fstype": "erofs", "label": null, "mountpoints": ["/"]}
+             ]}
+         ]
+      },
+      {
+         "name": "sdc", "path": "/dev/sdc", "type": "disk", "size": 2000398934016,
+         "model": "Elements 25A2", "tran": "usb", "rm": false, "hotplug": true,
+         "rota": true, "ro": false, "pttype": null, "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null]
+      }
+   ]
+}

@@ -1,0 +1,25 @@
+{
+   "blockdevices": [
+      {
+         "name": "sda",
+         "path": "/dev/sda",
+         "type": "disk",
+         "size": 500107862016,
+         "model": "Samsung SSD 870 EVO 500GB",
+         "tran": "sata",
+         "rm": false,
+         "hotplug": false,
+         "rota": false,
+         "ro": false,
+         "pttype": null,
+         "parttype": null,
+         "partlabel": null,
+         "partflags": null,
+         "fstype": null,
+         "label": null,
+         "mountpoints": [
+             null
+         ]
+      }
+   ]
+}

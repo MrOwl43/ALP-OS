@@ -26,6 +26,7 @@ name = "alp-hw"
 version = "0.0.0"
 dependencies = [
  "alp-crypto",
+ "serde_json",
 ]
 
 [[package]]

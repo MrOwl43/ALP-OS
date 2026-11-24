@@ -1,0 +1,33 @@
+{
+   "blockdevices": [
+      {"name": "sda", "path": "/dev/sda", "type": "disk", "size": "500107862016",
+       "model": "WDC WDS500G2B0A-00SM50", "tran": "sata", "rm": "0", "hotplug": "0",
+       "rota": "0", "ro": "0", "pttype": "gpt", "parttype": null, "partlabel": null,
+       "partflags": null, "fstype": null, "label": null, "mountpoint": null,
+       "children": [
+          {"name": "sda1", "path": "/dev/sda1", "type": "part", "size": "104857600",
+           "model": null, "tran": null, "rm": "0", "hotplug": "0", "rota": "0", "ro": "0",
+           "pttype": "gpt", "parttype": "C12A7328-F81F-11D2-BA4B-00A0C93EC93B",
+           "partlabel": "EFI system partition", "partflags": null, "fstype": "vfat",
+           "label": null, "mountpoint": null},
+          {"name": "sda2", "path": "/dev/sda2", "type": "part", "size": "16777216",
+           "model": null, "tran": null, "rm": "0", "hotplug": "0", "rota": "0", "ro": "0",
+           "pttype": "gpt", "parttype": "E3C9E316-0B5C-4DB8-817D-F92DF00215AE",
+           "partlabel": "Microsoft reserved partition", "partflags": null, "fstype": null,
+           "label": null, "mountpoint": null}
+       ]
+      },
+      {"name": "sdb", "path": "/dev/sdb", "type": "disk", "size": "30752000000",
+       "model": "Ultra Fit", "tran": "usb", "rm": "1", "hotplug": "1",
+       "rota": "0", "ro": "0", "pttype": "gpt", "parttype": null, "partlabel": null,
+       "partflags": null, "fstype": null, "label": null, "mountpoint": null,
+       "children": [
+          {"name": "sdb2", "path": "/dev/sdb2", "type": "part", "size": "8589934592",
+           "model": null, "tran": null, "rm": "1", "hotplug": "1", "rota": "0", "ro": "0",
+           "pttype": "gpt", "parttype": "4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709",
+           "partlabel": "alp-os_0.2.8", "partflags": null, "fstype": "erofs",
+           "label": null, "mountpoint": "/"}
+       ]
+      }
+   ]
+}
