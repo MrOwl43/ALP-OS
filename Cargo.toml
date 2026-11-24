@@ -11,6 +11,7 @@ members = [
     "crates/alp-hw",
     "crates/alpctl",
     "crates/alp-live",
+    "crates/alp-screen",
 ]
 
 [workspace.package]

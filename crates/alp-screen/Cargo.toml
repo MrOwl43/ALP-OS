@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The native local screen (ADR 0028 #5, docs/plans/0.2.8-native-screen.md).
+# The library (alpd client, state model, texts) builds everywhere; the GTK app
+# needs the `gui` feature and the GTK 4 / libadwaita development files.
+[package]
+name = "alp-screen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+gui = ["dep:gtk4", "dep:libadwaita"]
+
+[dependencies]
+serde_json = { workspace = true }
+zeroize = { workspace = true }
+# GTK 4 bindings (gtk-rs, MIT): the toolkit chosen in ADR 0028. v4_14 is the
+# oldest GTK the build and CI machines have (Ubuntu 24.04: 4.14; the image: 4.18).
+gtk4 = { version = "=0.11.5", features = ["v4_14"], optional = true }
+# libadwaita bindings (gtk-rs, MIT): GNOME's widgets and style, ADR 0028.
+libadwaita = { version = "=0.9.2", features = ["v1_5"], optional = true }
+
+[[bin]]
+name = "alp-screen"
+path = "src/main.rs"
+required-features = ["gui"]
+
+[lints]
+workspace = true

@@ -274,7 +274,7 @@
  "lock.hint": "Click or press a key to sign in",
  "lock.signin": "Sign in",
  "lock.user": "ALPArchive",
- "lock.msg.ok": "Your photos are home and safe",
+ "lock.msg.ok": "All good",
  "lock.msg.warn": "Your photos are safe, but something needs a look",
  "lock.msg.bad": "ALPArchive needs your attention",
  "lock.devices": "Devices",
