@@ -2,6 +2,20 @@
 
 Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
 
+## 0.2.8 (decided 2026-11-24, ADR 0028)
+
+- Focus moves to the installed version: boot from USB, install to a local disk or keep running from the
+  stick; disks with an OS greyed out (formatting them comes later); dup on one disk, RAID1 on two or more;
+  native GTK 4 screen (gtk4-rs, cage, WebKitGTK view locked to the gallery), Chromium removed; built and
+  tested for tens of TB. Live frozen at 0.2.7 (security fixes only). Remote access stays in 0.2.9.
+- Done: pairing race fix (approved request reads pending 3 s while nginx reloads); mobile app retries after
+  pairing and shows the real reason (mobile branch claude/project-thread-6e05pr; APK not built yet).
+- Open field bugs (0.2.7 laptop tests): uploads stall; shutdown did not power off; old laptops (2013/2016)
+  do not boot; Wi-Fi on TP-Link Smart Connect; old archive refused the ALP password; kiosk escapes (moot
+  once Chromium leaves). Home screen "All good" text; gallery "Upload more photos" blocked by kiosk policy.
+- Next: plan for block 7 (installer, OS-disk detection) and the native screen, with VERIFY of GTK 4,
+  libadwaita, gtk4-rs and WebKitGTK versions in the pinned Debian snapshot.
+
 ## Alpha 0.2.7 (started 2026-11-15, same branch, on top of 0.2.61)
 
 - Owner's choice: one version with (1) the gallery back on a new stick, (2) a new version without erasing

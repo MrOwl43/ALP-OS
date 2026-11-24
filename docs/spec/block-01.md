@@ -1,4 +1,4 @@
-<!-- Generated from docs/spec.md (Version 0.5) by tools/split-spec.py. Do not edit; edit docs/spec.md and rerun the tool. -->
+<!-- Generated from docs/spec.md (Version 0.6) by tools/split-spec.py. Do not edit; edit docs/spec.md and rerun the tool. -->
 
 ### Block 1 — Image builder
 
