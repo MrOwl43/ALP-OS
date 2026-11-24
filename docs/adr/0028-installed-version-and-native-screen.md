@@ -34,6 +34,15 @@ also set the scale target for the final system: tens of terabytes per home.
    disk: Btrfs `dup` for data and metadata (protects against damaged files,
    not a dead disk; the screen says so). Two or more: `RAID1`. `RAID1c3`
    and `RAID10` allowed by explicit choice. RAID5/6 forbidden.
+4a. **Every connected disk is listed** (internal, USB, SD), each with its
+   role or the reason it cannot be used (for example "holds Windows").
+   Later versions add roles: which disk (or disk group) is the **main
+   archive** and which are **local backups** of it (a separate copy on its
+   own disk, kept with snapshots, not a RAID mirror: it survives a mistake
+   or damage that a mirror would copy). Advanced users may then choose
+   where snapshots live. 0.2.8 lists all disks and builds the main archive;
+   the backup role is designed so it can be added without changing the
+   pool layout.
 5. **Native screen, no browser.** The local screen becomes a native
    application: GTK 4 with libadwaita, written in Rust (gtk4-rs), running
    alone under the `cage` Wayland compositor. It talks to `alpd` over the
