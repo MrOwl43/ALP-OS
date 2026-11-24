@@ -550,6 +550,15 @@ pub enum Contents {
     Files(Vec<String>),
 }
 
+impl Contents {
+    /// Using this disk erases something on it: the confirm screen shows
+    /// the strong warning naming it and asks for the slide (owner decision
+    /// 2026-11-24). Disks with an operating system never get this far.
+    pub fn will_erase_files(&self) -> bool {
+        matches!(self, Contents::Files(_))
+    }
+}
+
 /// Why a disk cannot be used. One per disk: the first that applies, in
 /// this order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,0 +1,87 @@
+{
+   "blockdevices": [
+      {
+         "name": "nvme0n1", "path": "/dev/nvme0n1", "type": "disk", "size": 512110190592,
+         "model": "SAMSUNG MZVLB512HBJQ-000L7", "tran": "nvme", "rm": false, "hotplug": false,
+         "rota": false, "ro": false, "pttype": "gpt", "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null],
+         "children": [
+            {"name": "nvme0n1p1", "path": "/dev/nvme0n1p1", "type": "part", "size": 272629760,
+             "model": null, "tran": "nvme", "rm": false, "hotplug": false, "rota": false, "ro": false,
+             "pttype": "gpt", "parttype": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+             "partlabel": "EFI system partition", "partflags": null,
+             "fstype": "vfat", "label": null, "mountpoints": [null]},
+            {"name": "nvme0n1p2", "path": "/dev/nvme0n1p2", "type": "part", "size": 16777216,
+             "model": null, "tran": "nvme", "rm": false, "hotplug": false, "rota": false, "ro": false,
+             "pttype": "gpt", "parttype": "e3c9e316-0b5c-4db8-817d-f92df00215ae",
+             "partlabel": "Microsoft reserved partition", "partflags": null,
+             "fstype": null, "label": null, "mountpoints": [null]},
+            {"name": "nvme0n1p3", "path": "/dev/nvme0n1p3", "type": "part", "size": 511819677696,
+             "model": null, "tran": "nvme", "rm": false, "hotplug": false, "rota": false, "ro": false,
+             "pttype": "gpt", "parttype": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
+             "partlabel": "Basic data partition", "partflags": null,
+             "fstype": "ntfs", "label": null, "mountpoints": [null]}
+         ]
+      },
+      {
+         "name": "sda", "path": "/dev/sda", "type": "disk", "size": 500107862016,
+         "model": "Samsung SSD 870 EVO 500GB", "tran": "sata", "rm": false, "hotplug": false,
+         "rota": false, "ro": false, "pttype": null, "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null]
+      },
+      {
+         "name": "sdb", "path": "/dev/sdb", "type": "disk", "size": 1000204886016,
+         "model": "WDC WD10EZEX-08WN4A0", "tran": "sata", "rm": false, "hotplug": false,
+         "rota": true, "ro": false, "pttype": "gpt", "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null],
+         "children": [
+            {"name": "sdb1", "path": "/dev/sdb1", "type": "part", "size": 1000202043392,
+             "model": null, "tran": "sata", "rm": false, "hotplug": false, "rota": true, "ro": false,
+             "pttype": "gpt", "parttype": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
+             "partlabel": "Basic data partition", "partflags": null,
+             "fstype": "ntfs", "label": "Old photos", "mountpoints": [null]}
+         ]
+      },
+      {
+         "name": "sdc", "path": "/dev/sdc", "type": "disk", "size": 30752000000,
+         "model": "SanDisk 3.2Gen1", "tran": "usb", "rm": true, "hotplug": true,
+         "rota": false, "ro": false, "pttype": "gpt", "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null],
+         "children": [
+            {"name": "sdc1", "path": "/dev/sdc1", "type": "part", "size": 1073741824,
+             "model": null, "tran": "usb", "rm": true, "hotplug": true, "rota": false, "ro": false,
+             "pttype": "gpt", "parttype": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+             "partlabel": "esp", "partflags": null, "fstype": "vfat", "label": null,
+             "mountpoints": [null]},
+            {"name": "sdc2", "path": "/dev/sdc2", "type": "part", "size": 8589934592,
+             "model": null, "tran": "usb", "rm": true, "hotplug": true, "rota": false, "ro": false,
+             "pttype": "gpt", "parttype": "4f68bce3-e8cd-4db1-96e7-fbcaf984b709",
+             "partlabel": "alp-os_0.2.8", "partflags": null, "fstype": "erofs", "label": null,
+             "mountpoints": [null],
+             "children": [
+                {"name": "root", "path": "/dev/mapper/root", "type": "crypt", "size": 8589934592,
+                 "model": null, "tran": null, "rm": false, "hotplug": false, "rota": false, "ro": true,
+                 "pttype": null, "parttype": null, "partlabel": null, "partflags": null,
+                 "fstype": "erofs", "label": null, "mountpoints": ["/"]}
+             ]},
+            {"name": "sdc6", "path": "/dev/sdc6", "type": "part", "size": 2147483648,
+             "model": null, "tran": "usb", "rm": true, "hotplug": true, "rota": false, "ro": false,
+             "pttype": "gpt", "parttype": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+             "partlabel": "alp-state", "partflags": null, "fstype": "ext4", "label": null,
+             "mountpoints": ["/var/lib/alp"]}
+         ]
+      },
+      {
+         "name": "sdd", "path": "/dev/sdd", "type": "disk", "size": 20000000000000,
+         "model": "Elements 25A3", "tran": "usb", "rm": false, "hotplug": true,
+         "rota": true, "ro": false, "pttype": null, "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null]
+      },
+      {
+         "name": "sde", "path": "/dev/sde", "type": "disk", "size": 20000000000000,
+         "model": "WDC WUH722020BLE6L4", "tran": "sata", "rm": false, "hotplug": false,
+         "rota": true, "ro": false, "pttype": null, "parttype": null, "partlabel": null,
+         "partflags": null, "fstype": null, "label": null, "mountpoints": [null]
+      }
+   ]
+}

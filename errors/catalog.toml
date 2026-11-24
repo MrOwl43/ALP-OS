@@ -60,6 +60,18 @@ title = "The list of disks could not be read"
 action = "Restart the computer from the USB stick and try again. Nothing on this computer was changed. If it happens again, write down this code and ask for help."
 technician = "lsblk --json output was missing or not lsblk's JSON (alp_hw::inspect::blockdev::parse_lsblk); no disk was offered or touched. Logs: journalctl -b -t alp-installer; run lsblk --json --bytes --tree by hand."
 
+[ALP-INST-401]
+severity = "action"
+title = "The disks changed before installing"
+action = "A disk was connected, removed or changed after you confirmed. Nothing was written. Leave the disks as they are and choose again."
+technician = "InstallPlan::recheck: a fresh lsblk discovery differs from the confirmed one (disk added or removed, size, partitions, contents, mounts or verdict changed), or re-planning gave a different plan. Logs: journalctl -b -t alp-installer (the detail names the disk)."
+
+[ALP-INST-402]
+severity = "action"
+title = "This choice of disks is not possible"
+action = "Choose again from the disks the screen offers. Nothing was written."
+technician = "plan::plan refused the choice: a disk not usable for its role (operating system, start stick, too small, USB as system disk), a disk chosen twice, keep-running without a found start stick or its alp-state partition, or a protection profile that does not fit the number of disks. Logs: journalctl -b -t alp-installer."
+
 # ---------------------------------------------------------------- BOOT
 
 [ALP-BOOT-001]

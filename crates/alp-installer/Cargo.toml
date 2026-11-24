@@ -12,5 +12,9 @@ publish.workspace = true
 name = "alp-installer"
 path = "src/main.rs"
 
+[dependencies]
+# Disk discovery (inspect::blockdev) and the pool types (RaidProfile, Protection).
+alp-hw.workspace = true
+
 [lints]
 workspace = true

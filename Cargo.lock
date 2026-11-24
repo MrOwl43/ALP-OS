@@ -32,6 +32,9 @@ dependencies = [
 [[package]]
 name = "alp-installer"
 version = "0.0.0"
+dependencies = [
+ "alp-hw",
+]
 
 [[package]]
 name = "alp-live"
