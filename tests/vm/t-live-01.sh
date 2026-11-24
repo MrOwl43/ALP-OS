@@ -36,6 +36,7 @@ probe='/usr/sbin/blockdev --getro /dev/vdb
 /usr/sbin/nft list chain inet alp input
 /usr/bin/sh -c "ls /usr/lib/firmware/iwlwifi-*.ucode* | head -1"
 -/usr/bin/sh -c "echo DNS=$(systemctl is-active systemd-resolved.service) STUB=$(grep -c 127.0.0.53 /etc/resolv.conf) RTC=$(tail -n 1 /etc/adjtime) ZONE=$(TZ=Etc/GMT-2 date -d @0 +%z) NTPSYNC=$(test -e /run/systemd/timesync/synchronized && echo yes || echo no)"
+-/usr/bin/sh -c "echo LID=$(busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager HandleLidSwitch) SLEEP=$(busctl call org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager CanSuspend)"
 -/usr/bin/sh -c "echo PROTECTRUNS=$(systemctl list-units --all --no-legend --plain alp-live-protect-disk@* | wc -l) PROTECTFAILED=$(systemctl list-units --failed --no-legend --plain alp-live-protect-disk@* | wc -l) PROTECTERR=$(journalctl -b --no-pager | grep -c could.not.make)"'
 
 probe+=$'\n'"$(qa_http_probe NETSTATE GET /api/v1/live/state)"
@@ -82,6 +83,9 @@ expect "Wi-Fi firmware is in the image" '/usr/lib/firmware/iwlwifi-'
 # The udev rule starts alp-live-protect-disk@ for each disk; none may fail
 # (0.2.4: the rule's own run failed on every disk).
 expect "the disk protection runs for each disk without errors" 'PROTECTRUNS=[1-9][0-9]* PROTECTFAILED=0 PROTECTERR=0'
+# 0.2.7 laptop test: closing the lid suspended the server and uploads stopped.
+expect "closing the lid does nothing" 'LID=s "ignore"'
+expect "the computer cannot be put to sleep" 'SLEEP=s "(no|na)"'
 expect "report saved on the stick" 'hw-.*-[0-9]{8}-[0-9]{4}\.txt'
 
 after=$(sha256sum "$internal" | cut -d' ' -f1)
