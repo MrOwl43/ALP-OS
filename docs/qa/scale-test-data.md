@@ -2,7 +2,7 @@
 
 Status: plan only, nothing implemented. The full run below is for AFTER the beta versions
 (owner decision 2026-11-24). Until then, automated test data stays at or below 1 GB in total,
-and the owner tests large files himself on real hardware.
+and the owner tests large files on real hardware.
 
 ## Now (before beta): small variant
 
