@@ -213,6 +213,14 @@ window.alp {
 .cat-list row:selected label { color: #ffffff; font-weight: 600; }
 .cat-list .chip { border-radius: 8px; padding: 6px; }
 
+.alp menubutton.help-btn > button:not(.flat):not(.suggested-action):not(.destructive-action):not(.glass-btn) {
+  min-width: 28px; min-height: 28px; padding: 0; border-radius: 99px;
+  background-color: #e6f0fd; color: @ACCENT@; font-weight: 800; }
+.alp menubutton.help-btn > button:not(.flat):not(.suggested-action):not(.destructive-action):not(.glass-btn):hover { background-color: #d6e6fb; }
+.advice { font-size: 10.5pt; font-weight: 600; }
+.advice.tone-warn { color: #8a4300; }
+.advice.tone-ok { color: #17672e; }
+
 /* Slide to confirm */
 .alp scale trough { min-height: 10px; border-radius: 99px; background-color: #e2e4ea; }
 .alp scale highlight { border-radius: 99px; background-color: @ACCENT@; }
@@ -225,9 +233,6 @@ window.alp {
 .kind-badge.kind-hdd { background-color: #e3f4e8; color: #17672e; }
 .kind-badge.kind-ssd { background-color: #e6f0fd; color: #0a4fb0; }
 .kind-badge.kind-usb, .kind-badge.kind-card { background-color: #f0e8fc; color: #6a2fb4; }
-.good-tag { font-size: 10pt; font-weight: 700; background-color: #e3f4e8; color: #17672e;
-  border-radius: 99px; padding: 3px 12px; }
-.alp row.advice-row .subtitle { color: #8a4300; opacity: 1; }
 
 /* Steps of the first start */
 .step-dot { min-width: 8px; min-height: 8px; border-radius: 99px; background-color: #d5d7de; }
@@ -252,6 +257,11 @@ window.alp {
 .lock-status { font-size: 26pt; }
 .lock-facts .title-3 { font-size: 18pt; }
 .lock-facts .glass { min-height: 92px; }
+.activity { padding: 14px 16px; }
+.activity .chip-small { padding: 5px; border-radius: 7px; }
+.activity .meter-title { font-weight: 600; }
+.activity .meter-value { font-size: 10.5pt; font-feature-settings: "tnum"; color: rgba(255,255,255,0.9); }
+.meter-graph { background-color: rgba(0,0,0,0.12); border-radius: 8px; }
 .login-bar { background-color: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.22);
   border-radius: 99px; padding: 8px 8px 8px 10px; }
 .login-bar .avatar { padding: 10px; }
@@ -494,6 +504,31 @@ impl Note {
         self.label.set_label(s);
         self.root.set_visible(!s.is_empty());
     }
+}
+
+/// A round "?" that opens a short explanation (owner, 2026-11-25: one
+/// sentence on screen, more only for those who ask).
+pub fn help(more: &str, spoken: &str) -> gtk4::MenuButton {
+    let words = gtk4::Label::builder()
+        .label(more)
+        .wrap(true)
+        .max_width_chars(40)
+        .xalign(0.0)
+        .margin_top(8)
+        .margin_bottom(8)
+        .margin_start(8)
+        .margin_end(8)
+        .build();
+    let pop = gtk4::Popover::builder().child(&words).build();
+    let b = gtk4::MenuButton::builder()
+        .child(&gtk4::Label::new(Some("?")))
+        .popover(&pop)
+        .valign(gtk4::Align::Center)
+        .css_classes(["help-btn"])
+        .build();
+    // Spoken name only: a tooltip would cover the answer.
+    b.update_property(&[gtk4::accessible::Property::Label(spoken)]);
+    b
 }
 
 /// "Step 2 of 4" with dots, for the first-start pages.

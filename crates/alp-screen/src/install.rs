@@ -70,6 +70,8 @@ pub struct InstallUi {
     reopen_group: adw::PreferencesGroup,
     /// The archive would be kept on an SSD or USB system disk.
     on_system: style::Note,
+    /// Its "?", with the reason.
+    on_system_help: gtk4::MenuButton,
     rows: RefCell<Vec<adw::ActionRow>>,
     /// Archive disk rows by name: the system disk cannot also be one.
     data_checks: RefCell<Vec<(String, adw::ActionRow, gtk4::CheckButton)>>,
@@ -169,15 +171,52 @@ fn kind_advice(t: &Texts, kind: &str) -> Option<String> {
         "ssd" => Some(text(
             t,
             "install.kind.ssd",
-            "Not recommended for the archive: SSDs are less suited to keeping files for many years. A hard disk (HDD) is better.",
+            "SSDs are not the best place to keep files for many years. A hard disk (HDD) is better for the archive.",
         )),
         "usb" | "card" => Some(text(
             t,
             "install.kind.usb",
-            "Not recommended for the archive: USB disks, sticks and cards are easily unplugged and wear out. A hard disk (HDD) inside the computer is better.",
+            "USB disks, sticks and cards are easy to unplug by mistake and wear out sooner. A hard disk (HDD) inside the computer is better for the archive.",
         )),
         _ => None,
     }
+}
+
+/// One short verdict with an icon and a "?" for the reason: good for the
+/// archive (a hard disk) or not recommended (SSD, USB, card).
+fn advice(t: &Texts, kind: &str) -> Option<gtk4::Box> {
+    let (icon, tone, short, more) = match kind {
+        "hdd" => (
+            "emblem-ok-symbolic",
+            Tone::Ok,
+            text(t, "install.kind.good", "Recommended"),
+            text(
+                t,
+                "install.kind.hdd",
+                "Hard disks are made for keeping many files for many years.",
+            ),
+        ),
+        _ => (
+            "dialog-warning-symbolic",
+            Tone::Warn,
+            text(t, "install.kind.not", "Not recommended"),
+            kind_advice(t, kind)?,
+        ),
+    };
+    let b = gtk4::Box::builder()
+        .spacing(6)
+        .valign(gtk4::Align::Center)
+        .build();
+    let i = style::icon(icon, 16);
+    tone.apply(&i);
+    let l = gtk4::Label::builder()
+        .label(&short)
+        .css_classes(["advice", tone.class()])
+        .build();
+    b.append(&i);
+    b.append(&l);
+    b.append(&style::help(&more, &format!("{short}: {more}")));
+    Some(b)
 }
 
 /// The icon for a disk: a USB disk or stick, or a disk inside.
@@ -210,7 +249,7 @@ impl InstallUi {
             .description(text(
                 t,
                 "install.system.sub",
-                "The disk you choose here is erased. Greyed-out disks are never touched.",
+                "The chosen disk is erased. Grey disks are never touched.",
             ))
             .build();
         let data_group = adw::PreferencesGroup::builder()
@@ -218,7 +257,7 @@ impl InstallUi {
             .description(text(
                 t,
                 "install.data.sub",
-                "Optional. With two or more, every photo is kept on two disks. A hard disk (HDD) is best for keeping photos for many years.",
+                "Optional. Two or more disks keep every photo twice.",
             ))
             .build();
         let reopen_group = adw::PreferencesGroup::builder()
@@ -231,6 +270,8 @@ impl InstallUi {
             .visible(false)
             .build();
         let on_system = style::Note::new("warn", "");
+        let on_system_help = style::help("", "");
+        on_system.root.append(&on_system_help);
         let note_group = adw::PreferencesGroup::new();
         note_group.add(&on_system.root);
         choose.add(&system_group);
@@ -376,6 +417,7 @@ impl InstallUi {
             data_group,
             reopen_group,
             on_system,
+            on_system_help,
             rows: RefCell::new(Vec::new()),
             data_checks: RefCell::new(Vec::new()),
             reopen_checks: RefCell::new(Vec::new()),
@@ -633,20 +675,10 @@ impl InstallUi {
         for d in disks.iter().filter(|d| d.can_be_data) {
             let row = adw::ActionRow::builder()
                 .title(title(d))
-                .subtitle(match kind_advice(t, &d.kind) {
-                    Some(why) => format!("{}\n{why}", subtitle(d)),
-                    None => subtitle(d),
-                })
+                .subtitle(subtitle(d))
                 .build();
-            if d.kind == "hdd" {
-                let good = gtk4::Label::builder()
-                    .label(text(t, "install.kind.good", "Recommended"))
-                    .css_classes(["good-tag"])
-                    .valign(gtk4::Align::Center)
-                    .build();
-                row.add_suffix(&good);
-            } else if kind_advice(t, &d.kind).is_some() {
-                row.add_css_class("advice-row");
+            if let Some(a) = advice(t, &d.kind) {
+                row.add_suffix(&a);
             }
             let c = gtk4::CheckButton::new();
             badge(&row, d);
@@ -719,17 +751,26 @@ impl InstallUi {
             _ => None,
         };
         match why {
-            Some(why) => self.on_system.say(
-                "warn",
-                &format!(
-                    "{} {why}",
-                    text(
-                        &self.texts,
-                        "install.on_system",
-                        "No archive disk is ticked, so the archive is kept on the system disk."
-                    )
-                ),
-            ),
+            Some(why) => {
+                let short = text(
+                    &self.texts,
+                    "install.on_system",
+                    "Your photos will be kept on the system disk.",
+                );
+                self.on_system.say("warn", &short);
+                if let Some(l) = self
+                    .on_system_help
+                    .popover()
+                    .and_then(|p| p.child())
+                    .and_downcast::<gtk4::Label>()
+                {
+                    l.set_label(&why);
+                }
+                self.on_system_help
+                    .update_property(&[gtk4::accessible::Property::Label(&format!(
+                        "{short} {why}"
+                    ))]);
+            }
             None => self.on_system.set(""),
         }
     }

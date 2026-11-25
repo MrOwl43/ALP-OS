@@ -6,6 +6,7 @@
 //! GTK main loop through a channel polled with a timeout, so the screen never
 //! waits on alpd.
 
+mod activity;
 mod gallery;
 mod install;
 mod pairing;
@@ -174,14 +175,15 @@ fn main() -> glib::ExitCode {
 /// The lock screen, where the computer spends most of its time (owner,
 /// 2026-11-25): the time on top, the status and the facts large in the
 /// middle, the sign-in along the bottom, all on the wallpaper.
-fn lock_page(texts: &Texts) -> (gtk4::ScrolledWindow, LockUi) {
+fn lock_page(texts: &Rc<Texts>) -> (gtk4::ScrolledWindow, LockUi) {
     let clock = gtk4::Label::builder().css_classes(["clock-big"]).build();
     let date = gtk4::Label::builder().css_classes(["date-line"]).build();
     let top = gtk4::Box::builder()
         .orientation(gtk4::Orientation::Vertical)
         .spacing(2)
         .halign(gtk4::Align::Center)
-        .margin_top(18)
+        .margin_top(14)
+        .margin_bottom(10)
         .build();
     top.append(&clock);
     top.append(&date);
@@ -221,7 +223,8 @@ fn lock_page(texts: &Texts) -> (gtk4::ScrolledWindow, LockUi) {
         .row_spacing(16)
         .column_homogeneous(true)
         .css_classes(["lock-facts"])
-        .margin_top(18)
+        .hexpand(true)
+        .valign(gtk4::Align::Start)
         .build();
     for (i, t) in [&tiles.temp, &tiles.disks, &tiles.phones, &tiles.backup]
         .into_iter()
@@ -238,10 +241,21 @@ fn lock_page(texts: &Texts) -> (gtk4::ScrolledWindow, LockUi) {
         .build();
     middle.append(&badge);
     middle.append(&status);
-    middle.append(&facts);
+    // The facts, and beside them the live network and disk activity.
+    let activity = activity::Activity::new(texts.clone());
+    activity.root.set_hexpand(true);
+    activity.root.set_valign(gtk4::Align::Start);
+    let info = gtk4::Box::builder()
+        .spacing(16)
+        .homogeneous(true)
+        .margin_top(18)
+        .build();
+    info.append(&facts);
+    info.append(&activity.root);
+    middle.append(&info);
     let middle = adw::Clamp::builder()
-        .maximum_size(820)
-        .tightening_threshold(820)
+        .maximum_size(1180)
+        .tightening_threshold(1180)
         .child(&middle)
         .vexpand(true)
         .margin_start(32)

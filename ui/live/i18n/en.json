@@ -1046,7 +1046,7 @@
  "setup.installed.title": "ALP-OS is installed",
  "setup.installed.sub": "Remove the USB stick, then restart. Setup goes on from the computer's own disk.",
  "install.reopen.title": "Archives from before",
- "install.reopen.sub": "Tick a disk to open it again with your 15 recovery words after the restart. It is never erased.",
+ "install.reopen.sub": "Tick to open it again with your 15 recovery words. Never erased.",
  "install.reopen.row": "ALP-OS archive: can be opened again",
  "install.kept.title": "These disks are opened again, not erased",
  "install.kept.row": "Opened with your 15 recovery words after the restart",
@@ -1064,8 +1064,15 @@
  "disk.kind.hdd": "HDD",
  "disk.kind.usb": "USB",
  "disk.kind.card": "Card",
- "install.kind.ssd": "Not recommended for the archive: SSDs are less suited to keeping files for many years. A hard disk (HDD) is better.",
- "install.kind.usb": "Not recommended for the archive: USB disks, sticks and cards are easily unplugged and wear out. A hard disk (HDD) inside the computer is better.",
+ "install.kind.ssd": "SSDs are not the best place to keep files for many years. A hard disk (HDD) is better for the archive.",
+ "install.kind.usb": "USB disks, sticks and cards are easy to unplug by mistake and wear out sooner. A hard disk (HDD) inside the computer is better for the archive.",
  "install.kind.good": "Recommended",
- "install.on_system": "No archive disk is ticked, so the archive is kept on the system disk."
+ "install.on_system": "Your photos will be kept on the system disk.",
+ "act.title": "Live activity",
+ "act.net": "Network",
+ "act.net.said": "Network: down {down}, up {up}",
+ "act.net.line": "↓ {down} · ↑ {up}",
+ "act.disk": "Write {write} · Read {read} · {busy}%",
+ "install.kind.not": "Not recommended",
+ "install.kind.hdd": "Hard disks are made for keeping many files for many years."
 }
