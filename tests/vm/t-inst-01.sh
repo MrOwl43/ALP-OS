@@ -16,7 +16,9 @@
 #   - the Windows disk is bit-for-bit unchanged afterwards,
 #   - the installer reports RESULT ok and the target holds exactly the partitions of
 #     the disk-layout contract: esp, slot 1 filled (alp-os_<version> and its
-#     _verity), slot 2 _empty (root and verity), alp-state, alp-data.
+#     _verity), slot 2 _empty (root and verity), alp-state, alp-data;
+#   - the installed disk then starts on its own (stick removed): root from
+#     slot 1, the first-boot seed on its alp-state, Windows disk unchanged.
 # Until block 4's pool plan digest exists the installer refuses before any
 # write with ALP-INST-407; the script then checks that the target is unchanged too
 # and exits 3 (not ready), not 0.
@@ -110,6 +112,26 @@ ok = len(got) == len(want) and all(re.fullmatch(w, g) for w, g in zip(want, got)
 sys.exit(0 if ok else 1)
 PY
 then echo "ok:   target has the contract layout"; else echo "FAIL: target layout" >&2; fail=1; fi
+
+(( fail == 0 )) || { echo "FAIL: T-INST-01" >&2; exit 1; }
+
+# Part 2: start the installed disk on its own, the stick taken out (the
+# Windows disk stays in). Fresh firmware variables, so the firmware finds
+# systemd-boot by the fallback path EFI/BOOT/BOOTX64.EFI, as on a laptop
+# whose boot entries were never written. The root must come from the
+# installed slot 1, and the seed must be on the installed alp-state.
+probe2='-/usr/bin/sh -c "lsblk -rnso PARTLABEL /dev/mapper/root | tr -s [:space:] , | sed s/^/ROOT-FROM=/"
+-/usr/bin/sh -c "test -s /var/lib/alp/firstboot-seed.toml && echo SEED=yes || echo SEED=no"'
+args2="-drive if=none,id=win,format=raw,file=$windows -device virtio-blk-pci,drive=win,serial=ALPWINDOWS01"
+status=0
+out=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe2" ALP_PROBE_DELAY=5 ALP_QEMU_ARGS="$args2" \
+    "$here/run-vm.sh" "$target" 600) || status=$?
+echo "$out"
+(( status == 0 )) || { echo "FAIL: T-INST-01 (the installed disk did not start)" >&2; exit 1; }
+expect "the installed disk starts on its own" 'Reached alp-healthy.target'
+expect "the root is the installed slot 1" '^ROOT-FROM=.*alp-os_[0-9.]+'
+expect "the first-boot seed is on the installed alp-state" '^SEED=yes'
+same "Windows disk" "$windows" "$windows_before"
 
 (( fail == 0 )) || { echo "FAIL: T-INST-01" >&2; exit 1; }
 echo "PASS: T-INST-01"
