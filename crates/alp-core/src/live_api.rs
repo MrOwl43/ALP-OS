@@ -1980,6 +1980,8 @@ impl Live {
 
     fn state(&self, open: bool) -> Value {
         let mut v = self.full_state();
+        v["setup"]["place"] = setup_place(&v).into();
+        v["system"]["temperature_c"] = temperature_c(Path::new("/sys")).into();
         let list = alerts(&v, *lock(&self.archive_health));
         v["status"] = status_of(&list);
         v["alerts"] = Value::Array(list);
@@ -4364,13 +4366,77 @@ fn uploads_pause(on: bool) -> bool {
 /// person chose to hide on the lock screen (`prefs.lock_hide`) is not sent
 /// at all, and `console.hidden` says which items those are so the screen
 /// can say so.
+/// `setup.place`, the first setup step on the start stick (owner decision
+/// 2026-11-25): where ALP-OS lives is chosen before anything else.
+/// - `choose`: running from a USB stick with nothing set up: show the
+///   install choice (install on a disk, or keep running from the stick).
+/// - `installed`: installed on a disk from this stick: remove the stick
+///   and restart; setup goes on there.
+/// - `done`: the place is settled (an installed disk, or the stick kept
+///   with its archive disks chosen).
+fn setup_place(st: &Value) -> &'static str {
+    let job = &st["install"]["job"];
+    if job["result"] == "ok" && job["running"] == false {
+        return if st["pool"] == "none" {
+            "installed"
+        } else {
+            "done"
+        };
+    }
+    if st["pool"] != "none" || st["install"]["available"] != true {
+        return "done";
+    }
+    let on_stick = st["hardware"]["specs"]["disks"]
+        .as_array()
+        .is_some_and(|d| {
+            d.iter()
+                .any(|d| d["system"] == true && d["internal"] == false)
+        });
+    if on_stick { "choose" } else { "done" }
+}
+
+/// The hottest temperature sensor, in whole degrees Celsius (hwmon and
+/// thermal zones report millidegrees); `None` without sensors. Readings
+/// outside 1..=150 °C are sensor noise and ignored.
+fn temperature_c(sys: &Path) -> Option<i64> {
+    let mut files = Vec::new();
+    for (dir, prefix) in [("class/hwmon", "hwmon"), ("class/thermal", "thermal_zone")] {
+        let Ok(rd) = std::fs::read_dir(sys.join(dir)) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !name.starts_with(prefix) {
+                continue;
+            }
+            if prefix == "thermal_zone" {
+                files.push(e.path().join("temp"));
+            } else if let Ok(inner) = std::fs::read_dir(e.path()) {
+                files.extend(inner.flatten().map(|f| f.path()).filter(|f| {
+                    f.file_name().is_some_and(|n| {
+                        let n = n.to_string_lossy();
+                        n.starts_with("temp") && n.ends_with("_input")
+                    })
+                }));
+            }
+        }
+    }
+    files
+        .iter()
+        .filter_map(|f| std::fs::read_to_string(f).ok()?.trim().parse::<i64>().ok())
+        .map(|m| (m + 500).div_euclid(1000))
+        .filter(|c| (1..=150).contains(c))
+        .max()
+}
+
 fn locked_view(v: &mut Value, hide: &[&str]) {
     v["console"]["state"] = "locked".into();
     v["console"]["hidden"] = json!(hide);
     let hidden = |k: &str| hide.contains(&k);
+    // The number of connected phones always shows (owner 2026-11-25);
+    // hiding "phones" hides their names only.
     if hidden("phones") {
         v["phone"]["devices"] = json!([]);
-        v["phone"]["phones"] = json!(0);
     }
     if hidden("network")
         && let Some(ports) = v["network"]["ports"].as_array_mut()
@@ -5262,6 +5328,51 @@ mod tests {
     }
 
     #[test]
+    fn the_first_setup_step_is_the_place() {
+        let stick = json!({"system": true, "internal": false});
+        let disk = json!({"system": true, "internal": true});
+        let st = |d: &Value, pool: &str, job: Value| {
+            json!({"hardware": {"specs": {"disks": [d]}}, "pool": pool,
+                   "install": {"available": true, "job": job}})
+        };
+        assert_eq!(setup_place(&st(&stick, "none", Value::Null)), "choose");
+        assert_eq!(setup_place(&st(&disk, "none", Value::Null)), "done");
+        assert_eq!(setup_place(&st(&stick, "waiting", Value::Null)), "done");
+        let ok = json!({"running": false, "result": "ok"});
+        assert_eq!(setup_place(&st(&stick, "none", ok.clone())), "installed");
+        assert_eq!(
+            setup_place(&st(&stick, "waiting", ok)),
+            "done",
+            "kept on the stick"
+        );
+        let failed = json!({"running": false, "result": "ALP-INST-405"});
+        assert_eq!(setup_place(&st(&stick, "none", failed)), "choose");
+        // Hardware not checked yet: never guess.
+        let pending = json!({"pool": "none", "install": {"available": true}});
+        assert_eq!(setup_place(&pending), "done");
+    }
+
+    #[test]
+    fn the_hottest_sensor_in_degrees() {
+        let t = std::env::temp_dir().join(format!("alp-temp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        for (f, v) in [
+            ("class/hwmon/hwmon0/temp1_input", "45500"),
+            ("class/hwmon/hwmon0/temp2_input", "-1000"),
+            ("class/hwmon/hwmon1/temp1_input", "255000"),
+            ("class/thermal/thermal_zone0/temp", "51000"),
+            ("class/hwmon/hwmon0/fan1_input", "90000"),
+        ] {
+            let p = t.join(f);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, v).unwrap();
+        }
+        assert_eq!(temperature_c(&t), Some(51));
+        assert_eq!(temperature_c(&t.join("none")), None);
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    #[test]
     fn a_start_stick_left_in_is_an_alert() {
         let st = json!({"hardware": {"root_elsewhere": true}});
         let a = alerts(&st, None);
@@ -5596,9 +5707,10 @@ mod tests {
             json!(["phones", "network", "space", "backup"])
         );
         assert_eq!(v["phone"]["devices"], json!([]));
+        // The phone count always shows (owner 2026-11-25); names do not.
         assert_eq!(
             (&v["phone"]["photos"], &v["phone"]["phones"]),
-            (&json!(0), &json!(0))
+            (&json!(0), &json!(2))
         );
         assert_eq!(v["phone"]["last_upload"], Value::Null);
         assert_eq!(v["network"]["ports"][0]["ssid"], Value::Null);

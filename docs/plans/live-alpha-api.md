@@ -1271,3 +1271,17 @@ the computer usually helps.").
 - **`state.immich.restore_ask`** (bool, feature `restore_ask`, 2026-11-16): the archive is not encrypted and holds a gallery backup; nothing is restored until the person answers. `POST gallery/restore {"restore": true|false}` (console sign-in) gives the answer: `200 {}`; `409 restore.not_asked` when nothing is waiting. `false` starts an empty gallery. Meanwhile `state.immich.state` is `starting` and `restoring` is true.
 - While it runs, calls that need the photo service's owner answer `immich.starting` as during a normal start.
 - Turning off: the `immich` step of the `power.off` job may take up to 30 s longer (one more backup of the gallery's database when photos came in since the last one).
+
+### First setup place and lock-screen facts (0.2.8, owner decision 2026-11-25)
+
+- `setup.place`: `choose` (running from a USB stick, nothing set up, the
+  installer is available: the first setup step is where ALP-OS lives:
+  install on a disk, or keep running from the stick with archive disks),
+  `installed` (installed on a disk from this stick: remove the stick and
+  restart; setup goes on on the installed disk), or `done`. Order on the
+  stick: place, then password, then the archive, recovery code and phone.
+  The install itself keeps using `install/disks|plan|start`.
+- `system.temperature_c`: the hottest hwmon or thermal-zone sensor in whole
+  degrees Celsius, `null` without sensors. Also in the locked view.
+- Locked view: `phone.phones` (the count) always shows; hiding `phones`
+  hides the device names only.
