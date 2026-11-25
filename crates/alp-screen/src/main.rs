@@ -9,6 +9,7 @@
 mod gallery;
 mod install;
 mod pairing;
+mod setup;
 
 use alp_screen::api::{ApiError, Client};
 use alp_screen::i18n::{self, Texts};
@@ -36,6 +37,7 @@ enum Msg {
     Done(Result<Value, ApiError>),
     Install(install::InstallMsg),
     Pair(pairing::PairMsg),
+    Setup(setup::SetupMsg),
 }
 
 struct Ui {
@@ -54,6 +56,7 @@ struct Ui {
     tiles: HomeTiles,
     inst: Rc<install::InstallUi>,
     pair: Rc<pairing::PairUi>,
+    setup: Rc<setup::SetupUi>,
     set: SettingsUi,
 }
 
@@ -162,6 +165,11 @@ fn build(app: &adw::Application) {
         let p = pair.clone();
         set.connect_phone.connect_clicked(move |_| p.open());
     }
+    let setup_ui = setup::SetupUi::new(texts.clone(), client.clone(), tx.clone(), &stack);
+    {
+        let p = pair.clone();
+        setup_ui.phone_connect.connect_clicked(move |_| p.open());
+    }
 
     stack.add_named(&lock_page, Some("lock"));
     stack.add_named(&home_page, Some("home"));
@@ -172,6 +180,9 @@ fn build(app: &adw::Application) {
         .build();
     let gallery = gallery::GalleryUi::new(&gallery_back);
     stack.add_named(&gallery.page, Some("gallery"));
+    // Start on the sign-in page: the install, setup and pairing pages were
+    // added first, and a stack shows its first page.
+    stack.set_visible_child_name("lock");
     {
         let (st, g) = (stack.clone(), gallery.clone());
         gallery_back.connect_clicked(move |_| {
@@ -202,6 +213,7 @@ fn build(app: &adw::Application) {
         tiles,
         inst: inst.clone(),
         pair,
+        setup: setup_ui,
         set,
     });
     install_btn.connect_clicked(move |_| inst.open());
@@ -299,6 +311,13 @@ fn handle(ui: &Ui, m: Msg) {
     match m {
         Msg::State(Ok(w)) => {
             let s = Screen::from_state(&w);
+            // First start of the installed system: its pages come first.
+            if ui.setup.show(model::setup::step(&w).as_ref()) {
+                if s.open {
+                    ui.pair.show_pending(&model::pairing::pending(&w));
+                }
+                return;
+            }
             if s.open {
                 let (title, line) = s.home_keys();
                 ui.home_title.set_label(&ui.texts.t(title));
@@ -341,6 +360,7 @@ fn handle(ui: &Ui, m: Msg) {
         }
         Msg::Install(m) => ui.inst.handle(m),
         Msg::Pair(m) => ui.pair.handle(m),
+        Msg::Setup(m) => ui.setup.handle(m),
         Msg::Done(r) => {
             ui.set.note.set_label(&match r {
                 Ok(_) => String::new(),

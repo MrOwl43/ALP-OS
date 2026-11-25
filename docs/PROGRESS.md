@@ -64,7 +64,11 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   in the index (`pending N` / `commit N`, finished after a restart); `recovery/create|commit|check`
   work on the installed system; T-INST-02 part 3 checks it. Not yet: opening the pool with the words
   after the system disk is lost (needs a "recover" flow on a fresh install).
-- Next: native setup screens (password, pool progress, recovery, phone) on alp-screen;
+- Native setup screens (2026-11-25, `crates/alp-screen/src/setup.rs`, step from `model::setup::step`):
+  password -> archive progress (starts `archive/create-pool`, retry on failure) -> recovery code (password,
+  15 words, three typed back) -> phone (pairing pages) -> Done (`setup/finish`); checked against a mock
+  alpd under Xvfb. The screen now starts on the sign-in page (it used to show the install page first).
+- Next: native setup screens in a VM test (T-SCREEN-01) (password, pool progress, recovery, phone) on alp-screen;
   check gallery and phone approval on the native screen in a VM; code review of installer + pool
   (encryption/storage: opus reviewer) before the PR; `/claude-security` scan before release.
 

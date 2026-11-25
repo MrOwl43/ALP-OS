@@ -22,6 +22,8 @@ const PORT: u16 = 8411;
 const MAX_ANSWER: usize = 8 * 1024 * 1024;
 /// Never wait forever for alpd (same limit as the web console).
 const TIMEOUT: Duration = Duration::from_secs(20);
+/// For the few calls that do slow work before answering.
+const SLOW_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// An error from alpd (its `error` object) or from the connection.
 #[derive(Debug, Clone, PartialEq)]
@@ -73,6 +75,12 @@ impl Client {
         self.call("POST", path, Some(body))
     }
 
+    /// A POST that may take long (choosing the password locks the index:
+    /// up to about 30 s; a recovery code: one key slot per disk).
+    pub fn post_slow(&self, path: &str, body: &Value) -> Result<Value, ApiError> {
+        self.call_within("POST", path, Some(body), SLOW_TIMEOUT)
+    }
+
     /// The session cookie's value, for the gallery view (alpd's gallery
     /// gate checks the same cookie; nginx never passes it to the photo
     /// service).
@@ -88,6 +96,16 @@ impl Client {
     }
 
     fn call(&self, method: &str, path: &str, body: Option<&Value>) -> Result<Value, ApiError> {
+        self.call_within(method, path, body, TIMEOUT)
+    }
+
+    fn call_within(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+        timeout: Duration,
+    ) -> Result<Value, ApiError> {
         let cookie = self
             .session
             .lock()
@@ -96,7 +114,7 @@ impl Client {
         let req = request(method, path, body, cookie.as_deref());
         let mut s =
             TcpStream::connect_timeout(&self.addr, TIMEOUT).map_err(|_| ApiError::unreachable())?;
-        let _ = s.set_read_timeout(Some(TIMEOUT));
+        let _ = s.set_read_timeout(Some(timeout));
         let _ = s.set_write_timeout(Some(TIMEOUT));
         s.write_all(req.as_bytes())
             .map_err(|_| ApiError::unreachable())?;

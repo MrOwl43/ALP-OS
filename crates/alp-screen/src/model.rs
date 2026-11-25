@@ -277,6 +277,88 @@ pub mod install {
     }
 }
 
+/// First start of the installed system (plan `0.2.8-first-start.md`,
+/// step 4): password, then the archive is made on the installer's disks,
+/// then the recovery code, then a phone. Which step the state asks for.
+pub mod setup {
+    use serde_json::Value;
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum Step {
+        /// No password yet (`lock.state` `setup`).
+        Password,
+        /// The archive is being made on the chosen disks (or must be).
+        Pool {
+            /// Start `archive/create-pool` (nothing running, nothing failed).
+            start: bool,
+            percent: u8,
+            message: String,
+            /// Why it stopped; a retry resumes (alpd's error message).
+            failed: Option<String>,
+        },
+        Recovery,
+        Phone,
+    }
+
+    pub fn step(w: &Value) -> Option<Step> {
+        if w["lock"]["state"].as_str() == Some("setup") {
+            return Some(Step::Password);
+        }
+        let finished = w["setup"]["finished"].as_bool().unwrap_or(false)
+            || w["setup"]["complete"].as_bool().unwrap_or(false);
+        if finished || w["console"]["state"].as_str() != Some("open") {
+            return None;
+        }
+        let a = &w["archive"];
+        let job = &a["job"];
+        if job["id"].as_str() == Some("archive.create") || w["pool"].as_str() == Some("waiting") {
+            let state = job["state"].as_str().unwrap_or("");
+            let running = matches!(state, "running" | "cancelling");
+            let failed = (state == "failed").then(|| {
+                job["error"]["message"]
+                    .as_str()
+                    .or(job["message"].as_str())
+                    .unwrap_or_default()
+                    .to_string()
+            });
+            if running || failed.is_some() || w["pool"].as_str() == Some("waiting") {
+                return Some(Step::Pool {
+                    start: !running && failed.is_none() && w["pool"].as_str() == Some("waiting"),
+                    percent: job["percent"].as_u64().unwrap_or(0).min(100) as u8,
+                    message: job["message"].as_str().unwrap_or_default().to_string(),
+                    failed,
+                });
+            }
+        }
+        let skipped = |name: &str| {
+            w["setup"]["skipped"]
+                .as_array()
+                .is_some_and(|s| s.iter().any(|v| v.as_str() == Some(name)))
+        };
+        if a["state"].as_str() == Some("open")
+            && a["recovery"].as_str() != Some("set")
+            && !skipped("recovery")
+        {
+            return Some(Step::Recovery);
+        }
+        Some(Step::Phone)
+    }
+
+    /// The three word positions `recovery/create` asks to type back.
+    pub fn asked(answer: &Value) -> Option<[usize; 3]> {
+        let a = answer["check"].as_array()?;
+        let v: Vec<usize> = a
+            .iter()
+            .filter_map(|n| n.as_u64())
+            .map(|n| n as usize)
+            .collect();
+        match v.as_slice() {
+            [x, y, z] if v.iter().all(|n| (1..=15).contains(n)) => Some([*x, *y, *z]),
+            _ => None,
+        }
+    }
+}
+
 /// The home screen's tiles (owner's 0.2.7 note 6: spread out, an uneven
 /// grid). Same facts and wire fields as the web console's home tiles.
 pub mod home {
@@ -642,5 +724,64 @@ mod tests {
         // The three finder patterns: top-left corner dark.
         assert!(cells[0] && cells[n - 1] && cells[n * (n - 1)]);
         assert_eq!(left(125), ("2".to_string(), "05".to_string()));
+    }
+    #[test]
+    fn setup_steps_in_order() {
+        use super::setup::{Step, asked, step};
+        assert_eq!(
+            step(&json!({"lock": {"state": "setup"}})),
+            Some(Step::Password)
+        );
+        let open = |extra: Value| {
+            let mut w = json!({"lock": {"state": "open"}, "console": {"state": "open"},
+                "setup": {"finished": false, "skipped": []}, "pool": "made",
+                "archive": {"state": "open", "recovery": "none", "job": null}});
+            if let (Some(o), Some(e)) = (w.as_object_mut(), extra.as_object()) {
+                for (k, v) in e {
+                    o.insert(k.clone(), v.clone());
+                }
+            }
+            w
+        };
+        // Signed out, or finished: no setup page.
+        assert_eq!(step(&open(json!({"console": {"state": "locked"}}))), None);
+        assert_eq!(step(&open(json!({"setup": {"finished": true}}))), None);
+        // The pool still to make: start it once.
+        let w = open(json!({"pool": "waiting", "archive": {"state": "none", "job": null}}));
+        assert!(matches!(step(&w), Some(Step::Pool { start: true, .. })));
+        let w = open(json!({"pool": "waiting", "archive": {"state": "creating",
+            "job": {"id": "archive.create", "state": "running", "percent": 50, "message": "Locking"}}}));
+        assert_eq!(
+            step(&w),
+            Some(Step::Pool {
+                start: false,
+                percent: 50,
+                message: "Locking".into(),
+                failed: None
+            })
+        );
+        let w = open(json!({"pool": "waiting", "archive": {"state": "failed",
+            "job": {"id": "archive.create", "state": "failed", "percent": 50, "message": "m",
+                    "error": {"message": "A disk changed."}}}}));
+        assert!(
+            matches!(step(&w), Some(Step::Pool { start: false, failed: Some(ref f), .. }) if f == "A disk changed.")
+        );
+        // Made: the recovery code, unless skipped; then the phone.
+        assert_eq!(step(&open(json!({}))), Some(Step::Recovery));
+        assert_eq!(
+            step(&open(
+                json!({"setup": {"finished": false, "skipped": ["recovery"]}})
+            )),
+            Some(Step::Phone)
+        );
+        assert_eq!(
+            step(&open(
+                json!({"archive": {"state": "open", "recovery": "set"}})
+            )),
+            Some(Step::Phone)
+        );
+        assert_eq!(asked(&json!({"check": [2, 9, 14]})), Some([2, 9, 14]));
+        assert_eq!(asked(&json!({"check": [0, 9, 14]})), None);
+        assert_eq!(asked(&json!({"check": [2, 9]})), None);
     }
 }
