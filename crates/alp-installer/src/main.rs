@@ -6,12 +6,15 @@
 //!   alp-installer disks                      (JSON, for alpd and the screen)
 //!   alp-installer plan --system <disk> [--data <disk>]...   (JSON; writes nothing)
 //!   alp-installer plan --keep-running [--data <disk>]...
-//!   alp-installer install --system <disk> [--data <disk>]... --confirm-erase <disk,disk,...>
-//!   alp-installer keep-running --data <disk>... --confirm-erase <disk,...>
+//!   alp-installer install --system <disk> [--data <disk>]... --confirm-erase <disk,disk,...> --confirm-token <hex>
+//!   alp-installer keep-running --data <disk>... --confirm-erase <disk,...> --confirm-token <hex>
 //!
 //! Disk names are only looked up in the fresh discovery; `--confirm-erase`
 //! must name exactly the disks the plan erases (the scripted stand-in for
-//! the Confirm screen). Exit 0 on success; otherwise the `ALP-INST-*` code
+//! the Confirm screen), and `--confirm-token` the `confirm_token` that
+//! `plan` printed: a digest of the plan and of the erased disks' identity,
+//! recomputed here right before writing (ALP-INST-401 when it differs).
+//! Exit 0 on success; otherwise the `ALP-INST-*` code
 //! is printed and the exit status is 1.
 
 use std::process::ExitCode;
@@ -109,6 +112,7 @@ fn main() -> ExitCode {
     let mut keep = false;
     let mut data = Vec::new();
     let mut confirm = Vec::new();
+    let mut token = String::new();
     let mut it = args.iter().skip(1);
     while let Some(flag) = it.next() {
         if flag == "--keep-running" {
@@ -121,6 +125,7 @@ fn main() -> ExitCode {
         match flag.as_str() {
             "--system" => system = Some(value.clone()),
             "--data" => data.push(value.clone()),
+            "--confirm-token" => token = value.clone(),
             "--confirm-erase" => {
                 confirm = value
                     .split(',')
@@ -150,8 +155,15 @@ fn main() -> ExitCode {
         Ok(p) => p,
         Err(e) => return fail(e.code, &e.detail),
     };
+    let confirmed = match lsblk(&mut runner, LSBLK_ID_ARGS).and_then(|j| parse_identities(&j)) {
+        Ok(i) => i,
+        Err(e) => return fail("ALP-INST-400", &e),
+    };
+    let fresh = alp_installer::view::confirm_token(&p, &confirmed);
     if cmd == "plan" {
-        println!("{}", alp_installer::view::plan(&p));
+        let mut v = alp_installer::view::plan(&p);
+        v["confirm_token"] = fresh.into();
+        println!("{v}");
         return ExitCode::SUCCESS;
     }
     let erased: Vec<String> = p.erases.iter().map(|e| e.disk.clone()).collect();
@@ -161,10 +173,15 @@ fn main() -> ExitCode {
             &format!("the plan erases {erased:?}; --confirm-erase must name exactly these"),
         );
     }
-    let confirmed = match lsblk(&mut runner, LSBLK_ID_ARGS).and_then(|j| parse_identities(&j)) {
-        Ok(i) => i,
-        Err(e) => return fail("ALP-INST-400", &e),
-    };
+    // What the person confirmed must still be what is connected: same
+    // plan, same contents, same disks (code review 2026-11-25: kernel
+    // names alone could point at a disk swapped in meanwhile).
+    if token != fresh {
+        return fail(
+            "ALP-INST-401",
+            "the disks changed after they were confirmed (or no --confirm-token)",
+        );
+    }
     let mut cfg = ExecConfig::image_defaults(boot, limits);
     cfg.image_version = std::fs::read_to_string("/etc/os-release")
         .ok()

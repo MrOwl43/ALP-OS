@@ -10,7 +10,9 @@
 # guest finds the target by its serial (/dev/disk/by-id/virtio-ALPTARGET01)
 # and the checks match disks by size. The guest runs:
 #   alp-installer list
-#   alp-installer install --system <target> --confirm-erase <target>
+#   alp-installer install ... --confirm-token <wrong>  (must refuse: ALP-INST-401)
+#   alp-installer plan --system <target>   (prints confirm_token)
+#   alp-installer install --system <target> --confirm-erase <target> --confirm-token <token>
 # Passes when:
 #   - the Windows disk is listed as not usable (holds_windows),
 #   - the Windows disk is bit-for-bit unchanged afterwards,
@@ -64,7 +66,8 @@ args+=" -drive if=none,id=win,format=raw,file=$windows -device virtio-blk-pci,dr
 
 probe='-/usr/bin/sh -c "test -x /usr/bin/alp-installer && echo INSTALLER=yes || echo INSTALLER=no"
 -/usr/bin/alp-installer list
--/usr/bin/sh -c "readlink -f /dev/disk/by-id/virtio-ALPTARGET01 | xargs basename | xargs -I@ /usr/bin/alp-installer install --system @ --confirm-erase @"'
+-/usr/bin/sh -c "t=$(basename $(readlink -f /dev/disk/by-id/virtio-ALPTARGET01)); /usr/bin/alp-installer install --system $t --confirm-erase $t --confirm-token 0000000000000000000000000000000000000000000000000000000000000000 | sed s/^RESULT/STALE-RESULT/"
+-/usr/bin/sh -c "t=$(basename $(readlink -f /dev/disk/by-id/virtio-ALPTARGET01)); tok=$(/usr/bin/alp-installer plan --system $t | grep -o confirm_token.:.[0-9a-f]* | cut -c17-); /usr/bin/alp-installer install --system $t --confirm-erase $t --confirm-token $tok"'
 
 status=0
 out=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe" ALP_PROBE_DELAY=10 ALP_QEMU_ARGS="$args" \
@@ -97,6 +100,7 @@ if grep -q '^RESULT ALP-INST-407' <<<"$out"; then
     echo "NOT READY: installer refused before writing (block 4 plan digest missing)" >&2
     exit 3
 fi
+expect "a plan not confirmed is refused before writing" '^STALE-RESULT ALP-INST-401'
 expect "installer finished" '^RESULT ok'
 expect "progress reached the end" '^PROGRESS 100 .*install\.done'
 

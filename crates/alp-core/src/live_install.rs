@@ -218,6 +218,14 @@ pub fn start(b: &Value) -> Result<Value, Fail> {
     }
     args.push("--confirm-erase".into());
     args.push(confirm.join(","));
+    // The plan's digest of what the Confirm page showed (the installer
+    // recomputes it right before writing; ALP-INST-401 when it differs).
+    let token = b["confirm_token"].as_str().unwrap_or_default();
+    if token.len() != 64 || !token.bytes().all(|c| c.is_ascii_hexdigit()) {
+        return Err(bad("Confirm the disks again: the plan shown is missing."));
+    }
+    args.push("--confirm-token".into());
+    args.push(token.to_string());
     if !available() {
         return Err(Fail::new(
             "install.unavailable",

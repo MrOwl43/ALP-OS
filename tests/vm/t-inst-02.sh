@@ -46,7 +46,7 @@ expect() { # label, ERE, output
 args="-drive if=none,id=tgt,format=raw,file=$target -device virtio-blk-pci,drive=tgt,serial=ALPTARGET01"
 args+=" -drive if=none,id=dat,format=raw,file=$data -device virtio-blk-pci,drive=dat,serial=ALPDATA02"
 args+=" -drive if=none,id=da2,format=raw,file=$data2 -device virtio-blk-pci,drive=da2,serial=ALPDATA03"
-probe='-/usr/bin/sh -c "n() { basename $(readlink -f /dev/disk/by-id/virtio-$1); }; t=$(n ALPTARGET01); a=$(n ALPDATA02); b=$(n ALPDATA03); /usr/bin/alp-installer install --system $t --data $a --data $b --confirm-erase $t,$a,$b"'
+probe='-/usr/bin/sh -c "n() { basename $(readlink -f /dev/disk/by-id/virtio-$1); }; t=$(n ALPTARGET01); a=$(n ALPDATA02); b=$(n ALPDATA03); tok=$(/usr/bin/alp-installer plan --system $t --data $a --data $b | grep -o confirm_token.:.[0-9a-f]* | cut -c17-); /usr/bin/alp-installer install --system $t --data $a --data $b --confirm-erase $t,$a,$b --confirm-token $tok"'
 status=0
 out=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe" ALP_PROBE_DELAY=10 ALP_QEMU_ARGS="$args" \
     "$here/run-vm.sh" "$image" 900) || status=$?

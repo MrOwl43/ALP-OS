@@ -107,6 +107,37 @@ pub fn plan(p: &InstallPlan) -> Value {
     })
 }
 
+/// What the person saw on the Confirm page, as one digest: the plan's JSON
+/// (the disks erased, what is on them now, the pool) and the identity of
+/// every disk it erases (by-id name, serial, size). `plan` prints it,
+/// `install` must be given the same one and recomputes it from its own
+/// fresh discovery right before writing, so a disk swapped, filled or
+/// changed after the person confirmed is refused (ALP-INST-401). Not a
+/// secret: SHA3-256 hex.
+pub fn confirm_token(p: &InstallPlan, ids: &[crate::exec::Identity]) -> String {
+    use sha3::{Digest, Sha3_256};
+    let mut h = Sha3_256::new();
+    h.update(b"alp-installer-confirm-v1\n");
+    h.update(plan(p).to_string().as_bytes());
+    for e in &p.erases {
+        h.update(b"\n");
+        match ids.iter().find(|i| i.name == e.disk) {
+            Some(i) => h.update(
+                format!(
+                    "{}|{}|{}|{}",
+                    i.name,
+                    i.by_id,
+                    i.serial.as_deref().unwrap_or(""),
+                    i.size_bytes
+                )
+                .as_bytes(),
+            ),
+            None => h.update(format!("{}|unknown", e.disk).as_bytes()),
+        }
+    }
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,5 +209,40 @@ mod tests {
         assert_eq!(v["strong_warning"], true);
         assert_eq!(v["pool"]["data_profile"], "raid1");
         assert_eq!(v["pool"]["protection"], "disk_failure");
+    }
+
+    #[test]
+    fn the_confirm_token_follows_disks_and_contents() {
+        use crate::exec::Identity;
+        let choice = Choice {
+            path: StartPath::InstallTo {
+                system_disk: "sda".into(),
+            },
+            data_disks: vec!["sdb".into(), "sde".into()],
+            profile: ProfileChoice::Auto,
+        };
+        let p = crate::plan::plan(&home(), &choice).unwrap();
+        let ids: Vec<Identity> = ["sda", "sdb", "sde"]
+            .iter()
+            .map(|n| Identity {
+                name: n.to_string(),
+                by_id: format!("ata-DISK_{n}"),
+                serial: Some(format!("S{n}")),
+                size_bytes: 1,
+            })
+            .collect();
+        let t = confirm_token(&p, &ids);
+        assert_eq!(t.len(), 64);
+        assert_eq!(t, confirm_token(&p, &ids), "stable");
+        // Another disk under the same kernel name (swapped in meanwhile).
+        let mut swapped = ids.clone();
+        swapped[1].serial = Some("OTHER".into());
+        assert_ne!(t, confirm_token(&p, &swapped));
+        // Same disk, different contents now.
+        let mut disks = home();
+        let sdb = disks.iter_mut().find(|d| d.disk.name == "sdb").unwrap();
+        sdb.disk.size_bytes += 1;
+        let p2 = crate::plan::plan(&disks, &choice).unwrap();
+        assert_ne!(t, confirm_token(&p2, &ids));
     }
 }

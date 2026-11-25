@@ -221,6 +221,9 @@ pub mod install {
         pub usable: String,
         /// `none`, `bit_rot_only` or `disk_failure`.
         pub protection: String,
+        /// Sent back with `install/start`: the installer refuses when the
+        /// disks changed after this plan was shown.
+        pub confirm_token: String,
     }
 
     /// `POST install/plan`.
@@ -245,6 +248,7 @@ pub mod install {
             strong_warning: w["strong_warning"].as_bool().unwrap_or(true),
             usable: s(&w["pool"]["usable"]),
             protection: s(&w["pool"]["protection"]),
+            confirm_token: s(&w["confirm_token"]),
         }
     }
 

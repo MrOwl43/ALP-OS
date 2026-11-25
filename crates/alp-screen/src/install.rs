@@ -73,6 +73,8 @@ pub struct InstallUi {
     go: gtk4::Button,
     confirm_note: gtk4::Label,
     shown: RefCell<Vec<String>>,
+    /// The plan's `confirm_token` for the plan on the Confirm page.
+    token: RefCell<String>,
     // Progress page.
     bar: gtk4::ProgressBar,
     step: gtk4::Label,
@@ -261,6 +263,7 @@ impl InstallUi {
             go: go.clone(),
             confirm_note,
             shown: RefCell::new(Vec::new()),
+            token: RefCell::new(String::new()),
             bar,
             step,
             done: done.clone(),
@@ -294,6 +297,7 @@ impl InstallUi {
                 u.confirm_note.set_label("");
                 let mut body = u.choice.borrow().json();
                 body["confirm_erase"] = json!(*u.shown.borrow());
+                body["confirm_token"] = json!(*u.token.borrow());
                 u.call(move |c| InstallMsg::Started(c.post("live/install/start", &body)));
             });
         }
@@ -488,6 +492,7 @@ impl InstallUi {
 
     fn show_plan(&self, p: &Plan) {
         let t = &self.texts;
+        *self.token.borrow_mut() = p.confirm_token.clone();
         for r in self.erase_rows.borrow_mut().drain(..) {
             self.erase_group.remove(&r);
         }

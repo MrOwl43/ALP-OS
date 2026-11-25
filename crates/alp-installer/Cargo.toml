@@ -21,6 +21,9 @@ alp-core.workspace = true
 serde_json.workspace = true
 # Writes the first-boot seed (TOML, contract firstboot-seed.md).
 toml.workspace = true
+# The Confirm page's digest (view::confirm_token); same pinned hash as the
+# pool plan digest in alp-hw.
+sha3.workspace = true
 
 [lints]
 workspace = true

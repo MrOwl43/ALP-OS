@@ -68,6 +68,14 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   password -> archive progress (starts `archive/create-pool`, retry on failure) -> recovery code (password,
   15 words, three typed back) -> phone (pairing pages) -> Done (`setup/finish`); checked against a mock
   alpd under Xvfb. The screen now starts on the sign-in page (it used to show the install page first).
+- Code review of installer + pool (2026-11-25, one round): fixed the blocker (confirm token: the
+  disks erased are the ones the Confirm page showed, ALP-INST-401) and items 2, 3, 6-10 (probe errors
+  never mean empty; LUKS header without key slot is formatted again; missing-disk alert follows the
+  degraded mount; pool key made only at creation; recovery refuses both slots used; more initrd
+  drivers; T-BOOT-01 checks the UKI profile and initrd drivers; installed CI group runs T-CORE).
+  Open from the review: (4) a failed install leaves disks greyed (no retry path); (5) stick left in
+  after install: root/state may come from the stick (same partition UUIDs) - needs LoaderDevicePartUUID
+  or a "remove the stick" step; T-INST-01 does not check the dup pool.
 - Next: native setup screens in a VM test (T-SCREEN-01) (password, pool progress, recovery, phone) on alp-screen;
   check gallery and phone approval on the native screen in a VM; code review of installer + pool
   (encryption/storage: opus reviewer) before the PR; `/claude-security` scan before release.

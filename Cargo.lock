@@ -38,6 +38,7 @@ dependencies = [
  "alp-core",
  "alp-hw",
  "serde_json",
+ "sha3",
  "toml",
 ]
 
