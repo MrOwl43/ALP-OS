@@ -1044,5 +1044,20 @@
  "set.install.d": "For testing. Normally chosen in the first setup.",
  "set.install.go": "Choose disks",
  "setup.installed.title": "ALP-OS is installed",
- "setup.installed.sub": "Remove the USB stick, then restart. Setup goes on from the computer's own disk."
+ "setup.installed.sub": "Remove the USB stick, then restart. Setup goes on from the computer's own disk.",
+ "install.reopen.title": "Archives from before",
+ "install.reopen.sub": "Tick a disk to open it again with your 15 recovery words after the restart. It is never erased.",
+ "install.reopen.row": "ALP-OS archive: can be opened again",
+ "install.kept.title": "These disks are opened again, not erased",
+ "install.kept.row": "Opened with your 15 recovery words after the restart",
+ "reopen.title": "Type your 15 recovery words",
+ "reopen.sub": "These are the words you wrote down or photographed when you made this archive. They open it again with all your photos.",
+ "reopen.pp.on": "My archive also has an extra passphrase (Strong protection)",
+ "reopen.pp": "Extra passphrase",
+ "reopen.go": "Open my archive",
+ "reopen.note": "Nothing on the disks changes until the words are right.",
+ "reopen.foot": "Lost the words? Without them nobody can open this archive, not even us. You can restart and install again without this disk.",
+ "reopen.missing": "Please type all 15 words. Word {n} is empty.",
+ "reopen.checking": "Checking your recovery words…",
+ "reopen.wrong": "These words do not open this archive. Nothing was changed. Please check each word and try again."
 }

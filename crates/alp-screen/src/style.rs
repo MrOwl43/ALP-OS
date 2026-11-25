@@ -151,7 +151,9 @@ window.alp {
 .field-label { font-weight: 600; }
 
 /* Keyboard focus */
-.alp *:focus-visible { outline: 3px solid alpha(@ACCENT@, 0.75); outline-offset: 2px; }
+.alp *:focus:focus-visible { outline: 3px solid alpha(@ACCENT@, 0.75); outline-offset: 2px; }
+.alp text:focus:focus-visible { outline: none; }
+.alp entry:focus-within, .alp passwordentry:focus-within { outline: 3px solid alpha(@ACCENT@, 0.75); outline-offset: 1px; }
 
 /* Progress */
 .alp progressbar trough { min-height: 8px; border-radius: 99px; background-color: #dcdce2; }
@@ -168,6 +170,8 @@ window.alp {
   border: 1px solid #ecdca0; }
 .paper .word-n { color: #6b6250; font-size: 12pt; font-weight: 600; }
 .paper .word { font-family: monospace; font-size: 17pt; font-weight: 700; color: #111111; }
+.paper entry.word-entry { font-family: monospace; font-size: 14pt; font-weight: 600; min-height: 36px; background-color: #ffffff; color: #111111; }
+.paper entry.word-entry.error { color: #c0141c; box-shadow: inset 0 0 0 2px #e0262f; }
 .paper.qr { background-color: #ffffff; border-color: #d6d6dc; padding: 10px; }
 .paper .code-big { font-size: 32pt; letter-spacing: 4px; }
 .word-n-chip { background-color: #e6e6eb; border-radius: 8px; padding: 6px 12px; font-weight: 700; }

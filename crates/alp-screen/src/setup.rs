@@ -2,7 +2,9 @@
 //! First-start pages of the installed system (plan `0.2.8-first-start.md`,
 //! step 4): choose the password, watch the archive being made on the disks
 //! chosen in the installer, make the recovery code (shown once, three
-//! words typed back), connect a phone, finish. Every step is an alpd call;
+//! words typed back), connect a phone, finish. When the installer kept an
+//! old archive (plan `0.2.8-reopen-archive.md`), the archive step asks for
+//! its 15 recovery words instead and no new code is made. Every step is an alpd call;
 //! which page shows comes from alpd's state ([`model::setup::step`]), so a
 //! restart continues where setup stopped.
 
@@ -30,6 +32,8 @@ const WORDS: usize = 15;
 pub enum SetupMsg {
     Password(Result<Value, ApiError>),
     PoolStarted(Result<Value, ApiError>),
+    /// `archive/reopen-pool` answered (the job then shows in the state).
+    Reopen(Result<Value, ApiError>),
     RecoveryMade(Result<Value, ApiError>),
     Committed(Result<Value, ApiError>),
     /// Skip (recovery) or finish: the answer only matters when it failed.
@@ -37,13 +41,14 @@ pub enum SetupMsg {
 }
 
 /// The pages this module adds to the stack.
-const PAGES: [&str; 6] = [
+const PAGES: [&str; 7] = [
     "setup-password",
     "setup-pool",
     "setup-recovery",
     "setup-confirm",
     "setup-phone",
     "setup-installed",
+    "setup-words",
 ];
 
 pub struct SetupUi {
@@ -61,6 +66,18 @@ pub struct SetupUi {
     pool_line: style::Note,
     pool_retry: gtk4::Button,
     pool_asked: Cell<bool>,
+    // Old archive opened again with its recovery words.
+    words: Vec<gtk4::Entry>,
+    words_form: gtk4::Box,
+    pp_on: gtk4::CheckButton,
+    pp: gtk4::PasswordEntry,
+    words_go: gtk4::Button,
+    words_bar: gtk4::ProgressBar,
+    words_note: style::Note,
+    /// An `archive/reopen-pool` call is out.
+    words_busy: Cell<bool>,
+    /// The note shows the answer to the last call (newer than the job).
+    words_answered: Cell<bool>,
     // Recovery code.
     rec_pw: gtk4::PasswordEntry,
     rec_ask: gtk4::Box,
@@ -179,6 +196,91 @@ fn paper(t: &Texts) -> (gtk4::Box, Vec<gtk4::Label>) {
     (sheet, words)
 }
 
+/// The 15 entries for typing a recovery code, laid out like the sheet it
+/// was written on: three columns of five, read down each column, numbered.
+/// Pasting or typing the whole code into one entry spreads it out.
+fn word_sheet(t: &Texts) -> (gtk4::Box, Vec<gtk4::Entry>) {
+    let sheet = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .css_classes(["paper"])
+        .build();
+    sheet.update_property(&[gtk4::accessible::Property::Label(&t.t("recovery.key"))]);
+    let grid = gtk4::Grid::builder()
+        .row_spacing(10)
+        .column_spacing(20)
+        .column_homogeneous(true)
+        .halign(gtk4::Align::Center)
+        .build();
+    let mut entries = Vec::with_capacity(WORDS);
+    for i in 0..WORDS {
+        let cell = gtk4::Box::builder().spacing(8).build();
+        let n = gtk4::Label::builder()
+            .label(format!("{}.", i + 1))
+            .css_classes(["word-n"])
+            .width_chars(3)
+            .xalign(1.0)
+            .build();
+        let e = gtk4::Entry::builder()
+            .width_chars(11)
+            .css_classes(["word-entry"])
+            .input_hints(gtk4::InputHints::NO_SPELLCHECK | gtk4::InputHints::LOWERCASE)
+            .build();
+        // Its name for screen readers (no tooltip over the typing).
+        e.update_property(&[gtk4::accessible::Property::Label(
+            &t.fill("recovery.confirm.n", &[("n", &(i + 1).to_string())]),
+        )]);
+        cell.append(&n);
+        cell.append(&e);
+        grid.attach(&cell, (i / 5) as i32, (i % 5) as i32, 1, 1);
+        entries.push(e);
+    }
+    // Several words in one entry (pasted, or typed with spaces): one per
+    // entry from here on.
+    for (i, e) in entries.iter().enumerate() {
+        let all = entries.clone();
+        e.connect_changed(move |e| {
+            let text = e.text();
+            let parts: Vec<&str> = text.split_whitespace().collect();
+            if parts.len() < 2 && !text.ends_with(' ') {
+                return;
+            }
+            let parts: Vec<Zeroizing<String>> = parts
+                .iter()
+                .map(|p| Zeroizing::new(p.to_string()))
+                .collect();
+            // The keyboard moves on at once (the next key lands in the next
+            // word); the texts are set after this change is done (GTK
+            // refuses edits inside it).
+            let next = (i + parts.len()).min(WORDS - 1);
+            if let Some(n) = all.get(next) {
+                n.grab_focus();
+            }
+            let (e, all) = (e.clone(), all.clone());
+            gtk4::glib::idle_add_local_once(move || {
+                if parts.is_empty() {
+                    e.set_text("");
+                }
+                for (k, w) in parts.iter().enumerate() {
+                    if let Some(target) = all.get(i + k) {
+                        target.set_text(w);
+                    }
+                }
+                if let Some(n) = all.get(next) {
+                    n.set_position(-1);
+                }
+            });
+        });
+        // Enter goes to the next word.
+        if let Some(n) = entries.get(i + 1).cloned() {
+            e.connect_activate(move |_| {
+                n.grab_focus();
+            });
+        }
+    }
+    sheet.append(&grid);
+    (sheet, entries)
+}
+
 impl SetupUi {
     pub fn new(
         texts: Rc<Texts>,
@@ -239,6 +341,87 @@ impl SetupUi {
                 560,
             ),
             Some(PAGES[1]),
+        );
+
+        // 2b. An old archive opened again: its 15 recovery words.
+        let (sheet, words) = word_sheet(t);
+        let pp_on = gtk4::CheckButton::builder()
+            .label(text(
+                t,
+                "reopen.pp.on",
+                "My archive also has an extra passphrase (Strong protection)",
+            ))
+            .build();
+        let pp = gtk4::PasswordEntry::builder()
+            .show_peek_icon(true)
+            .hexpand(true)
+            .build();
+        let pp_field = style::field(&text(t, "reopen.pp", "Extra passphrase"), &pp);
+        pp_field.set_visible(false);
+        {
+            let f = pp_field.clone();
+            let e = pp.clone();
+            pp_on.connect_toggled(move |c| {
+                f.set_visible(c.is_active());
+                if c.is_active() {
+                    e.grab_focus();
+                } else {
+                    e.set_text("");
+                }
+            });
+        }
+        let words_form = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Vertical)
+            .spacing(14)
+            .build();
+        words_form.append(&sheet);
+        words_form.append(&pp_on);
+        words_form.append(&pp_field);
+        let words_go = main_button(
+            "document-open-symbolic",
+            &text(t, "reopen.go", "Open my archive"),
+        );
+        let words_bar = gtk4::ProgressBar::builder()
+            .show_text(true)
+            .visible(false)
+            .build();
+        let words_note = style::Note::new(
+            "",
+            &text(
+                t,
+                "reopen.note",
+                "Nothing on the disks changes until the words are right.",
+            ),
+        );
+        let words_foot = style::Note::new(
+            "pencil",
+            &text(
+                t,
+                "reopen.foot",
+                "Lost the words? Without them nobody can open this archive, not even us. You can restart and install again without this disk.",
+            ),
+        );
+        stack.add_named(
+            &page(
+                t,
+                2,
+                ("folder-open-symbolic", Tone::Ok),
+                &text(t, "reopen.title", "Type your 15 recovery words"),
+                &text(
+                    t,
+                    "reopen.sub",
+                    "These are the words you wrote down or photographed when you made this archive. They open it again with all your photos.",
+                ),
+                &[
+                    words_form.upcast_ref(),
+                    words_note.root.upcast_ref(),
+                    words_bar.upcast_ref(),
+                    words_go.upcast_ref(),
+                    words_foot.root.upcast_ref(),
+                ],
+                680,
+            ),
+            Some(PAGES[6]),
         );
 
         // 3. Recovery code: the password, then the words on a "paper".
@@ -410,6 +593,15 @@ impl SetupUi {
             pool_line,
             pool_retry,
             pool_asked: Cell::new(false),
+            words,
+            words_form,
+            pp_on,
+            pp,
+            words_go,
+            words_bar,
+            words_note,
+            words_busy: Cell::new(false),
+            words_answered: Cell::new(false),
             rec_pw,
             rec_ask,
             rec_make,
@@ -438,6 +630,14 @@ impl SetupUi {
                 u.pool_retry.set_visible(false);
                 u.start_pool();
             });
+            let u = ui.clone();
+            ui.words_go.connect_clicked(move |_| u.reopen());
+            if let Some(last) = ui.words.last() {
+                let u = ui.clone();
+                last.connect_activate(move |_| u.reopen());
+            }
+            let u = ui.clone();
+            ui.pp.connect_activate(move |_| u.reopen());
             let u = ui.clone();
             ui.rec_make.connect_clicked(move |_| u.make_recovery());
             let u = ui.clone();
@@ -496,6 +696,85 @@ impl SetupUi {
     fn start_pool(&self) {
         self.pool_asked.set(true);
         self.call(|c| SetupMsg::PoolStarted(c.post("live/archive/create-pool", &json!({}))));
+    }
+
+    /// Sends the typed words (lower case, one space between) and the
+    /// passphrase. The words stay on the screen until the archive is open,
+    /// so a typo can be fixed without typing all 15 again.
+    fn reopen(&self) {
+        if self.words_busy.get() {
+            return;
+        }
+        for e in &self.words {
+            e.remove_css_class("error");
+        }
+        let typed: Vec<Zeroizing<String>> = self
+            .words
+            .iter()
+            .map(|e| Zeroizing::new(e.text().trim().to_lowercase()))
+            .collect();
+        if let Some(i) = typed.iter().position(|w| w.is_empty()) {
+            self.words_note.say(
+                "bad",
+                &text(
+                    &self.texts,
+                    "reopen.missing",
+                    "Please type all 15 words. Word {n} is empty.",
+                )
+                .replace("{n}", &(i + 1).to_string()),
+            );
+            self.words[i].add_css_class("error");
+            self.words[i].grab_focus();
+            return;
+        }
+        let words = Zeroizing::new(
+            typed
+                .iter()
+                .map(|w| w.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+        let pp = Zeroizing::new(if self.pp_on.is_active() {
+            self.pp.text().to_string()
+        } else {
+            String::new()
+        });
+        self.words_busy.set(true);
+        self.words_answered.set(false);
+        self.words_go.set_sensitive(false);
+        self.words_form.set_sensitive(false);
+        self.words_note.say(
+            "",
+            &text(
+                &self.texts,
+                "reopen.checking",
+                "Checking your recovery words…",
+            ),
+        );
+        self.call(move |c| {
+            let mut body = json!({"words": words.as_str()});
+            if !pp.is_empty() {
+                body["passphrase"] = json!(pp.as_str());
+            }
+            let r = c.post_slow("live/archive/reopen-pool", &body);
+            // The body held the words: overwrite it before it is dropped.
+            if let Some(Value::String(s)) = body.get_mut("words") {
+                zeroize::Zeroize::zeroize(s);
+            }
+            if let Some(Value::String(s)) = body.get_mut("passphrase") {
+                zeroize::Zeroize::zeroize(s);
+            }
+            SetupMsg::Reopen(r)
+        });
+    }
+
+    /// Forget the typed recovery words and passphrase.
+    fn wipe_typed(&self) {
+        for e in &self.words {
+            e.set_text("");
+            e.remove_css_class("error");
+        }
+        self.pp.set_text("");
     }
 
     fn make_recovery(&self) {
@@ -564,6 +843,9 @@ impl SetupUi {
     pub fn show(&self, step: Option<&Step>) -> bool {
         let visible = self.stack.visible_child_name();
         let on_setup = visible.as_deref().is_some_and(|v| PAGES.contains(&v));
+        if !matches!(step, Some(Step::Words { .. })) {
+            self.wipe_typed();
+        }
         let Some(step) = step else {
             if on_setup {
                 self.wipe_words();
@@ -612,6 +894,40 @@ impl SetupUi {
                 }
                 PAGES[1]
             }
+            Step::Words {
+                running,
+                percent,
+                message,
+                failed,
+            } => {
+                self.words_bar.set_visible(*running);
+                self.words_bar.set_fraction(f64::from(*percent) / 100.0);
+                self.words_bar.set_text(Some(&format!("{percent} %")));
+                let busy = *running || self.words_busy.get();
+                self.words_go.set_sensitive(!busy);
+                self.words_form.set_sensitive(!busy);
+                if *running {
+                    self.words_answered.set(false);
+                    if !message.is_empty() {
+                        self.words_note.say("", message);
+                    }
+                } else if let Some((key, why)) = failed
+                    && !self.words_answered.get()
+                    && !self.words_busy.get()
+                {
+                    let why = if key == "recovery.wrong" {
+                        text(
+                            &self.texts,
+                            "reopen.wrong",
+                            "These words do not open this archive. Nothing was changed. Please check each word and try again.",
+                        )
+                    } else {
+                        why.clone()
+                    };
+                    self.words_note.say("bad", &why);
+                }
+                PAGES[6]
+            }
             // The words page and the typing page belong to this step.
             Step::Recovery if visible.as_deref() == Some(PAGES[3]) => PAGES[3],
             Step::Recovery => PAGES[2],
@@ -626,6 +942,9 @@ impl SetupUi {
             match want {
                 w if w == PAGES[0] => {
                     self.pw1.grab_focus();
+                }
+                w if w == PAGES[6] => {
+                    self.words[0].grab_focus();
                 }
                 w if w == PAGES[2] && self.rec_ask.is_visible() => {
                     self.rec_pw.grab_focus();
@@ -652,6 +971,24 @@ impl SetupUi {
                     if e.key != "archive.busy" {
                         self.pool_line.say("bad", &error_text(t, &e));
                         self.pool_retry.set_visible(true);
+                    }
+                }
+            }
+            SetupMsg::Reopen(r) => {
+                self.words_busy.set(false);
+                match r {
+                    // The job runs; the state shows its progress.
+                    Ok(_) => {}
+                    Err(e) => {
+                        self.words_answered.set(true);
+                        self.words_go.set_sensitive(true);
+                        self.words_form.set_sensitive(true);
+                        self.words_note.say("bad", &error_text(t, &e));
+                        // A typo: mark that word and go there.
+                        if let Some(w) = e.index.and_then(|i| self.words.get(i.wrapping_sub(1))) {
+                            w.add_css_class("error");
+                            w.grab_focus();
+                        }
                     }
                 }
             }
