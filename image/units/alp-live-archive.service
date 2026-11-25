@@ -11,7 +11,10 @@ BindsTo=alp-live-index.service
 # an answer). Its own conditions skip it when the archive did not open.
 Wants=alp-immich.service
 After=alp-live-state.service alp-live-protect.service alp-live-index.service
-ConditionPathExists=/var/lib/alp/live/archive.toml
+# Either kind of archive: Live's on a backup disk, or the installed
+# system's pool (ADR 0028); "|" makes the two an OR.
+ConditionPathExists=|/var/lib/alp/live/archive.toml
+ConditionPathExists=|/var/lib/alp/pool.toml
 
 [Service]
 Type=oneshot
