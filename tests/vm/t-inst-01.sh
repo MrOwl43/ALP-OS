@@ -170,5 +170,27 @@ expect "the root is the installed slot 1" '^ROOT-FROM=.*alp-os_[0-9.]+'
 expect "the first-boot seed is on the installed alp-state" '^SEED=yes'
 same "Windows disk" "$windows" "$windows_before"
 
+# Part 3: the stick left in after the install. The computer starts from the
+# installed disk (first in the boot order), but the stick carries the same
+# root partitions, so the root may be read from either. The state (keys,
+# seed) must come from the disk that started (LoaderDevicePartUUID), never
+# from the stick; the stick is attached read-only and must stay unchanged.
+image_before=$(sha256sum "$image" | cut -d' ' -f1)
+# shellcheck disable=SC2016  # the $(...) must reach the guest literally
+probe3='-/usr/bin/sh -c "test -s /var/lib/alp/firstboot-seed.toml && echo SEED=yes || echo SEED=no"
+-/usr/bin/sh -c "s=$(readlink -f /dev/disk/by-id/virtio-ALPSTICK01); d=$(lsblk -no PKNAME $(findmnt -no SOURCE /var/lib/alp)); test /dev/$d = $s && echo STATE-ON-STICK=yes || echo STATE-ON-STICK=no"
+-/usr/bin/sh -c "s=$(basename $(readlink -f /dev/disk/by-id/virtio-ALPSTICK01)); lsblk -rnso NAME /dev/mapper/root | grep -qx $s && echo ROOT-ON-STICK=yes || echo ROOT-ON-STICK=no"'
+args3="$args2 -drive if=none,id=stk,format=raw,readonly=on,file=$image -device virtio-blk-pci,drive=stk,serial=ALPSTICK01"
+status=0
+out=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe3" ALP_PROBE_DELAY=5 ALP_QEMU_ARGS="$args3" ALP_OVERLAY_SIZE=64G \
+    "$here/run-vm.sh" "$target" 600) || status=$?
+echo "$out"
+(( status == 0 )) || { echo "FAIL: T-INST-01 (start with the stick still in failed)" >&2; exit 1; }
+expect "starts with the stick still in" 'Reached alp-healthy.target'
+expect "the state is the installed disk's, not the stick's" '^STATE-ON-STICK=no'
+expect "the installed seed is used with the stick in" '^SEED=yes'
+grep -q '^ROOT-ON-STICK=yes' <<<"$out" && echo "note: the root was read from the stick (same partitions); the home screen asks to remove it (ALP-BOOT-002)"
+same "USB stick" "$image" "$image_before"
+
 (( fail == 0 )) || { echo "FAIL: T-INST-01" >&2; exit 1; }
 echo "PASS: T-INST-01"

@@ -80,7 +80,12 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   (safe-graphics profile, initrd drivers), T-BUDGET-01 (UKI 56.7 MiB, was 241 MB), T-INST-01,
   T-INST-02 (recovery slots, ALP-STO-001 alert). Fixed on the way: blkid -p on an empty partition
   exits 0 with no TYPE (treated as empty, else the pool was never made).
-- Next: owner tries a test build on the two old laptops; T-SCREEN-01 VM test of the native setup
+- Stick left in after install (review item 5, 2026-11-25): the system disk is the one holding the
+  ESP named by systemd-boot's LoaderDevicePartUUID (alp-hw inspect), so state, index and keys come from
+  the disk that started even when udev reads the identical root from the stick; the home screen then
+  says to remove the stick and restart (ALP-BOOT-002). T-INST-01 part 3 starts with the stick in.
+- Owner (2026-11-25): no interim laptop build; he tests the finished product on old and new laptops.
+- Next: T-SCREEN-01 VM test of the native setup
   screens; review items 4 and 5; PR with the owner's OK; `/claude-security` scan before release.
 
 ## Alpha 0.2.7 (started 2026-11-15, same branch, on top of 0.2.61)

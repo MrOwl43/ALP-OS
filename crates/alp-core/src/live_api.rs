@@ -604,6 +604,7 @@ fn hardware_json() -> Value {
                 })).collect::<Vec<_>>(),
                 "report_file": report_file,
                 "specs": specs_json(&r),
+                "root_elsewhere": r.root_elsewhere,
             })
         }
         Err(e) => {
@@ -4298,6 +4299,14 @@ fn alerts(st: &Value, archive_health: Option<&str>) -> Vec<Value> {
             v.push(alert(key, level, msg, at["code"].as_str()));
         }
     }
+    if st["hardware"]["root_elsewhere"] == true {
+        v.push(alert(
+            "system.start_stick_in",
+            "action",
+            "The ALP-OS USB stick is still connected. Remove it, then restart the server so it starts from its own disk.",
+            Some("ALP-BOOT-002"),
+        ));
+    }
     match archive_health {
         Some("failing") => v.push(alert(
             "archive.disk_failing",
@@ -5250,6 +5259,14 @@ mod tests {
         // It reaches the home screen as an alert.
         let st = json!({"archive": {"error": fail_json(&f)}});
         assert_eq!(alerts(&st, None)[0]["code"], "ALP-STO-001");
+    }
+
+    #[test]
+    fn a_start_stick_left_in_is_an_alert() {
+        let st = json!({"hardware": {"root_elsewhere": true}});
+        let a = alerts(&st, None);
+        assert_eq!(a[0]["code"], "ALP-BOOT-002");
+        assert!(alerts(&json!({"hardware": {"root_elsewhere": false}}), None).is_empty());
     }
 
     #[test]

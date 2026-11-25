@@ -18,6 +18,10 @@ pub mod blockdev;
 /// `SecureBoot` variable in the EFI global variable namespace (UEFI spec,
 /// `EFI_GLOBAL_VARIABLE`), as named by efivarfs.
 const SECURE_BOOT_VAR: &str = "SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c";
+/// systemd-boot's Boot Loader Interface: the partition GUID of the EFI
+/// system partition it started from (UTF-16 string). Vendor GUID as in
+/// systemd's own variables (e.g. LoaderEntryOneShot-4a67b082-...).
+const LOADER_DEVICE_VAR: &str = "LoaderDevicePartUUID-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f";
 
 /// Where to read from. [`Roots::system`] is the running machine.
 #[derive(Debug, Clone)]
@@ -85,6 +89,10 @@ pub struct HwReport {
     /// TPM major version (1 or 2), `None` when no TPM is visible.
     pub tpm_version: Option<u8>,
     pub disks: Vec<DiskInfo>,
+    /// The root filesystem is read from another disk than the one the
+    /// computer started from: the start stick is still in after the install
+    /// (both carry the same root partitions). Remove it and restart.
+    pub root_elsewhere: bool,
     pub nics: Vec<Nic>,
     pub gpus: Vec<Gpu>,
 }
@@ -92,7 +100,28 @@ pub struct HwReport {
 /// Inspect the machine. Missing information never fails the inspection; it
 /// shows up as empty or `None` values.
 pub fn inspect(roots: &Roots) -> HwReport {
-    let system_disk = roots.root_dev.and_then(|d| system_disk(&roots.sys, d));
+    let root_disk = roots.root_dev.and_then(|d| system_disk(&roots.sys, d));
+    let mut disks = disks(roots, root_disk.as_deref());
+    // The disk the computer started from wins over the disk behind root:
+    // after an install with the stick still in, both have the same root
+    // partitions and udev may take either, but the state partition (keys,
+    // records) must come from the disk that started.
+    let started = boot_partuuid(&roots.sys).and_then(|u| {
+        disks
+            .iter()
+            .find(|d| {
+                d.partitions
+                    .iter()
+                    .any(|p| p.partition_uuid.eq_ignore_ascii_case(&u))
+            })
+            .map(|d| d.id.0.clone())
+    });
+    let root_elsewhere = matches!((&started, &root_disk), (Some(s), Some(r)) if s != r);
+    if let Some(s) = &started {
+        for d in &mut disks {
+            d.is_system_disk = &d.id.0 == s;
+        }
+    }
     HwReport {
         machine: machine(&roots.sys),
         cpu: cpu(&roots.proc),
@@ -101,7 +130,8 @@ pub fn inspect(roots: &Roots) -> HwReport {
         secure_boot: secure_boot(&roots.sys),
         tpm_version: read(&roots.sys.join("class/tpm/tpm0/tpm_version_major"))
             .and_then(|v| v.parse().ok()),
-        disks: disks(roots, system_disk.as_deref()),
+        disks,
+        root_elsewhere,
         nics: nics(&roots.sys),
         gpus: gpus(&roots.sys),
     }
@@ -235,6 +265,19 @@ fn secure_boot(sys: &Path) -> Option<bool> {
     // efivarfs: 4 attribute bytes, then the value.
     let raw = fs::read(sys.join("firmware/efi/efivars").join(SECURE_BOOT_VAR)).ok()?;
     raw.get(4).map(|v| *v == 1)
+}
+
+/// `LoaderDevicePartUUID` in lower case, `None` without systemd-boot.
+fn boot_partuuid(sys: &Path) -> Option<String> {
+    let raw = fs::read(sys.join("firmware/efi/efivars").join(LOADER_DEVICE_VAR)).ok()?;
+    let units: Vec<u16> = raw
+        .get(4..)?
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .take_while(|u| *u != 0)
+        .collect();
+    let v = String::from_utf16(&units).ok()?.trim().to_ascii_lowercase();
+    (v.len() == 36).then_some(v)
 }
 
 /// The whole disk behind the root filesystem: follow device-mapper slaves
@@ -702,7 +745,11 @@ mod tests {
     struct Tree(PathBuf);
     impl Tree {
         fn new(tag: &str) -> Self {
-            let p = std::env::temp_dir().join(format!("alp-hw-{tag}-{}", std::process::id()));
+            // Tests run in parallel and may build the same tree: a counter
+            // keeps their directories apart.
+            static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let p = std::env::temp_dir().join(format!("alp-hw-{tag}-{}-{n}", std::process::id()));
             let _ = fs::remove_dir_all(&p);
             fs::create_dir_all(&p).unwrap();
             Tree(p)
@@ -826,6 +873,48 @@ mod tests {
         single_disk_bytes: 64_000_000_000,
     };
 
+    /// Installed on the NVMe disk with the stick still in: the computer
+    /// started from the NVMe disk's ESP, but root came from the stick.
+    #[test]
+    fn the_disk_that_started_wins_over_root() {
+        let t = laptop();
+        let nv = "sys/devices/pci0/nvme/nvme0/nvme0n1/nvme0n1p1";
+        t.file(&format!("{nv}/partition"), "1\n");
+        t.file(&format!("{nv}/dev"), "259:1\n");
+        t.file(
+            "udev/b259:1",
+            "E:ID_PART_ENTRY_UUID=0f1e2d3c-4b5a-4978-8695-a4b3c2d1e0f9\nE:ID_PART_ENTRY_NAME=esp\n",
+        );
+        let mut var = vec![7u8, 0, 0, 0];
+        for u in "0F1E2D3C-4B5A-4978-8695-A4B3C2D1E0F9\0".encode_utf16() {
+            var.extend(u.to_le_bytes());
+        }
+        t.file(
+            &format!("sys/firmware/efi/efivars/{LOADER_DEVICE_VAR}"),
+            var,
+        );
+        let r = inspect(&t.roots(Some(253 << 8)));
+        let system: Vec<_> = r
+            .disks
+            .iter()
+            .filter(|d| d.is_system_disk)
+            .map(|d| d.id.0.as_str())
+            .collect();
+        assert_eq!(system, ["nvme0n1"]);
+        assert!(r.root_elsewhere);
+        // A variable that is not a partition GUID: root decides.
+        let mut var = vec![7u8, 0, 0, 0];
+        for u in "aaaa".encode_utf16() {
+            var.extend(u.to_le_bytes());
+        }
+        t.file(
+            &format!("sys/firmware/efi/efivars/{LOADER_DEVICE_VAR}"),
+            var,
+        );
+        let r = inspect(&t.roots(Some(253 << 8)));
+        assert!(r.disks[1].is_system_disk && !r.root_elsewhere);
+    }
+
     #[test]
     fn inspects_a_laptop() {
         let t = laptop();
@@ -849,6 +938,7 @@ mod tests {
         assert_eq!(r.tpm_version, Some(2));
         let names: Vec<_> = r.disks.iter().map(|d| d.id.0.as_str()).collect();
         assert_eq!(names, ["nvme0n1", "sda"], "dm-0 is not a disk");
+        assert!(!r.root_elsewhere, "no boot loader variable: root decides");
         let nvme = &r.disks[0];
         assert_eq!(
             (nvme.transport, nvme.removable, nvme.is_system_disk),

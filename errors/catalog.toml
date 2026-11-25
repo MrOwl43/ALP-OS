@@ -116,6 +116,12 @@ title = "An update did not work, so your server went back to the previous versio
 action = "Nothing to do: your photos are safe and the server works as before."
 technician = "Boot counting reached zero for the new UKI and systemd-boot started the previous slot. Logs: journalctl -b -1; bootctl list; systemd-bless-boot status."
 
+[ALP-BOOT-002]
+severity = "action"
+title = "The USB stick is still connected"
+action = "Remove the ALP-OS USB stick, then restart the server so it starts from its own disk."
+technician = "The root filesystem's partition is on another disk than the ESP in LoaderDevicePartUUID: the install stick and the installed disk carry the same root partition UUIDs, and udev took the stick's. State is taken from the disk that started (alp_hw::inspect). Logs: lsblk -o NAME,PARTUUID; bootctl status."
+
 # ----------------------------------------------------------------- UPD
 
 [ALP-UPD-001]
