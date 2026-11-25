@@ -60,6 +60,10 @@ pub fn disks(list: &[Assessed]) -> Value {
                 "size_bytes": d.size_bytes,
                 "size": size_text(d.size_bytes),
                 "transport": transport(d.transport),
+                // The row's first word, and whether the archive's long-term
+                // copy is recommended there (hard disks only).
+                "kind": d.kind(),
+                "long_term": d.long_term(),
                 "removable": d.removable,
             });
             match &a.verdict {

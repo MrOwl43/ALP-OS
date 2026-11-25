@@ -204,6 +204,27 @@ impl Disk {
             .collect()
     }
 
+    /// What the disk is, for the first word on its row (owner 2026-11-25):
+    /// `usb` (USB or removable), `card` (memory card), `hdd` (spinning,
+    /// the kernel's rotational flag) or `ssd` (anything else that stays in).
+    pub fn kind(&self) -> &'static str {
+        match self.transport {
+            Transport::Mmc => "card",
+            Transport::Usb => "usb",
+            _ if self.removable => "usb",
+            _ if self.rotational => "hdd",
+            _ => "ssd",
+        }
+    }
+
+    /// Recommended for the archive's long-term copy: only hard disks. SSDs
+    /// can lose data when left unpowered for long, and USB sticks and cards
+    /// are not made for years of storage (they can be a second backup
+    /// later). A recommendation only: any usable disk can still be chosen.
+    pub fn long_term(&self) -> bool {
+        self.kind() == "hdd"
+    }
+
     /// Stays in the computer: not USB, not a memory card, not removable.
     pub fn is_internal(&self) -> bool {
         !self.removable && !matches!(self.transport, Transport::Usb | Transport::Mmc)
@@ -1007,6 +1028,34 @@ mod tests {
         assert_eq!(reason_of(&l, "sda"), Reason::HoldsSystem(System::AlpOs));
         // alp-data holds LUKS: the archive reason wins over "encrypted".
         assert_eq!(reason_of(&l, "sdb"), Reason::AlpArchive);
+    }
+
+    #[test]
+    fn each_disk_says_what_it_is() {
+        let mut d = Disk {
+            name: "sda".into(),
+            model: String::new(),
+            size_bytes: 1,
+            transport: Transport::Sata,
+            removable: false,
+            rotational: true,
+            read_only: false,
+            table: String::new(),
+            fstype: String::new(),
+            fs_label: String::new(),
+            partitions: vec![],
+            mounted: false,
+        };
+        assert_eq!((d.kind(), d.long_term()), ("hdd", true));
+        d.rotational = false;
+        assert_eq!((d.kind(), d.long_term()), ("ssd", false));
+        d.transport = Transport::Nvme;
+        assert_eq!(d.kind(), "ssd");
+        d.transport = Transport::Usb;
+        d.rotational = true; // a USB hard disk is still a USB disk
+        assert_eq!((d.kind(), d.long_term()), ("usb", false));
+        d.transport = Transport::Mmc;
+        assert_eq!(d.kind(), "card");
     }
 
     #[test]
