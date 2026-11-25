@@ -71,6 +71,7 @@ show='-/bin/bash -c "btrfs filesystem df /run/alp/pool | sed s/^/DF=/"
 probe2="$(QA_HTTP_TIMEOUT=90 post SETUP /api/v1/live/password/setup "{\"password\":\"$pw\"}")
 $(QA_HTTP_TIMEOUT=30 post POOL /api/v1/live/archive/create-pool '')
 $wait_open
+-/bin/bash -c \"journalctl -b -o cat --no-pager | grep -iE 'pool|ALP-STO|luks' | tail -12 | sed s/^/DIAG-LOG=/\"
 $show
 -/bin/bash -c \"head -c 200M /dev/urandom > /var/lib/alp-pool/files/t.bin && sync && sha256sum /var/lib/alp-pool/files/t.bin | sed s/^/SUM=/\""
 out=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe2" ALP_PROBE_DELAY=5 ALP_QEMU_ARGS="$with_data" \

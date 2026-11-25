@@ -86,7 +86,10 @@ fn probe_sure(r: &mut dyn Run, dev: &str, tag: &str, code: &'static str) -> Resu
     if out.ok && !v.is_empty() {
         return Ok(Some(v.to_string()));
     }
-    if !out.ok && v.is_empty() && out.stderr.trim().is_empty() {
+    // On a partition, blkid -p succeeds with only PART_ENTRY_* values when
+    // it holds nothing: the TYPE filter then prints nothing (exit 0). With
+    // nothing found at all it exits 2, silently.
+    if v.is_empty() && (out.ok || out.stderr.trim().is_empty()) {
         return Ok(None);
     }
     Err(err(code, &format!("blkid {dev}"), &out))
@@ -797,6 +800,34 @@ mod tests {
                 .iter()
                 .any(|a| a[0] == "luksFormat" && a.last().unwrap() == "/dev/vdc1")
         );
+    }
+
+    #[test]
+    fn an_empty_partition_is_formatted() {
+        // blkid -p on an empty GPT partition: exit 0, only PART_ENTRY_*
+        // values, so the TYPE filter prints nothing.
+        struct PartOnly(Mock);
+        impl Run for PartOnly {
+            fn run(&mut self, p: &str, a: &[String], i: Option<&[u8]>) -> Out {
+                if p == "blkid" && a.contains(&"TYPE".to_string()) {
+                    let _ = self.0.run(p, a, i);
+                    return Out {
+                        ok: true,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    };
+                }
+                self.0.run(p, a, i)
+            }
+        }
+        let mut b = PartOnly(Mock::default());
+        create(&plan(2), &devs(2), &key(), MNT, &mut b).unwrap();
+        let formatted =
+            b.0.ran("cryptsetup")
+                .iter()
+                .filter(|a| a[0] == "luksFormat")
+                .count();
+        assert_eq!(formatted, 2);
     }
 
     #[test]
