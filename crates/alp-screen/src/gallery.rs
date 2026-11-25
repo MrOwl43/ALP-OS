@@ -30,24 +30,16 @@ pub struct GalleryUi {
 }
 
 impl GalleryUi {
-    pub fn new(back: &gtk4::Button) -> Rc<Self> {
+    /// The way back is the top bar's Home button (main.rs).
+    pub fn new() -> Rc<Self> {
         let page = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Vertical)
             .build();
-        let bar = gtk4::Box::builder()
-            .orientation(gtk4::Orientation::Horizontal)
-            .margin_top(8)
-            .margin_bottom(8)
-            .margin_start(12)
-            .margin_end(12)
-            .build();
-        bar.append(back);
         let holder = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Vertical)
             .vexpand(true)
             .hexpand(true)
             .build();
-        page.append(&bar);
         page.append(&holder);
         Rc::new(GalleryUi {
             page,

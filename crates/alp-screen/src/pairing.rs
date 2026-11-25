@@ -18,6 +18,7 @@ use gtk4::prelude::*;
 use serde_json::{Value, json};
 
 use crate::Msg;
+use crate::style::{self, Tone};
 
 /// The QR modules shown (side, cells), none while there is no code.
 type Cells = Rc<RefCell<Option<(usize, Vec<bool>)>>>;
@@ -52,16 +53,6 @@ pub struct PairUi {
     answered: RefCell<Vec<String>>,
 }
 
-fn column() -> gtk4::Box {
-    gtk4::Box::builder()
-        .orientation(gtk4::Orientation::Vertical)
-        .spacing(18)
-        .valign(gtk4::Align::Center)
-        .halign(gtk4::Align::Center)
-        .width_request(520)
-        .build()
-}
-
 fn label(text: &str, classes: &[&str]) -> gtk4::Label {
     gtk4::Label::builder()
         .label(text)
@@ -83,8 +74,8 @@ impl PairUi {
         // QR page.
         let cells: Cells = Rc::new(RefCell::new(None));
         let qr = gtk4::DrawingArea::builder()
-            .content_width(320)
-            .content_height(320)
+            .content_width(260)
+            .content_height(260)
             .halign(gtk4::Align::Center)
             .build();
         {
@@ -113,24 +104,32 @@ impl PairUi {
         let left = label("", &["dim-label"]);
         let again = gtk4::Button::builder()
             .label(t("phone.qr.new"))
-            .css_classes(["pill"])
+            .css_classes(["pill", "suggested-action"])
             .halign(gtk4::Align::Center)
             .visible(false)
             .build();
         let qr_note = label("", &["error"]);
-        let back = gtk4::Button::builder()
-            .label(t("common.back"))
-            .css_classes(["pill"])
+        let back = style::button("go-previous-symbolic", &t("common.back"), &["pill"]);
+        back.set_halign(gtk4::Align::Center);
+        let qr_frame = gtk4::Box::builder()
+            .css_classes(["paper", "qr"])
             .halign(gtk4::Align::Center)
             .build();
-        let qr_page = column();
-        qr_page.append(&label(&t("phone.title"), &["title-1"]));
-        qr_page.append(&label(&t("pair.qr.sub"), &[]));
-        qr_page.append(&qr);
-        qr_page.append(&left);
-        qr_page.append(&again);
-        qr_page.append(&qr_note);
-        qr_page.append(&back);
+        qr_frame.append(&qr);
+        qr.update_property(&[gtk4::accessible::Property::Label(&t("pair.qr.alt"))]);
+        let qr_page = style::scroll(&style::panel(
+            &[
+                style::hero("phone-symbolic", Tone::Violet).upcast_ref(),
+                label(&t("phone.title"), &["title-1"]).upcast_ref(),
+                label(&t("pair.qr.sub"), &["lead"]).upcast_ref(),
+                qr_frame.upcast_ref(),
+                left.upcast_ref(),
+                again.upcast_ref(),
+                qr_note.upcast_ref(),
+                back.upcast_ref(),
+            ],
+            560,
+        ));
         stack.add_named(&qr_page, Some("pair-qr"));
 
         // Approve page.
@@ -144,14 +143,28 @@ impl PairUi {
             .halign(gtk4::Align::Center)
             .build();
         let approve_note = label("", &["error"]);
-        let ap = column();
-        ap.append(&title);
-        ap.append(&label(&t("pair.approve.sub"), &[]));
-        ap.append(&code);
-        ap.append(&slide);
-        ap.append(&label(&t("pair.approve.slide"), &["dim-label"]));
-        ap.append(&approve_note);
-        ap.append(&refuse);
+        let code_box = gtk4::Box::builder()
+            .css_classes(["paper"])
+            .halign(gtk4::Align::Center)
+            .build();
+        code.remove_css_class("title-1");
+        code.add_css_class("word");
+        code.add_css_class("code-big");
+        code.set_wrap(false);
+        code_box.append(&code);
+        let ap = style::scroll(&style::panel(
+            &[
+                style::hero("phone-symbolic", Tone::Violet).upcast_ref(),
+                title.upcast_ref(),
+                label(&t("pair.approve.sub"), &["lead"]).upcast_ref(),
+                code_box.upcast_ref(),
+                slide.upcast_ref(),
+                label(&t("pair.approve.slide"), &["dim-label"]).upcast_ref(),
+                approve_note.upcast_ref(),
+                refuse.upcast_ref(),
+            ],
+            560,
+        ));
         stack.add_named(&ap, Some("pair-approve"));
 
         let ui = Rc::new(PairUi {

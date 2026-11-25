@@ -536,10 +536,199 @@ pub mod pairing {
     }
 }
 
+/// The top bar (the 0.2.7 console's system bar, T18/T57): network and
+/// the address phones use, the backup disk, battery, overall status.
+pub mod bar {
+    use super::Level;
+    use serde_json::Value;
+
+    /// A status colour; the bar never shows colour without an icon and a
+    /// spoken label (accessibility).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Tone {
+        Ok,
+        Warn,
+        Bad,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum Net {
+        Off,
+        /// A cable is in, the router has not answered yet.
+        Waiting,
+        Cable,
+        /// Network name and signal 0..=4 when known.
+        Wifi(String, Option<u8>),
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct Bar {
+        pub net: Net,
+        /// The first address (the one phones use, alpd lists it first).
+        pub ip: Option<String>,
+        /// Percent and whether it is plugged in.
+        pub battery: Option<(u8, bool)>,
+        /// Text key of the disk's state and its tone; `None` while the
+        /// archive is locked (nothing is known yet).
+        pub disk: Option<(&'static str, Tone)>,
+        /// Free archive bytes (for `tray.disk.ok`).
+        pub free_bytes: u64,
+        pub level: Level,
+        /// "alpha 0.2.8" from the release name.
+        pub version: Option<String>,
+    }
+
+    impl Bar {
+        pub fn from_state(w: &Value) -> Self {
+            let nw = &w["network"];
+            let ports = nw["ports"].as_array().cloned().unwrap_or_default();
+            let port = |kind: &str| {
+                ports
+                    .iter()
+                    .find(|p| p["kind"] == kind && p["state"] == "connected")
+            };
+            let online = nw["online"].as_bool().unwrap_or(false);
+            let net = if !online {
+                if ports.iter().any(|p| p["state"] == "waiting") {
+                    Net::Waiting
+                } else {
+                    Net::Off
+                }
+            } else if port("wired").is_none()
+                && let Some(p) = port("wifi")
+            {
+                Net::Wifi(
+                    p["ssid"].as_str().unwrap_or_default().to_string(),
+                    p["signal"].as_u64().map(|s| s.min(4) as u8),
+                )
+            } else {
+                Net::Cable
+            };
+            let ip = nw["addresses"]
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|a| a.as_str().or(a["address"].as_str()))
+                .or(nw["address"].as_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            let b = &w["system"]["battery"];
+            let battery = b["percent"].as_f64().map(|p| {
+                (
+                    p.round().clamp(0.0, 100.0) as u8,
+                    b["charging"].as_bool().unwrap_or(false),
+                )
+            });
+            let ar = &w["archive"];
+            let space = |v: &Value| v["space"].as_str().unwrap_or("ok").to_string();
+            let (sa, si) = (space(ar), space(&w["index"]));
+            let health = ar["health"].as_str().unwrap_or("ok");
+            let disk = match ar["state"].as_str().unwrap_or("") {
+                "open" if sa == "full" || si == "full" => Some(("tray.disk.full", Tone::Bad)),
+                "open" if health == "bad" => Some(("tray.disk.bad", Tone::Bad)),
+                "open" if sa == "low" || si == "low" || health == "warn" => {
+                    Some(("tray.disk.low", Tone::Warn))
+                }
+                "open" => Some(("tray.disk.ok", Tone::Ok)),
+                "missing" => Some(("tray.disk.missing", Tone::Bad)),
+                "creating" => Some(("tray.disk.creating", Tone::Warn)),
+                "none" | "failed" => Some(("tray.disk.none", Tone::Warn)),
+                _ => None,
+            };
+            let release = w["system"]["release"].as_str().unwrap_or_default();
+            Bar {
+                net,
+                ip,
+                battery,
+                disk,
+                free_bytes: ar["free_bytes"].as_u64().unwrap_or(0),
+                level: Level::from_wire(w["status"]["level"].as_str().unwrap_or("ok")),
+                version: version_tag(release),
+            }
+        }
+    }
+
+    /// "alpha 0.2.8" out of "ALP-OS alpha 0.2.8 (installed)"; `None` for a
+    /// release without alpha/beta (a stable one needs no tag).
+    pub fn version_tag(release: &str) -> Option<String> {
+        let words: Vec<&str> = release.split_whitespace().collect();
+        words.windows(2).find_map(|p| {
+            let kind = p[0].to_ascii_lowercase();
+            let num = p[1].trim_end_matches(|c: char| !c.is_ascii_digit());
+            ((kind == "alpha" || kind == "beta")
+                && !num.is_empty()
+                && num.chars().all(|c| c.is_ascii_digit() || c == '.'))
+            .then(|| format!("{kind} {num}"))
+        })
+    }
+
+    impl Tone {
+        /// The bar's tone for an overall level.
+        pub fn of(level: Level) -> Self {
+            match level {
+                Level::Ok | Level::Note => Tone::Ok,
+                Level::Action => Tone::Warn,
+                Level::Now | Level::Critical => Tone::Bad,
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn bar_reads_network_disk_battery_and_version() {
+        let w = json!({
+            "network": {"online": true, "ports": [
+                {"kind": "wifi", "state": "connected", "ssid": "Home", "signal": 3}],
+                "addresses": [{"address": "192.168.1.23", "kind": "wifi"}, "10.0.0.2"]},
+            "system": {"battery": {"percent": 75.6, "charging": true},
+                       "release": "ALP-OS alpha 0.2.8"},
+            "archive": {"state": "open", "space": "low", "free_bytes": 5},
+            "status": {"level": "action"}
+        });
+        let b = bar::Bar::from_state(&w);
+        assert_eq!(b.net, bar::Net::Wifi("Home".into(), Some(3)));
+        assert_eq!(b.ip.as_deref(), Some("192.168.1.23"));
+        assert_eq!(b.battery, Some((76, true)));
+        assert_eq!(b.disk, Some(("tray.disk.low", bar::Tone::Warn)));
+        assert_eq!(b.level, Level::Action);
+        assert_eq!(b.version.as_deref(), Some("alpha 0.2.8"));
+
+        let off = bar::Bar::from_state(&json!({
+            "network": {"online": false, "ports": [{"kind": "wired", "state": "waiting"}]},
+            "archive": {"state": "locked"}
+        }));
+        assert_eq!(off.net, bar::Net::Waiting);
+        assert_eq!(off.ip, None);
+        assert_eq!(off.battery, None);
+        assert_eq!(off.disk, None);
+        let cable = bar::Bar::from_state(&json!({
+            "network": {"online": true, "address": "10.1.1.1", "ports": [
+                {"kind": "wired", "state": "connected"},
+                {"kind": "wifi", "state": "connected", "ssid": "x"}]},
+            "archive": {"state": "open", "health": "bad"}
+        }));
+        assert_eq!(cable.net, bar::Net::Cable);
+        assert_eq!(cable.ip.as_deref(), Some("10.1.1.1"));
+        assert_eq!(cable.disk, Some(("tray.disk.bad", bar::Tone::Bad)));
+    }
+
+    #[test]
+    fn version_tag_only_for_test_releases() {
+        assert_eq!(
+            bar::version_tag("ALP-OS Live alpha 0.2.7").as_deref(),
+            Some("alpha 0.2.7")
+        );
+        assert_eq!(
+            bar::version_tag("ALP-OS Beta 1.0,").as_deref(),
+            Some("beta 1.0")
+        );
+        assert_eq!(bar::version_tag("ALP-OS 1.0"), None);
+        assert_eq!(bar::version_tag(""), None);
+    }
 
     #[test]
     fn alerts_worst_first_keeping_order() {

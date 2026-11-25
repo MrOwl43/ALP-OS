@@ -25,6 +25,7 @@ use libadwaita::prelude::*;
 use serde_json::{Value, json};
 
 use crate::Msg;
+use crate::style::{self, Tone};
 
 pub enum InstallMsg {
     Disks(Result<Value, ApiError>),
@@ -67,7 +68,7 @@ pub struct InstallUi {
     erase_group: adw::PreferencesGroup,
     erase_rows: RefCell<Vec<adw::ActionRow>>,
     summary: gtk4::Label,
-    warning: gtk4::Label,
+    warning: style::Note,
     slide: gtk4::Scale,
     slide_hint: gtk4::Label,
     go: gtk4::Button,
@@ -86,24 +87,52 @@ fn text(t: &Texts, key: &str, fallback: &str) -> String {
     if s == key { fallback.to_string() } else { s }
 }
 
-fn page_with(page: &adw::PreferencesPage, buttons: &[&gtk4::Widget]) -> gtk4::Box {
+/// An install page: a heading with an icon, the list, and the buttons in a
+/// bar along the bottom.
+fn page_with(
+    head: (&str, Tone, &str),
+    page: &adw::PreferencesPage,
+    buttons: &[&gtk4::Widget],
+) -> gtk4::Box {
     let b = gtk4::Box::builder()
         .orientation(gtk4::Orientation::Vertical)
         .build();
+    let (icon, tone, title) = head;
+    let top = gtk4::Box::builder()
+        .spacing(14)
+        .halign(gtk4::Align::Center)
+        .margin_top(24)
+        .build();
+    top.append(&style::chip(icon, tone, 28));
+    top.append(&style::text(title, &["title-2"], false));
+    b.append(&top);
     page.set_vexpand(true);
     b.append(page);
     let bar = gtk4::Box::builder()
         .spacing(12)
-        .halign(gtk4::Align::End)
-        .margin_top(12)
-        .margin_bottom(24)
-        .margin_end(24)
+        .halign(gtk4::Align::Fill)
+        .css_classes(["footer-bar"])
         .build();
+    let fill = gtk4::Box::builder().hexpand(true).build();
+    bar.append(&fill);
     for w in buttons {
         bar.append(*w);
     }
     b.append(&bar);
     b
+}
+
+/// The icon for a disk: a USB disk or stick, or a disk inside.
+fn disk_icon(usb: bool) -> gtk4::Image {
+    style::chip(
+        if usb {
+            "media-removable-symbolic"
+        } else {
+            "drive-harddisk-symbolic"
+        },
+        if usb { Tone::Violet } else { Tone::Teal },
+        20,
+    )
 }
 
 impl InstallUi {
@@ -140,13 +169,22 @@ impl InstallUi {
             .css_classes(["error"])
             .wrap(true)
             .build();
-        let cancel = gtk4::Button::with_label(&text(t, "common.cancel", "Cancel"));
-        let next = gtk4::Button::builder()
-            .label(text(t, "common.next", "Next"))
-            .css_classes(["suggested-action"])
-            .sensitive(false)
+        let cancel = gtk4::Button::builder()
+            .label(text(t, "common.cancel", "Cancel"))
+            .css_classes(["pill"])
             .build();
+        let next = style::button(
+            "go-next-symbolic",
+            &text(t, "common.next", "Next"),
+            &["suggested-action", "pill"],
+        );
+        next.set_sensitive(false);
         let choose_box = page_with(
+            (
+                "drive-harddisk-symbolic",
+                Tone::Teal,
+                &text(t, "install.open", "Install ALP-OS"),
+            ),
             &choose,
             &[
                 choose_note.upcast_ref(),
@@ -162,16 +200,14 @@ impl InstallUi {
             .build();
         confirm.add(&erase_group);
         let summary = gtk4::Label::builder().wrap(true).xalign(0.0).build();
-        let warning = gtk4::Label::builder()
-            .css_classes(["error", "title-4"])
-            .wrap(true)
-            .xalign(0.0)
-            .label(text(
+        let warning = style::Note::new(
+            "bad",
+            &text(
                 t,
                 "install.erase.files",
                 "Files on these disks will be deleted for good. Copy anything you need first.",
-            ))
-            .build();
+            ),
+        );
         let slide = gtk4::Scale::with_range(gtk4::Orientation::Horizontal, 0.0, 100.0, 1.0);
         slide.set_draw_value(false);
         let slide_hint = gtk4::Label::builder()
@@ -189,7 +225,7 @@ impl InstallUi {
             .spacing(12)
             .build();
         col.append(&summary);
-        col.append(&warning);
+        col.append(&warning.root);
         col.append(&slide);
         col.append(&slide_hint);
         extra.add(&col);
@@ -198,13 +234,23 @@ impl InstallUi {
             .css_classes(["error"])
             .wrap(true)
             .build();
-        let back = gtk4::Button::with_label(&text(t, "common.back", "Back"));
-        let go = gtk4::Button::builder()
-            .label(text(t, "install.go", "Erase and install"))
-            .css_classes(["destructive-action"])
-            .sensitive(false)
-            .build();
+        let back = style::button(
+            "go-previous-symbolic",
+            &text(t, "common.back", "Back"),
+            &["pill"],
+        );
+        let go = style::button(
+            "edit-delete-symbolic",
+            &text(t, "install.go", "Erase and install"),
+            &["destructive-action", "pill"],
+        );
+        go.set_sensitive(false);
         let confirm_box = page_with(
+            (
+                "dialog-warning-symbolic",
+                Tone::Warn,
+                &text(t, "install.check", "Check before erasing"),
+            ),
             &confirm,
             &[
                 confirm_note.upcast_ref(),
@@ -215,29 +261,27 @@ impl InstallUi {
 
         // Progress.
         let bar = gtk4::ProgressBar::builder().show_text(true).build();
-        let step = gtk4::Label::builder().wrap(true).build();
+        let step = style::text("", &["lead"], true);
         let done = gtk4::Button::builder()
             .css_classes(["pill", "suggested-action"])
             .visible(false)
             .halign(gtk4::Align::Center)
             .build();
-        let progress = gtk4::Box::builder()
-            .orientation(gtk4::Orientation::Vertical)
-            .spacing(18)
-            .valign(gtk4::Align::Center)
-            .margin_start(96)
-            .margin_end(96)
-            .build();
-        progress.append(
-            &gtk4::Label::builder()
-                .label(text(t, "install.progress.title", "Installing ALP-OS"))
-                .css_classes(["title-1"])
-                .build(),
-        );
-        progress.append(&bar);
-        progress.append(&step);
-        progress.append(&done);
-
+        let progress = style::scroll(&style::panel(
+            &[
+                style::hero("drive-harddisk-symbolic", Tone::Teal).upcast_ref(),
+                style::text(
+                    &text(t, "install.progress.title", "Installing ALP-OS"),
+                    &["title-1"],
+                    true,
+                )
+                .upcast_ref(),
+                bar.upcast_ref(),
+                step.upcast_ref(),
+                done.upcast_ref(),
+            ],
+            600,
+        ));
         stack.add_named(&choose_box, Some("install"));
         stack.add_named(&confirm_box, Some("install-confirm"));
         stack.add_named(&progress, Some("install-progress"));
@@ -418,6 +462,7 @@ impl InstallUi {
                     None => subtitle(d),
                 })
                 .build();
+            row.add_prefix(&disk_icon(d.usb));
             if d.can_be_system {
                 let c = radio(&row, &first);
                 first.get_or_insert(c.clone());
@@ -441,6 +486,7 @@ impl InstallUi {
                 "Nothing is installed on this computer. The stick must stay plugged in.",
             ))
             .build();
+        keep.add_prefix(&style::chip("media-removable-symbolic", Tone::Blue, 20));
         let c = radio(&keep, &first);
         let u = self.clone();
         c.connect_toggled(move |c| {
@@ -458,6 +504,7 @@ impl InstallUi {
                 .subtitle(subtitle(d))
                 .build();
             let c = gtk4::CheckButton::new();
+            row.add_prefix(&disk_icon(d.usb));
             row.add_prefix(&c);
             row.set_activatable_widget(Some(&c));
             let (u, name) = (self.clone(), d.name.clone());
@@ -510,8 +557,11 @@ impl InstallUi {
                 ))
                 .subtitle(what)
                 .build();
-            if !contents.is_empty() {
-                row.add_css_class("error");
+            if contents.is_empty() {
+                row.add_prefix(&style::chip("drive-harddisk-symbolic", Tone::Teal, 20));
+            } else {
+                row.add_css_class("danger-row");
+                row.add_prefix(&style::chip("dialog-warning-symbolic", Tone::Bad, 20));
             }
             self.erase_group.add(&row);
             rows.push(row);
@@ -542,7 +592,7 @@ impl InstallUi {
         // Files on a disk: the strong warning and the slide. Blank disks:
         // the button alone.
         let strong = p.strong_warning;
-        self.warning.set_visible(strong);
+        self.warning.root.set_visible(strong);
         self.slide.set_visible(strong);
         self.slide_hint.set_visible(strong);
         self.slide.set_value(0.0);
