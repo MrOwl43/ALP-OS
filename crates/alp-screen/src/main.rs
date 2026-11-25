@@ -10,6 +10,8 @@ mod gallery;
 mod install;
 mod pairing;
 mod setup;
+mod style;
+mod topbar;
 
 use alp_screen::api::{ApiError, Client};
 use alp_screen::i18n::{self, Texts};
@@ -19,12 +21,14 @@ use gtk4::{gio, glib};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use serde_json::{Value, json};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Duration;
+
+use style::Tone;
 
 const APP_ID: &str = "org.alparchive.Screen";
 /// How often the state is read (the web console uses the same pace).
@@ -43,14 +47,14 @@ enum Msg {
 struct Ui {
     texts: Rc<Texts>,
     stack: gtk4::Stack,
-    status: gtk4::Label,
-    password: gtk4::PasswordEntry,
-    sign_in: gtk4::Button,
-    error: gtk4::Label,
-    home_title: gtk4::Label,
-    home_line: gtk4::Label,
-    install_btn: gtk4::Button,
-    photos_btn: gtk4::Button,
+    bar: topbar::TopBar,
+    /// The last state for the top bar, and whether the console is open and
+    /// on a first-start page (the bar is drawn again on every page change).
+    last_bar: RefCell<Option<model::bar::Bar>>,
+    open: Cell<bool>,
+    in_setup: Cell<bool>,
+    lock: LockUi,
+    home: HomeUi,
     gallery_url: RefCell<Option<String>>,
     gallery: Rc<gallery::GalleryUi>,
     tiles: HomeTiles,
@@ -58,6 +62,26 @@ struct Ui {
     pair: Rc<pairing::PairUi>,
     setup: Rc<setup::SetupUi>,
     set: SettingsUi,
+}
+
+/// The sign-in page's changing parts.
+struct LockUi {
+    clock: gtk4::Label,
+    date: gtk4::Label,
+    status: gtk4::Label,
+    badge: gtk4::Image,
+    password: gtk4::PasswordEntry,
+    sign_in: gtk4::Button,
+    error: style::Note,
+}
+
+/// The home page's changing parts.
+struct HomeUi {
+    badge: gtk4::Image,
+    title: gtk4::Label,
+    line: gtk4::Label,
+    install_btn: gtk4::Button,
+    photos_btn: gtk4::Button,
 }
 
 /// The settings page's changing parts.
@@ -70,7 +94,7 @@ struct SettingsUi {
     connect_phone: gtk4::Button,
     phone_rows: RefCell<Vec<adw::ActionRow>>,
     last: RefCell<Settings>,
-    note: gtk4::Label,
+    note: style::Note,
 }
 
 fn main() -> glib::ExitCode {
@@ -80,6 +104,74 @@ fn main() -> glib::ExitCode {
         .build();
     app.connect_activate(build);
     app.run_with_args::<&str>(&[])
+}
+
+/// The sign-in page, like a computer's login screen: the time large, a
+/// round picture, the name, the status, and the password field with its
+/// arrow, straight on the wallpaper.
+fn lock_page(texts: &Texts) -> (gtk4::ScrolledWindow, LockUi) {
+    let clock = gtk4::Label::builder().css_classes(["clock-big"]).build();
+    let date = gtk4::Label::builder().css_classes(["date-line"]).build();
+    let badge = style::icon("system-lock-screen-symbolic", 48);
+    badge.add_css_class("avatar");
+    badge.set_halign(gtk4::Align::Center);
+    badge.set_margin_top(48);
+    let user = gtk4::Label::builder()
+        .label(texts.t("lock.user"))
+        .css_classes(["login-name"])
+        .build();
+    let status = style::text("", &["login-status"], true);
+    let password = gtk4::PasswordEntry::builder()
+        .show_peek_icon(true)
+        .hexpand(true)
+        .placeholder_text(texts.t("pw.label"))
+        .css_classes(["login-field"])
+        .build();
+    password.update_property(&[gtk4::accessible::Property::Label(&texts.t("pw.label"))]);
+    let sign_in = gtk4::Button::builder()
+        .icon_name("go-next-symbolic")
+        .css_classes(["suggested-action", "login-go"])
+        .valign(gtk4::Align::Center)
+        .build();
+    style::name(&sign_in, &texts.t("lock.signin"));
+    let row = gtk4::Box::builder().spacing(8).margin_top(8).build();
+    row.append(&password);
+    row.append(&sign_in);
+    let error = style::Note::new("bad", "");
+    let col = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .spacing(10)
+        .build();
+    for w in [
+        clock.upcast_ref::<gtk4::Widget>(),
+        date.upcast_ref(),
+        badge.upcast_ref(),
+        user.upcast_ref(),
+        status.upcast_ref(),
+        row.upcast_ref(),
+        error.root.upcast_ref(),
+    ] {
+        col.append(w);
+    }
+    let clamp = adw::Clamp::builder()
+        .maximum_size(340)
+        .tightening_threshold(340)
+        .child(&col)
+        .valign(gtk4::Align::Center)
+        .margin_top(24)
+        .margin_bottom(24)
+        .build();
+    let page = style::scroll(&clamp);
+    let ui = LockUi {
+        clock,
+        date,
+        status,
+        badge,
+        password,
+        sign_in,
+        error,
+    };
+    (page, ui)
 }
 
 fn build(app: &adw::Application) {
@@ -92,73 +184,59 @@ fn build(app: &adw::Application) {
     {
         st.set_gtk_xft_dpi(96 * 1024);
     }
+    style::install(&style::Theme::DEFAULT);
     let texts = Rc::new(Texts::load(Path::new(i18n::DIR), "en"));
     let client = Arc::new(Client::default());
     let (tx, rx) = mpsc::channel::<Msg>();
 
-    // Sign-in page.
-    let status = gtk4::Label::builder()
-        .css_classes(["title-1"])
-        .wrap(true)
-        .build();
-    let password = gtk4::PasswordEntry::builder()
-        .show_peek_icon(true)
-        .width_chars(28)
-        .build();
-    let sign_in = gtk4::Button::builder()
-        .label(texts.t("lock.signin"))
-        .css_classes(["suggested-action", "pill"])
-        .build();
-    let error = gtk4::Label::builder()
-        .css_classes(["error"])
-        .wrap(true)
-        .build();
-    let lock_page = column(&[
-        gtk4::Label::builder()
-            .label(texts.t("lock.user"))
-            .css_classes(["title-2"])
-            .build()
-            .upcast(),
-        status.clone().upcast(),
-        password.clone().upcast(),
-        sign_in.clone().upcast(),
-        error.clone().upcast(),
-    ]);
+    let (lock_page, lock) = lock_page(&texts);
 
     // Home page.
-    let home_title = gtk4::Label::builder()
-        .css_classes(["title-1"])
-        .wrap(true)
-        .build();
-    let home_line = gtk4::Label::builder().wrap(true).build();
-    let lock_btn = gtk4::Button::builder()
-        .label(texts.t("home.lock"))
-        .css_classes(["pill"])
-        .build();
-    let settings_btn = gtk4::Button::builder()
-        .label(texts.t("home.settings"))
-        .css_classes(["pill"])
-        .build();
-    let install_btn = gtk4::Button::builder()
-        .label(texts.t("install.open"))
-        .css_classes(["suggested-action", "pill"])
-        .visible(false)
-        .build();
-    let photos_btn = gtk4::Button::builder()
-        .label(texts.t("home.gallery"))
-        .css_classes(["suggested-action", "pill"])
-        .visible(false)
-        .build();
+    let home = HomeUi {
+        badge: style::hero("emblem-ok-symbolic", Tone::Ok),
+        title: style::text("", &["title-1"], false),
+        line: style::text("", &["lead"], false),
+        install_btn: style::button(
+            "drive-harddisk-symbolic",
+            &texts.t("install.open"),
+            &["suggested-action", "pill"],
+        ),
+        photos_btn: style::button(
+            "image-x-generic-symbolic",
+            &texts.t("home.gallery"),
+            &["suggested-action", "pill"],
+        ),
+    };
+    home.install_btn.set_visible(false);
+    home.photos_btn.set_visible(false);
+    let lock_btn = style::button(
+        "system-lock-screen-symbolic",
+        &texts.t("home.lock"),
+        &["pill"],
+    );
+    let settings_btn = style::button(
+        "emblem-system-symbolic",
+        &texts.t("home.settings"),
+        &["pill"],
+    );
     let tiles = HomeTiles::new(&texts);
     let home_page = home_layout(
-        &home_title,
-        &home_line,
-        &[&photos_btn, &install_btn, &settings_btn, &lock_btn],
+        &home,
+        &[
+            &home.photos_btn,
+            &home.install_btn,
+            &settings_btn,
+            &lock_btn,
+        ],
         &tiles,
     );
 
-    let stack = gtk4::Stack::new();
-    let (settings_page, set, back) = settings_page(&texts, &client, &tx);
+    let stack = gtk4::Stack::builder()
+        .transition_type(gtk4::StackTransitionType::Crossfade)
+        .transition_duration(150)
+        .vexpand(true)
+        .build();
+    let (settings_page, set) = settings_page(&texts, &client, &tx);
     let inst = install::InstallUi::new(texts.clone(), client.clone(), tx.clone(), &stack);
     let pair = pairing::PairUi::new(texts.clone(), client.clone(), tx.clone(), &stack);
     {
@@ -174,40 +252,26 @@ fn build(app: &adw::Application) {
     stack.add_named(&lock_page, Some("lock"));
     stack.add_named(&home_page, Some("home"));
     stack.add_named(&settings_page, Some("settings"));
-    let gallery_back = gtk4::Button::builder()
-        .label(texts.t("common.back"))
-        .css_classes(["pill"])
-        .build();
-    let gallery = gallery::GalleryUi::new(&gallery_back);
+    let gallery = gallery::GalleryUi::new();
     stack.add_named(&gallery.page, Some("gallery"));
     // Start on the sign-in page: the install, setup and pairing pages were
     // added first, and a stack shows its first page.
     stack.set_visible_child_name("lock");
     {
-        let (st, g) = (stack.clone(), gallery.clone());
-        gallery_back.connect_clicked(move |_| {
-            g.close();
-            st.set_visible_child_name("home");
-        });
-    }
-    {
         let st = stack.clone();
         settings_btn.connect_clicked(move |_| st.set_visible_child_name("settings"));
-        let st = stack.clone();
-        back.connect_clicked(move |_| st.set_visible_child_name("home"));
     }
 
+    let bar = topbar::TopBar::new(&texts);
     let ui = Rc::new(Ui {
         texts,
         stack: stack.clone(),
-        status,
-        password,
-        sign_in,
-        error,
-        home_title,
-        home_line,
-        install_btn: install_btn.clone(),
-        photos_btn: photos_btn.clone(),
+        bar,
+        last_bar: RefCell::new(None),
+        open: Cell::new(false),
+        in_setup: Cell::new(false),
+        lock,
+        home,
         gallery_url: RefCell::new(None),
         gallery: gallery.clone(),
         tiles,
@@ -216,10 +280,54 @@ fn build(app: &adw::Application) {
         setup: setup_ui,
         set,
     });
-    install_btn.connect_clicked(move |_| inst.open());
+    ui.home.install_btn.connect_clicked(move |_| inst.open());
+    {
+        let u = ui.clone();
+        ui.bar.home.connect_clicked(move |_| {
+            u.gallery.close();
+            u.stack.set_visible_child_name("home");
+        });
+        let u = ui.clone();
+        ui.bar.settings.connect_clicked(move |_| {
+            u.gallery.close();
+            u.stack.set_visible_child_name("settings");
+        });
+        let u = ui.clone();
+        stack.connect_visible_child_name_notify(move |_| redraw_bar(&u));
+    }
+    {
+        let (client, tx) = (client.clone(), tx.clone());
+        let power = move |restart: bool| {
+            let (client, tx) = (client.clone(), tx.clone());
+            std::thread::spawn(move || {
+                let _ = tx.send(Msg::Done(
+                    client.post("live/power/off", &json!({"restart": restart})),
+                ));
+            });
+        };
+        let t = ui.texts.clone();
+        ui.bar.power.connect_clicked(move |b| {
+            let d = adw::AlertDialog::new(Some(&t.t("power.title")), Some(&t.t("power.sub")));
+            d.add_responses(&[
+                ("cancel", &t.t("common.cancel")),
+                ("restart", &t.t("power.restart.yes")),
+                ("off", &t.t("power.yes")),
+            ]);
+            d.set_response_appearance("off", adw::ResponseAppearance::Destructive);
+            d.set_default_response(Some("cancel"));
+            d.set_close_response("cancel");
+            let power = power.clone();
+            d.connect_response(None, move |_, r| match r {
+                "restart" => power(true),
+                "off" => power(false),
+                _ => {}
+            });
+            d.present(Some(b));
+        });
+    }
     {
         let (u, client) = (ui.clone(), client.clone());
-        photos_btn.connect_clicked(move |_| {
+        ui.home.photos_btn.connect_clicked(move |_| {
             if let Some(url) = u.gallery_url.borrow().clone() {
                 u.gallery.open(&url, &client);
                 u.stack.set_visible_child_name("gallery");
@@ -246,7 +354,7 @@ fn build(app: &adw::Application) {
     {
         let (u, client, tx) = (ui.clone(), client.clone(), tx.clone());
         let send = move || {
-            let ui = &u;
+            let ui = &u.lock;
             let pw = zeroize::Zeroizing::new(ui.password.text().to_string());
             ui.password.set_text("");
             ui.sign_in.set_sensitive(false);
@@ -258,8 +366,8 @@ fn build(app: &adw::Application) {
         };
         let send = Rc::new(send);
         let s2 = send.clone();
-        ui.sign_in.connect_clicked(move |_| send());
-        ui.password.connect_activate(move |_| s2());
+        ui.lock.sign_in.connect_clicked(move |_| send());
+        ui.lock.password.connect_activate(move |_| s2());
     }
     {
         let (client, tx) = (client.clone(), tx.clone());
@@ -297,39 +405,76 @@ fn build(app: &adw::Application) {
         });
     }
 
+    // The top bar above every page.
+    let shell = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .build();
+    shell.append(&ui.bar.root);
+    shell.append(&stack);
     let win = adw::ApplicationWindow::builder()
         .application(app)
-        .content(&stack)
+        .content(&shell)
         .default_width(1280)
         .default_height(800)
+        .css_classes(["alp"])
         .build();
     win.fullscreen();
     win.present();
+}
+
+/// Draws the top bar for the page now showing.
+fn redraw_bar(ui: &Ui) {
+    if let Some(b) = ui.last_bar.borrow().as_ref() {
+        let page = ui.stack.visible_child_name().unwrap_or_default();
+        ui.bar
+            .show(&ui.texts, b, &page, ui.open.get(), ui.in_setup.get());
+    }
+}
+
+/// The lock page's clock and date (local time).
+fn show_time(ui: &LockUi) {
+    if let Ok(now) = glib::DateTime::now_local() {
+        if let Ok(s) = now.format("%H:%M") {
+            ui.clock.set_label(&s);
+        }
+        if let Ok(s) = now.format("%A, %e %B") {
+            ui.date.set_label(s.replace("  ", " ").trim());
+        }
+    }
 }
 
 fn handle(ui: &Ui, m: Msg) {
     match m {
         Msg::State(Ok(w)) => {
             let s = Screen::from_state(&w);
+            *ui.last_bar.borrow_mut() = Some(model::bar::Bar::from_state(&w));
+            ui.open.set(s.open);
+            show_time(&ui.lock);
             // First start of the installed system: its pages come first.
-            if ui.setup.show(model::setup::step(&w).as_ref()) {
+            let in_setup = ui.setup.show(model::setup::step(&w).as_ref());
+            ui.in_setup.set(in_setup);
+            if in_setup {
                 if s.open {
                     ui.pair.show_pending(&model::pairing::pending(&w));
                 }
+                redraw_bar(ui);
                 return;
             }
             if s.open {
                 let (title, line) = s.home_keys();
-                ui.home_title.set_label(&ui.texts.t(title));
-                ui.home_line.set_label(&match (&s.message, line) {
+                ui.home.title.set_label(&ui.texts.t(title));
+                ui.home.line.set_label(&match (&s.message, line) {
                     (Some(m), _) if s.level.needs_user() => m.clone(),
                     (_, Some(k)) => ui.texts.t(k),
                     _ => String::new(),
                 });
+                let (icon, tone) = level_look(s.level);
+                ui.home.badge.set_icon_name(Some(icon));
+                tone.apply(&ui.home.badge);
                 ui.tiles
                     .show(&ui.texts, &model::home::Tiles::from_state(&w));
                 let url = model::gallery::url(&w);
-                ui.photos_btn.set_visible(url.is_some());
+                ui.home.photos_btn.set_visible(url.is_some());
                 if url.is_none() && ui.stack.visible_child_name().as_deref() == Some("gallery") {
                     ui.gallery.close();
                     ui.stack.set_visible_child_name("home");
@@ -338,7 +483,7 @@ fn handle(ui: &Ui, m: Msg) {
                 ui.pair.show_pending(&model::pairing::pending(&w));
                 show_settings(&ui.set, &ui.texts, &Settings::from_state(&w));
                 let (can_install, job) = model::install::state(&w);
-                ui.install_btn.set_visible(can_install);
+                ui.home.install_btn.set_visible(can_install);
                 ui.inst.show_job(&job);
                 if ui.stack.visible_child_name().as_deref() == Some("lock") {
                     ui.stack.set_visible_child_name("home");
@@ -349,30 +494,42 @@ fn handle(ui: &Ui, m: Msg) {
                 } else {
                     "lock.msg.ok"
                 };
-                ui.status.set_label(&ui.texts.t(key));
+                ui.lock.status.set_label(&ui.texts.t(key));
+                let (icon, tone) = if s.level.needs_user() {
+                    level_look(s.level)
+                } else {
+                    ("system-lock-screen-symbolic", Tone::Blue)
+                };
+                ui.lock.badge.set_icon_name(Some(icon));
+                // The picture stays white on the wallpaper; the words say it.
+                let _ = tone;
                 ui.gallery.close();
                 ui.pair.locked();
-                ui.stack.set_visible_child_name("lock");
+                if ui.stack.visible_child_name().as_deref() != Some("lock") {
+                    ui.stack.set_visible_child_name("lock");
+                    ui.lock.password.grab_focus();
+                }
             }
+            redraw_bar(ui);
         }
         Msg::State(Err(e)) => {
-            ui.status.set_label(&ui.texts.t(&e.key));
+            ui.lock.status.set_label(&ui.texts.t(&e.key));
         }
         Msg::Install(m) => ui.inst.handle(m),
         Msg::Pair(m) => ui.pair.handle(m),
         Msg::Setup(m) => ui.setup.handle(m),
         Msg::Done(r) => {
-            ui.set.note.set_label(&match r {
+            ui.set.note.set(&match r {
                 Ok(_) => String::new(),
                 Err(e) if e.message.is_empty() => ui.texts.t(&e.key),
                 Err(e) => e.message,
             });
         }
         Msg::SignedIn(r) => {
-            ui.sign_in.set_sensitive(true);
+            ui.lock.sign_in.set_sensitive(true);
             match r {
                 Ok(_) => {
-                    ui.error.set_label("");
+                    ui.lock.error.set("");
                     ui.stack.set_visible_child_name("home");
                 }
                 Err(e) => {
@@ -381,19 +538,37 @@ fn handle(ui: &Ui, m: Msg) {
                     } else {
                         e.message
                     };
-                    ui.error.set_label(&text);
+                    ui.lock.error.set(&text);
+                    ui.lock.password.grab_focus();
                 }
             }
         }
     }
 }
 
-/// The settings page: About, date and time, updates, phones, power.
+/// The icon and colour for an overall level (never colour alone).
+fn level_look(level: model::Level) -> (&'static str, Tone) {
+    match model::bar::Tone::of(level) {
+        model::bar::Tone::Ok => ("emblem-ok-symbolic", Tone::Ok),
+        model::bar::Tone::Warn => ("dialog-warning-symbolic", Tone::Warn),
+        model::bar::Tone::Bad => ("dialog-error-symbolic", Tone::Bad),
+    }
+}
+
+/// A settings row with a coloured icon in front.
+fn icon_row(title: &str, icon: &str, tone: Tone) -> adw::ActionRow {
+    let r = adw::ActionRow::builder().title(title).build();
+    r.add_prefix(&style::chip(icon, tone, 20));
+    r
+}
+
+/// The settings page: About, date and time, updates, phones, power. The
+/// way back is the top bar's Home button.
 fn settings_page(
     texts: &Texts,
     client: &Arc<Client>,
     tx: &mpsc::Sender<Msg>,
-) -> (gtk4::Box, SettingsUi, gtk4::Button) {
+) -> (gtk4::Box, SettingsUi) {
     // One alpd action on a worker thread; its answer comes back as Done.
     let act = |path: &'static str, body: Value| {
         let (client, tx) = (client.clone(), tx.clone());
@@ -404,52 +579,62 @@ fn settings_page(
             });
         }
     };
-    let row = |title: &str| adw::ActionRow::builder().title(title).build();
 
     // libadwaita's own settings page: a centred, width-limited column
     // that scrolls when it gets long.
     let page = adw::PreferencesPage::new();
 
-    let about = adw::PreferencesGroup::builder()
-        .title(texts.t("set.h.about"))
+    let connect_phone = style::button(
+        "list-add-symbolic",
+        &texts.t("phone.title"),
+        &["suggested-action"],
+    );
+    connect_phone.set_valign(gtk4::Align::Center);
+    let phones = adw::PreferencesGroup::builder()
+        .title(texts.t("set.h.phones"))
+        .header_suffix(&connect_phone)
         .build();
-    let version = row(&texts.t("about.version"));
-    about.add(&version);
-    page.add(&about);
+    page.add(&phones);
 
     let computer = adw::PreferencesGroup::builder()
         .title(texts.t("set.h.computer"))
         .build();
-    let clock = row(&texts.t("set.clock"));
-    let sync = gtk4::Button::builder()
-        .label(texts.t("set.sync"))
-        .valign(gtk4::Align::Center)
-        .build();
+    let clock = icon_row(
+        &texts.t("set.clock"),
+        "preferences-system-time-symbolic",
+        Tone::Teal,
+    );
+    let sync = style::button("view-refresh-symbolic", &texts.t("set.sync"), &[]);
+    sync.set_valign(gtk4::Align::Center);
     let f = act("live/clock/sync", json!({}));
     sync.connect_clicked(move |_| f());
     clock.add_suffix(&sync);
     computer.add(&clock);
-    let update = row(&texts.t("upd.title"));
-    let update_btn = gtk4::Button::builder().valign(gtk4::Align::Center).build();
+    let update = icon_row(
+        &texts.t("upd.title"),
+        "software-update-available-symbolic",
+        Tone::Ok,
+    );
+    let update_btn = style::button("emblem-synchronizing-symbolic", "", &[]);
+    update_btn.set_valign(gtk4::Align::Center);
     update.add_suffix(&update_btn);
     computer.add(&update);
-    let restart = gtk4::Button::builder()
-        .label(texts.t("power.restart.yes"))
-        .valign(gtk4::Align::Center)
-        .build();
-    let off = gtk4::Button::builder()
-        .label(texts.t("power.yes"))
-        .css_classes(["destructive-action"])
-        .valign(gtk4::Align::Center)
-        .build();
-    let power = gtk4::Box::builder()
-        .spacing(12)
-        .halign(gtk4::Align::End)
-        .margin_top(12)
-        .build();
-    power.append(&restart);
-    power.append(&off);
-    computer.add(&power);
+    let power_row = icon_row(
+        &texts.t("tray.power"),
+        "system-shutdown-symbolic",
+        Tone::Warn,
+    );
+    let restart = style::button("system-reboot-symbolic", &texts.t("power.restart.yes"), &[]);
+    let off = style::button(
+        "system-shutdown-symbolic",
+        &texts.t("power.yes"),
+        &["destructive-action"],
+    );
+    for b in [&restart, &off] {
+        b.set_valign(gtk4::Align::Center);
+        power_row.add_suffix(b);
+    }
+    computer.add(&power_row);
     page.add(&computer);
     confirm(
         &restart,
@@ -466,33 +651,35 @@ fn settings_page(
         act("live/power/off", json!({"restart": false})),
     );
 
-    let connect_phone = gtk4::Button::builder()
-        .label(texts.t("phone.title"))
-        .css_classes(["suggested-action"])
-        .valign(gtk4::Align::Center)
+    let about = adw::PreferencesGroup::builder()
+        .title(texts.t("set.h.about"))
         .build();
-    let phones = adw::PreferencesGroup::builder()
-        .title(texts.t("set.h.phones"))
-        .header_suffix(&connect_phone)
-        .build();
-    page.add(&phones);
+    let version = icon_row(&texts.t("about.version"), "help-about-symbolic", Tone::Blue);
+    about.add(&version);
+    page.add(&about);
 
-    let back = gtk4::Button::builder()
-        .label(texts.t("common.back"))
-        .halign(gtk4::Align::Start)
-        .build();
-    let note = gtk4::Label::builder()
-        .css_classes(["error"])
-        .wrap(true)
-        .build();
+    let note = style::Note::new("bad", "");
+    note.root.set_margin_start(24);
+    note.root.set_margin_end(24);
+    note.root.set_margin_top(12);
     let b = gtk4::Box::builder()
         .orientation(gtk4::Orientation::Vertical)
-        .spacing(12)
         .build();
-    b.append(&back);
-    b.append(&note);
+    b.append(&note.root);
     page.set_vexpand(true);
     b.append(&page);
+    // Settings in a light window over the wallpaper.
+    let title = style::text(
+        &texts.t("home.settings"),
+        &["title-2", "window-title"],
+        false,
+    );
+    b.prepend(&title);
+    let outer = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .build();
+    outer.append(&style::window(&b, 760));
+    let b = outer;
     let ui = SettingsUi {
         version,
         clock,
@@ -504,7 +691,7 @@ fn settings_page(
         last: RefCell::new(Settings::default()),
         note,
     };
-    (b, ui, back)
+    (b, ui)
 }
 
 /// Asks before switching off or restarting; [yes] runs only after "yes".
@@ -546,12 +733,11 @@ fn show_settings(ui: &SettingsUi, texts: &Texts, s: &Settings) {
     ui.update.set_visible(s.update_supported);
     ui.update
         .set_subtitle(s.update_current.as_deref().unwrap_or_default());
-    match &s.update_newer {
-        Some(v) => ui
-            .update_btn
-            .set_label(&texts.fill("upd.install", &[("v", v)])),
-        None => ui.update_btn.set_label(&texts.t("upd.check")),
-    }
+    let label = match &s.update_newer {
+        Some(v) => texts.fill("upd.install", &[("v", v)]),
+        None => texts.t("upd.check"),
+    };
+    style::set_button_text(&ui.update_btn, &label);
     if ui.last.borrow().devices != s.devices {
         for r in ui.phone_rows.borrow_mut().drain(..) {
             ui.phones.remove(&r);
@@ -561,6 +747,7 @@ fn show_settings(ui: &SettingsUi, texts: &Texts, s: &Settings) {
                 .title(name.as_str())
                 .subtitle(model.as_str())
                 .build();
+            r.add_prefix(&style::chip("phone-symbolic", Tone::Violet, 20));
             ui.phones.add(&r);
             ui.phone_rows.borrow_mut().push(r);
         }
@@ -568,59 +755,80 @@ fn show_settings(ui: &SettingsUi, texts: &Texts, s: &Settings) {
     *ui.last.borrow_mut() = s.clone();
 }
 
-/// One home tile: a small label, a value, an optional note under it.
+/// One home tile: a coloured icon, a small label, a value, a note.
 struct Tile {
     frame: gtk4::Box,
+    chip: gtk4::Image,
     value: gtk4::Label,
     note: gtk4::Label,
+    tone: Tone,
 }
 
 impl Tile {
-    fn new(key: &str, big: bool) -> Self {
+    fn new(key: &str, icon: &str, tone: Tone, big: bool) -> Self {
         let frame = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Vertical)
-            .spacing(6)
             .css_classes(["card"])
             .build();
+        if big {
+            frame.add_css_class("tile-photos");
+        }
+        // Big tile: icon above the number. Small tiles: icon beside the
+        // words, so three rows fit a 768-pixel-high screen.
         let inner = gtk4::Box::builder()
-            .orientation(gtk4::Orientation::Vertical)
-            .spacing(6)
-            .margin_top(20)
-            .margin_bottom(20)
-            .margin_start(24)
-            .margin_end(24)
-            .valign(if big {
-                gtk4::Align::Center
+            .orientation(if big {
+                gtk4::Orientation::Vertical
             } else {
-                gtk4::Align::Start
+                gtk4::Orientation::Horizontal
             })
+            .spacing(if big { 4 } else { 16 })
+            .margin_top(18)
+            .margin_bottom(18)
+            .margin_start(22)
+            .margin_end(22)
+            .valign(gtk4::Align::Center)
             .vexpand(true)
             .build();
-        let label = |text: &str, classes: &[&str]| {
-            gtk4::Label::builder()
-                .label(text)
-                .xalign(0.0)
-                .wrap(true)
-                .css_classes(classes.to_vec())
-                .build()
-        };
-        let value = label("", &[if big { "title-1" } else { "title-3" }]);
-        let note = label("", &["dim-label"]);
-        inner.append(&label(key, &["dim-label", "heading"]));
-        inner.append(&value);
-        inner.append(&note);
+        let chip = style::chip(icon, tone, if big { 32 } else { 24 });
+        chip.set_valign(if big {
+            gtk4::Align::Center
+        } else {
+            gtk4::Align::Start
+        });
+        chip.set_margin_bottom(if big { 12 } else { 0 });
+        let value = style::text("", &[if big { "big-number" } else { "title-3" }], false);
+        let note = style::text("", &["dim-label"], false);
+        let words = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Vertical)
+            .spacing(4)
+            .hexpand(true)
+            .build();
+        words.append(&style::text(key, &["caption-up"], false));
+        words.append(&value);
+        words.append(&note);
+        inner.append(&chip);
+        inner.append(&words);
         frame.append(&inner);
-        Tile { frame, value, note }
+        Tile {
+            frame,
+            chip,
+            value,
+            note,
+            tone,
+        }
     }
 
+    /// `alarm`: the value needs a look (amber, with a warning icon).
     fn set(&self, value: &str, note: &str, alarm: bool) {
         self.value.set_label(value);
         self.note.set_label(note);
         self.note.set_visible(!note.is_empty());
         if alarm {
             self.value.add_css_class("warning");
+            Tone::Warn.apply(&self.chip);
         } else {
             self.value.remove_css_class("warning");
+            self.tone.apply(&self.chip);
         }
     }
 }
@@ -645,11 +853,36 @@ impl HomeTiles {
             .row_homogeneous(true)
             .vexpand(true)
             .build();
-        let photos = Tile::new(&texts.t("status.photos"), true);
-        let room = Tile::new(&texts.t("status.room"), false);
-        let phones = Tile::new(&texts.t("status.phones"), false);
-        let health = Tile::new(&texts.t("lock.health"), false);
-        let kept = Tile::new(&texts.t("status.kept"), false);
+        let photos = Tile::new(
+            &texts.t("status.photos"),
+            "image-x-generic-symbolic",
+            Tone::Blue,
+            true,
+        );
+        let room = Tile::new(
+            &texts.t("status.room"),
+            "drive-harddisk-symbolic",
+            Tone::Ok,
+            false,
+        );
+        let phones = Tile::new(
+            &texts.t("status.phones"),
+            "phone-symbolic",
+            Tone::Violet,
+            false,
+        );
+        let health = Tile::new(
+            &texts.t("lock.health"),
+            "emblem-ok-symbolic",
+            Tone::Ok,
+            false,
+        );
+        let kept = Tile::new(
+            &texts.t("status.kept"),
+            "channel-secure-symbolic",
+            Tone::Teal,
+            false,
+        );
         grid.attach(&photos.frame, 0, 0, 2, 2);
         grid.attach(&room.frame, 2, 0, 1, 1);
         grid.attach(&phones.frame, 2, 1, 1, 1);
@@ -691,11 +924,14 @@ impl HomeTiles {
             .map(|w| texts.fill("status.last", &[("when", w.trim())]))
             .unwrap_or_default();
         self.phones.set(&phones, &last, false);
-        self.health.set(
-            &texts.t(&format!("health.{}", t.health)),
-            "",
-            t.health != "ok",
-        );
+        let bad = t.health != "ok";
+        self.health
+            .set(&texts.t(&format!("health.{}", t.health)), "", bad);
+        self.health.chip.set_icon_name(Some(if bad {
+            "dialog-warning-symbolic"
+        } else {
+            "emblem-ok-symbolic"
+        }));
         self.kept.set(
             t.place.as_deref().unwrap_or("–"),
             &texts.t("home.kept.note"),
@@ -704,64 +940,60 @@ impl HomeTiles {
     }
 }
 
-/// The home page: the headline and the buttons on top, the tiles below,
-/// using the whole screen instead of a narrow middle column.
+/// The home page: the status badge, headline and buttons on top, the
+/// tiles below, using the whole screen instead of a narrow middle column.
 fn home_layout(
-    title: &gtk4::Label,
-    line: &gtk4::Label,
+    home: &HomeUi,
     buttons: &[&gtk4::Button],
     tiles: &HomeTiles,
-) -> adw::Clamp {
-    title.set_xalign(0.0);
-    line.set_xalign(0.0);
+) -> gtk4::ScrolledWindow {
     let words = gtk4::Box::builder()
         .orientation(gtk4::Orientation::Vertical)
-        .spacing(8)
+        .spacing(4)
         .hexpand(true)
         .valign(gtk4::Align::Center)
         .build();
-    words.append(title);
-    words.append(line);
+    words.append(&home.title);
+    words.append(&home.line);
+    // The buttons under the headline, so a long message has the full width.
     let actions = gtk4::Box::builder()
         .orientation(gtk4::Orientation::Horizontal)
         .spacing(12)
-        .valign(gtk4::Align::Center)
+        .margin_top(14)
         .build();
     for b in buttons {
         actions.append(*b);
     }
+    words.append(&actions);
+    home.badge.set_valign(gtk4::Align::Start);
     let top = gtk4::Box::builder()
         .orientation(gtk4::Orientation::Horizontal)
-        .spacing(24)
+        .spacing(20)
         .build();
+    top.append(&home.badge);
     top.append(&words);
-    top.append(&actions);
     let page = gtk4::Box::builder()
         .orientation(gtk4::Orientation::Vertical)
-        .spacing(32)
-        .margin_top(48)
-        .margin_bottom(48)
+        .spacing(24)
+        .margin_top(28)
+        .margin_bottom(32)
         .margin_start(48)
         .margin_end(48)
         .build();
-    page.append(&top);
+    // The headline sits in a light window like the tiles.
+    top.set_margin_top(20);
+    top.set_margin_bottom(20);
+    top.set_margin_start(22);
+    top.set_margin_end(22);
+    let header = gtk4::Box::builder().css_classes(["card"]).build();
+    header.append(&top);
+    page.append(&header);
     page.append(&tiles.grid);
-    adw::Clamp::builder()
-        .maximum_size(1200)
-        .tightening_threshold(1000)
-        .child(&page)
-        .build()
-}
-
-fn column(children: &[gtk4::Widget]) -> gtk4::Box {
-    let b = gtk4::Box::builder()
-        .orientation(gtk4::Orientation::Vertical)
-        .spacing(18)
-        .valign(gtk4::Align::Center)
-        .halign(gtk4::Align::Center)
-        .build();
-    for c in children {
-        b.append(c);
-    }
-    b
+    style::scroll(
+        &adw::Clamp::builder()
+            .maximum_size(1200)
+            .tightening_threshold(1000)
+            .child(&page)
+            .build(),
+    )
 }

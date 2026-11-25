@@ -1032,5 +1032,10 @@
  "set.lockshow.space": "Show free room",
  "set.lockshow.space.d": "How much room is left on the backup disk. A warning when room runs out always shows.",
  "set.lockshow.backup": "Show backup activity",
- "set.lockshow.backup.d": "The number of photos and the time of the last backup."
+ "set.lockshow.backup.d": "The number of photos and the time of the last backup.",
+ "setup.step": "Step {n} of {of}",
+ "setup.pool.title": "Making your archive",
+ "setup.pool.sub": "The disks you chose are locked with a new key. This takes a few minutes; please leave the computer on.",
+ "setup.recovery.keep": "These words are shown only now and never again. Write them on paper, in this order, and keep it away from this computer.",
+ "install.check": "Check before erasing"
 }
