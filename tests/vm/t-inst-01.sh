@@ -3,20 +3,22 @@
 # T-INST-01: one-disk install (plan docs/plans/0.2.8-installer.md, VM tests).
 # CI only. Boots the installer image with two virtual disks, both sparse
 # files in this script's own work directory (never a disk of this machine):
-#   vdb  64 GiB, empty: the install target;
-#   vdc  40 GiB, a fake Windows disk (GPT: ESP with a Windows boot loader
-#        file, Microsoft reserved, NTFS).
-# The guest runs the scripted installer:
+#   64 GiB, empty: the install target (serial ALPTARGET01);
+#   40 GiB, a fake Windows disk (GPT: ESP with a Windows boot loader
+#   file, Microsoft reserved, NTFS; serial ALPWINDOWS01).
+# Kernel names (vda, vdb, ...) follow PCI order and are not fixed, so the
+# guest finds the target by its serial (/dev/disk/by-id/virtio-ALPTARGET01)
+# and the checks match disks by size. The guest runs:
 #   alp-installer list
-#   alp-installer install --system vdb --confirm-erase vdb
+#   alp-installer install --system <target> --confirm-erase <target>
 # Passes when:
 #   - the Windows disk is listed as not usable (holds_windows),
 #   - the Windows disk is bit-for-bit unchanged afterwards,
-#   - the installer reports RESULT ok and vdb holds exactly the partitions of
+#   - the installer reports RESULT ok and the target holds exactly the partitions of
 #     the disk-layout contract: esp, slot 1 filled (alp-os_<version> and its
 #     _verity), slot 2 _empty (root and verity), alp-state, alp-data.
 # Until block 4's pool plan digest exists the installer refuses before any
-# write with ALP-INST-407; the script then checks that vdb is unchanged too
+# write with ALP-INST-407; the script then checks that the target is unchanged too
 # and exits 3 (not ready), not 0.
 # The image must ship /usr/bin/alp-installer, /usr/lib/alp/install-layout and
 # the install-time sysupdate definitions (stream A); without the binary the
@@ -60,7 +62,7 @@ args+=" -drive if=none,id=win,format=raw,file=$windows -device virtio-blk-pci,dr
 
 probe='-/usr/bin/sh -c "test -x /usr/bin/alp-installer && echo INSTALLER=yes || echo INSTALLER=no"
 -/usr/bin/alp-installer list
--/usr/bin/alp-installer install --system vdb --confirm-erase vdb'
+-/usr/bin/sh -c "readlink -f /dev/disk/by-id/virtio-ALPTARGET01 | xargs basename | xargs -I@ /usr/bin/alp-installer install --system @ --confirm-erase @"'
 
 status=0
 out=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe" ALP_PROBE_DELAY=10 ALP_QEMU_ARGS="$args" \
@@ -83,8 +85,8 @@ if grep -q 'INSTALLER=no' <<<"$out"; then
     exit 3
 fi
 
-expect "Windows disk is greyed out" '^DISK vdc .*not usable: holds_windows'
-expect "target disk is offered" '^DISK vdb .*usable \[SystemAndData'
+expect "Windows disk is greyed out" '^DISK vd[a-z] 42949672960 .*not usable: holds_windows'
+expect "target disk is offered" '^DISK vd[a-z] 68719476736 .*usable \[SystemAndData'
 same "Windows disk" "$windows" "$windows_before"
 
 if grep -q '^RESULT ALP-INST-407' <<<"$out"; then
