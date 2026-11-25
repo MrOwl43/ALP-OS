@@ -8,8 +8,10 @@
 //!    `/dev/disk/by-id` name, serial and size as when the user confirmed,
 //!    and the seed must be buildable.
 //! 2. Every device path passed to a program belongs to a disk in the plan's
-//!    erase list (or, keep-running only, the stick's own `alp-state`
-//!    mount); anything else is a safety stop (`ALP-INST-408`).
+//!    erase list; anything else is a safety stop (`ALP-INST-408`). Two
+//!    exceptions, both on the start stick and never written: its ESP,
+//!    mounted read-only to copy the running start file, and (keep-running
+//!    only) its own mounted `alp-state`.
 //! 3. Programs and arguments are fixed lists built here from the plan;
 //!    disk names come from the discovery, never from typed text.
 //! 4. Every step reports progress; every failure stops at once with an
@@ -22,7 +24,7 @@
 use std::collections::BTreeSet;
 
 use alp_core::firstboot::{FirstbootSeed, SEED_FORMAT_VERSION, SeedMember};
-use alp_hw::inspect::blockdev::{Context, Limits, discover};
+use alp_hw::inspect::blockdev::{Context, Limits, PartType, discover};
 use alp_hw::{DiskId, PoolMember, PoolPlan};
 use serde_json::Value;
 
@@ -71,11 +73,18 @@ pub const LSBLK_ID_ARGS: &[&str] = &[
 pub struct ExecConfig {
     /// `image/install-layout/` as shipped in the installer image.
     pub layout_dir: String,
-    /// Install-time systemd-sysupdate transfer definitions (stream A + D
-    /// spike; **VERIFY**).
-    pub sysupdate_definitions: String,
     /// Empty directory the new `alp-state` is mounted on to write the seed.
     pub mount_dir: String,
+    /// Empty directory the new ESP is mounted on.
+    pub esp_dir: String,
+    /// Empty directory the start stick's ESP is mounted on, read-only.
+    pub stick_esp_dir: String,
+    /// The running version (`IMAGE_VERSION` in `/etc/os-release`); names
+    /// the start file on the new ESP.
+    pub image_version: String,
+    /// `roothash=` of the running system (`/proc/cmdline`): picks the
+    /// running start file when the stick has several.
+    pub roothash: Option<String>,
     /// `alp-state` of the running system (keep-running path):
     /// `alp_core::state::STATE_ROOT`.
     pub running_state_root: String,
@@ -93,8 +102,11 @@ impl ExecConfig {
     pub fn image_defaults(boot_disk: Option<String>, limits: Limits) -> Self {
         Self {
             layout_dir: "/usr/lib/alp/install-layout".into(),
-            sysupdate_definitions: "/usr/lib/alp/install-sysupdate.d".into(),
             mount_dir: "/run/alp-installer/state".into(),
+            esp_dir: "/run/alp-installer/esp".into(),
+            stick_esp_dir: "/run/alp-installer/stick-esp".into(),
+            image_version: String::new(),
+            roothash: None,
             running_state_root: alp_core::state::STATE_ROOT.into(),
             boot_disk,
             limits,
@@ -405,7 +417,12 @@ pub fn execute(
                     .flat_map(|l| l.labels().iter().copied())
                     .collect();
                 let labels: Vec<&str> = got.iter().map(|p| p.label.as_str()).collect();
-                if labels != want || got.iter().any(|p| p.partuuid.is_empty()) {
+                let as_wanted = labels.len() == want.len()
+                    && want
+                        .iter()
+                        .zip(&labels)
+                        .all(|(w, l)| label_matches(w, l, &cfg.image_version));
+                if !as_wanted || got.iter().any(|p| p.partuuid.is_empty()) {
                     return Err(x.fail(
                         CODE_PARTITION,
                         format!("{dev}: partitions {labels:?}, expected {want:?}"),
@@ -424,19 +441,25 @@ pub fn execute(
                 }
             }
             Step::CopySystem { disk } => {
-                let dev = x.dev(disk)?;
-                x.say("install.copy", "Copying ALP-OS to the disk…".into());
-                // VERIFY (stream A + D spike): sysupdate --image and the
-                // install-time transfer definitions; bootctl --image.
-                let defs = format!("--definitions={}", cfg.sysupdate_definitions);
-                let image = format!("--image={dev}");
-                x.run(
-                    CODE_COPY,
-                    "/usr/lib/systemd/systemd-sysupdate",
-                    &[defs, image.clone(), "update".into()],
-                    None,
-                )?;
-                x.run(CODE_COPY, "bootctl", &[image, "install".into()], None)?;
+                x.say("install.copy", "Making the disk start ALP-OS…".into());
+                let esp = parts
+                    .iter()
+                    .find(|(d, _)| d == disk)
+                    .and_then(|(_, p)| p.iter().find(|p| p.label == "esp"))
+                    .map(|p| format!("/dev/disk/by-partuuid/{}", p.partuuid))
+                    .ok_or_else(|| x.fail(CODE_COPY, format!("no esp partition on {disk}")))?;
+                let stick_esp = cfg
+                    .boot_disk
+                    .as_deref()
+                    .and_then(|b| fresh.iter().find(|a| a.disk.name == b))
+                    .and_then(|a| {
+                        a.disk.partitions.iter().find(|p| {
+                            matches!(&p.part_type, PartType::Gpt(t) if t.eq_ignore_ascii_case(ESP_TYPE))
+                        })
+                    })
+                    .map(|p| format!("/dev/{}", p.name))
+                    .ok_or_else(|| x.fail(CODE_COPY, "the start stick has no ESP".into()))?;
+                install_start_files(&mut x, &esp, &stick_esp)?;
             }
             Step::UseExistingState { disk, partition } => {
                 x.say("install.state", "Using the USB stick's own storage…".into());
@@ -532,6 +555,131 @@ pub fn execute(
     Ok(())
 }
 
+/// GPT type of the ESP.
+const ESP_TYPE: &str = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B";
+
+/// A label read back after partitioning matches the layout's: `@v` is the
+/// running version, which must be digits and dots.
+fn label_matches(want: &str, got: &str, version: &str) -> bool {
+    if !want.contains("@v") {
+        return want == got;
+    }
+    let ok_version = !version.is_empty() && version.chars().all(|c| c.is_ascii_digit() || c == '.');
+    ok_version && want.replace("@v", version) == got
+}
+
+/// The running start file among the `.efi` files in `dir`: the one whose
+/// command line carries the running `roothash=`; without a root hash, the
+/// only one.
+pub fn pick_uki(
+    dir: &std::path::Path,
+    roothash: Option<&str>,
+) -> Result<std::path::PathBuf, String> {
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .map_err(|e| format!("{}: {e}", dir.display()))?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("efi")) && p.is_file())
+        .collect();
+    files.sort();
+    let found: Vec<std::path::PathBuf> = match roothash {
+        None => files,
+        Some(h) => {
+            let needle = format!("roothash={h}");
+            files
+                .into_iter()
+                .filter(|f| file_contains(f, needle.as_bytes()))
+                .collect()
+        }
+    };
+    match found.as_slice() {
+        [one] => Ok(one.clone()),
+        [] => Err(format!(
+            "no start file for this system in {}",
+            dir.display()
+        )),
+        _ => Err(format!("several start files match in {}", dir.display())),
+    }
+}
+
+/// `needle` occurs in the file (read in pieces; start files are large).
+fn file_contains(path: &std::path::Path, needle: &[u8]) -> bool {
+    use std::io::Read;
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut buf = vec![0u8; 1 << 20];
+    let mut keep = 0usize;
+    loop {
+        let n = match f.read(&mut buf[keep..]) {
+            Ok(0) | Err(_) => return false,
+            Ok(n) => n,
+        };
+        let have = keep + n;
+        if buf[..have].windows(needle.len()).any(|w| w == needle) {
+            return true;
+        }
+        keep = needle.len().saturating_sub(1).min(have);
+        buf.copy_within(have - keep..have, 0);
+    }
+}
+
+/// systemd-boot and the running start file onto the new ESP. The stick's
+/// ESP is mounted read-only only to copy that file. Both are unmounted
+/// again, also after a failure (the first failure is reported).
+fn install_start_files(x: &mut Exec<'_>, esp: &str, stick_esp: &str) -> Result<(), ExecError> {
+    let (dir, src) = (x.cfg.esp_dir.clone(), x.cfg.stick_esp_dir.clone());
+    let version = x.cfg.image_version.clone();
+    if !label_matches("@v", &version, &version) {
+        return Err(x.fail(CODE_COPY, format!("bad running version {version:?}")));
+    }
+    x.run(CODE_COPY, "mkdir", &owned(&["-p", &dir, &src]), None)?;
+    x.run(
+        CODE_COPY,
+        "mount",
+        &owned(&[
+            "-t",
+            "vfat",
+            "-o",
+            "ro,nodev,nosuid,noexec",
+            stick_esp,
+            &src,
+        ]),
+        None,
+    )?;
+    let copied = x
+        .run(CODE_COPY, "mount", &owned(&["-t", "vfat", esp, &dir]), None)
+        .and_then(|_| {
+            let r = (|| {
+                // Firmware entry where the firmware allows it; the fallback
+                // path EFI/BOOT/BOOTX64.EFI is written either way.
+                x.run(
+                    CODE_COPY,
+                    "bootctl",
+                    &owned(&["install", "--graceful", &format!("--esp-path={dir}")]),
+                    None,
+                )?;
+                let uki = pick_uki(
+                    &std::path::Path::new(&src).join("EFI/Linux"),
+                    x.cfg.roothash.as_deref(),
+                )
+                .map_err(|e| x.fail(CODE_COPY, e))?;
+                let target = format!("{dir}/EFI/Linux/alp-os_{version}.efi");
+                x.run(
+                    CODE_COPY,
+                    "install",
+                    &owned(&["-D", "-m", "0644", &uki.to_string_lossy(), &target]),
+                    None,
+                )?;
+                x.run(CODE_COPY, "sync", &owned(&["-f", &target]), None)
+            })();
+            let unmounted = x.run(CODE_COPY, "umount", &owned(&[&dir]), None);
+            r.and(unmounted)
+        });
+    let unmounted = x.run(CODE_COPY, "umount", &owned(&[&src]), None);
+    copied.and(unmounted).map(|_| ())
+}
+
 /// Mount the new `alp-state` (by its partition UUID, read back after
 /// partitioning a disk in the erase list), write the seed, unmount.
 fn write_seed_new_state(x: &mut Exec<'_>, uuid: &str, text: &str) -> Result<(), ExecError> {
@@ -578,10 +726,23 @@ mod tests {
         }
     }
 
+    /// A stick ESP with two start files; the running one carries `abc`.
+    fn stick_esp() -> String {
+        let dir = std::env::temp_dir().join(format!("alp-inst-esp-{}", std::process::id()));
+        let linux = dir.join("EFI/Linux");
+        std::fs::create_dir_all(&linux).unwrap();
+        std::fs::write(linux.join("alp-os-6.12-1.efi"), b"MZ.. roothash=abc ..").unwrap();
+        std::fs::write(linux.join("alp-os_0.2.7.efi"), b"MZ.. roothash=old ..").unwrap();
+        dir.to_string_lossy().into_owned()
+    }
+
     fn cfg() -> ExecConfig {
         let mut c = ExecConfig::image_defaults(Some("sdc".into()), limits());
         c.installer_version = "0.2.8".into();
         c.confirmed_at = "2026-11-24T09:30:00Z".into();
+        c.image_version = "0.2.8".into();
+        c.roothash = Some("abc".into());
+        c.stick_esp_dir = stick_esp();
         c
     }
 
@@ -640,6 +801,8 @@ mod tests {
         ids: String,
         /// Program whose run fails (exit 1).
         fail: Option<&'static str>,
+        /// Only when one of its arguments contains this.
+        fail_arg: Option<&'static str>,
         /// Labels repart produces per disk.
         layout: Vec<(String, Vec<&'static str>)>,
         /// Every new partition reads back with the same UUID.
@@ -658,7 +821,11 @@ mod tests {
                 args.to_vec(),
                 stdin.map(|s| String::from_utf8_lossy(s).into_owned()),
             ));
-            if self.fail == Some(program) {
+            if self.fail == Some(program)
+                && self
+                    .fail_arg
+                    .is_none_or(|f| args.iter().any(|a| a.contains(f)))
+            {
                 return Ok(Output {
                     status: Some(1),
                     stdout: String::new(),
@@ -707,7 +874,14 @@ mod tests {
         }
     }
 
-    const SYSTEM: &[&str] = &["esp", "_empty", "_empty", "_empty", "_empty", "alp-state"];
+    const SYSTEM: &[&str] = &[
+        "esp",
+        "alp-os_0.2.8",
+        "alp-os_0.2.8_verity",
+        "_empty",
+        "_empty",
+        "alp-state",
+    ];
 
     fn mock() -> Mock {
         Mock {
@@ -782,8 +956,14 @@ mod tests {
                 "systemd-repart",
                 "udevadm",
                 "lsblk", // sdd
-                "/usr/lib/systemd/systemd-sysupdate",
+                "mkdir",
+                "mount", // stick ESP, read-only
+                "mount", // new ESP
                 "bootctl",
+                "install", // start file
+                "sync",
+                "umount",
+                "umount",
                 "mkdir",
                 "mount",
                 "install",
@@ -810,14 +990,20 @@ mod tests {
         // Only the three planned disks are ever named.
         for a in device_args(&m) {
             assert!(
-                ["/dev/sda", "/dev/sde", "/dev/sdd", "--image=/dev/sda"].contains(&a.as_str())
+                ["/dev/sda", "/dev/sde", "/dev/sdd", "/dev/sdc1"].contains(&a.as_str())
                     || a.starts_with("/dev/disk/by-partuuid/")
                     || a == "/dev/stdin",
                 "unexpected device argument {a}"
             );
         }
         // The seed goes to the new alp-state, with both members.
-        let (_, args, stdin) = &m.calls[15];
+        let (_, args, _) = &m.calls[12];
+        assert_eq!(args[..4], ["-t", "vfat", "-o", "ro,nodev,nosuid,noexec"]);
+        assert_eq!(args[4], "/dev/sdc1");
+        let (_, args, _) = &m.calls[15];
+        assert!(args[3].ends_with("EFI/Linux/alp-os-6.12-1.efi"), "{args:?}");
+        assert_eq!(args[4], "/run/alp-installer/esp/EFI/Linux/alp-os_0.2.8.efi");
+        let (_, args, stdin) = &m.calls[21];
         assert_eq!(args[..3], ["-m", "0600", "/dev/stdin"]);
         assert_eq!(args[3], "/run/alp-installer/state/firstboot-seed.toml");
         let seed: toml::Table = stdin.as_deref().unwrap().parse().unwrap();
@@ -850,7 +1036,7 @@ mod tests {
         let (r, _) = run_it(&p, &mut m, &TestDigest(true));
         let e = r.unwrap_err();
         assert_eq!((e.code, e.step), (CODE_PARTITION, 1));
-        assert!(!programs(&m).iter().any(|p| p.contains("sysupdate")));
+        assert!(!programs(&m).iter().any(|p| p == "bootctl"));
     }
 
     #[test]
@@ -944,7 +1130,13 @@ mod tests {
         let e = run_it(&p, &mut m, &TestDigest(true)).0.unwrap_err();
         assert_eq!((e.code, e.step), (CODE_COPY, 4));
         assert!(e.detail.contains("boom"));
-        assert_eq!(programs(&m).last().unwrap(), "bootctl");
+        // Nothing after bootctl but unmounting both ESPs.
+        let after: Vec<String> = programs(&m)
+            .into_iter()
+            .skip_while(|p| p != "bootctl")
+            .skip(1)
+            .collect();
+        assert_eq!(after, ["umount", "umount"]);
 
         let mut m = mock();
         m.fail = Some("systemd-repart");
@@ -965,6 +1157,7 @@ mod tests {
         let mut m = mock();
         m.layout[0].1 = SYSTEM.to_vec();
         m.fail = Some("install");
+        m.fail_arg = Some("/dev/stdin");
         let e = run_it(&p, &mut m, &TestDigest(true)).0.unwrap_err();
         assert_eq!((e.code, e.step), (CODE_SEED, 5));
         assert_eq!(programs(&m).last().unwrap(), "umount");
@@ -1024,5 +1217,29 @@ mod tests {
         assert_eq!(ids[1].by_id, "ata-WDC_X_123");
         assert_eq!(ids[1].size_bytes, 4_000_787_030_016);
         assert!(parse_identities("{}").is_err());
+    }
+
+    #[test]
+    fn version_labels_and_start_files() {
+        assert!(label_matches("alp-os_@v", "alp-os_0.2.8", "0.2.8"));
+        assert!(label_matches("esp", "esp", ""));
+        assert!(!label_matches("alp-os_@v", "alp-os_", ""));
+        assert!(!label_matches("alp-os_@v", "alp-os_x", "x"));
+        assert!(!label_matches("alp-os_@v_verity", "alp-os_0.2.8", "0.2.8"));
+        let dir = std::path::PathBuf::from(stick_esp()).join("EFI/Linux");
+        assert!(
+            pick_uki(&dir, Some("abc"))
+                .unwrap()
+                .ends_with("alp-os-6.12-1.efi")
+        );
+        assert!(pick_uki(&dir, Some("zzz")).is_err());
+        assert!(pick_uki(&dir, None).is_err(), "two files, no root hash");
+        // A needle across the 1 MiB read boundary is still found.
+        let big = dir.parent().unwrap().join("big.efi");
+        let mut data = vec![b'x'; (1 << 20) - 4];
+        data.extend_from_slice(b"roothash=edge");
+        std::fs::write(&big, &data).unwrap();
+        assert!(file_contains(&big, b"roothash=edge"));
+        assert!(!file_contains(&big, b"roothash=none"));
     }
 }

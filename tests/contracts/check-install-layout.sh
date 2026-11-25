@@ -7,9 +7,14 @@
 # Usage: tests/contracts/check-install-layout.sh
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/../.." && pwd)
-layout=$repo/image/install-layout
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+# Slot 1 copies the running system's root (CopyBlocks=auto), which only
+# exists on the start stick: here the copy is left out and the label's
+# version (%A) is pinned, so the layout itself is checked.
+cp -r "$repo/image/install-layout" "$work/layout"
+layout=$work/layout
+sed -i -e '/^CopyBlocks=/d' -e 's/%A/9.9.9/' "$layout"/system/*.conf
 
 run_repart() { # image, size, definition dirs...
     local img=$1 size=$2; shift 2
@@ -29,7 +34,7 @@ G, M = 1024**3, 1024**2
 ESP, ROOT, VERITY, GENERIC = ("C12A7328-F81F-11D2-BA4B-00A0C93EC93B",
     "4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709", "2C7357ED-EBD2-46D9-AEC1-23D437EC2BF5",
     "0FC63DAF-8483-4772-8E79-3D69D8477DE4")
-want = [(ESP, "esp", 1*G), (ROOT, "_empty", 8*G), (VERITY, "_empty", 128*M),
+want = [(ESP, "esp", 1*G), (ROOT, "alp-os_9.9.9", 8*G), (VERITY, "alp-os_9.9.9_verity", 128*M),
         (ROOT, "_empty", 8*G), (VERITY, "_empty", 128*M), (GENERIC, "alp-state", 2*G)]
 if want_data:
     want.append((GENERIC, "alp-data", None))

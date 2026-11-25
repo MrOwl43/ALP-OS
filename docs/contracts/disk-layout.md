@@ -10,8 +10,8 @@ machine once installed.
 | # | Role | GPT type | Label at install | Size |
 |---|---|---|---|---|
 | 1 | ESP (systemd-boot + up to two UKIs) | `esp` | `esp` | 1 GiB |
-| 2 | root, slot 1 | `root` (x86-64) | `_empty`, then `alp-os_<version>` | 8 GiB |
-| 3 | verity, slot 1 | `root-verity` | `_empty`, then `alp-os_<version>_verity` | 128 MiB |
+| 2 | root, slot 1 | `root` (x86-64) | `alp-os_<version>` | 8 GiB |
+| 3 | verity, slot 1 | `root-verity` | `alp-os_<version>_verity` | 128 MiB |
 | 4 | root, slot 2 | `root` | `_empty` | 8 GiB |
 | 5 | verity, slot 2 | `root-verity` | `_empty` | 128 MiB |
 | 6 | state (`/var/lib/alp`, `/etc` overlay upper) | `linux-generic` | `alp-state` | 2 GiB |
@@ -38,10 +38,16 @@ Rules
   The stable identity of a slot is its GPT partition number; the root
   partition UUID comes from the image's root hash and changes with every
   update (`alp_hw::Slot`).
-- The installer creates all partitions (both slots `_empty`), then fills the
-  first slot and installs the UKI as `alp-os_<version>.efi` using
-  systemd-sysupdate with install-time transfer definitions (stream A + D;
-  needs a test spike).
+- The installer creates all partitions in one systemd-repart run. Slot 1 and
+  its verity partition are filled during that run with the running system's
+  own root and hash, block for block (`CopyBlocks=auto`; repart finds them
+  behind `/` through dm-verity and keeps their partition UUIDs, which the
+  start file looks for) and labelled `alp-os_<version>` /
+  `alp-os_<version>_verity` (`%A`). Slot 2 stays `_empty`. Then `bootctl
+  install` puts systemd-boot on the new ESP and the running start file is
+  copied there as `EFI/Linux/alp-os_<version>.efi` (picked on the stick's
+  ESP by the running `roothash=`). systemd-sysupdate is for later updates
+  only: it cannot read a partition as a source.
 - The installed system runs no systemd-repart at boot (nothing changes the
   partition table after install).
 - Versions are digits and dots only (e.g. `2026.10.16.1`); every image sets

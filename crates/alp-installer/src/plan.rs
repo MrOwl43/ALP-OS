@@ -78,10 +78,18 @@ impl Layout {
         }
     }
 
-    /// GPT partition labels the set creates, in order.
+    /// GPT partition labels the set creates, in order. `@v` stands for
+    /// the running version (`IMAGE_VERSION`: digits and dots).
     pub fn labels(self) -> &'static [&'static str] {
         match self {
-            Layout::System => &["esp", "_empty", "_empty", "_empty", "_empty", "alp-state"],
+            Layout::System => &[
+                "esp",
+                "alp-os_@v",
+                "alp-os_@v_verity",
+                "_empty",
+                "_empty",
+                "alp-state",
+            ],
             Layout::SingleDiskData | Layout::DataDisk => &["alp-data"],
         }
     }
@@ -93,8 +101,9 @@ pub enum Step {
     /// Erase the disk and write a new GPT with these definition sets
     /// (`systemd-repart --empty=force`, one run with all sets).
     Partition { disk: String, layouts: Vec<Layout> },
-    /// Fill the first root slot and install the UKI (systemd-sysupdate
-    /// with install-time transfer definitions; disk-layout contract).
+    /// Make the system disk start: systemd-boot and the running start file
+    /// (UKI) on its ESP. Root slot 1 was already filled during
+    /// partitioning (`CopyBlocks=auto`, disk-layout contract).
     CopySystem { disk: String },
     /// Keep-running path: use the start stick's existing `alp-state`
     /// partition. Nothing on the stick is erased.

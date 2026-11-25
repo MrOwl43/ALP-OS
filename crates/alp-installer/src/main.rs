@@ -166,6 +166,19 @@ fn main() -> ExitCode {
         Err(e) => return fail("ALP-INST-400", &e),
     };
     let mut cfg = ExecConfig::image_defaults(boot, limits);
+    cfg.image_version = std::fs::read_to_string("/etc/os-release")
+        .ok()
+        .and_then(|t| {
+            t.lines()
+                .find_map(|l| l.strip_prefix("IMAGE_VERSION="))
+                .map(|v| v.trim().trim_matches('"').to_string())
+        })
+        .unwrap_or_default();
+    cfg.roothash = std::fs::read_to_string("/proc/cmdline").ok().and_then(|c| {
+        c.split_whitespace()
+            .find_map(|w| w.strip_prefix("roothash="))
+            .map(str::to_string)
+    });
     // The installer's clock; first boot only records it (no decision rests on it).
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
