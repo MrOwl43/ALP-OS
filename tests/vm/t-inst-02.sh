@@ -97,10 +97,50 @@ probe3="$wait_open
 $diag
 $show
 -/bin/bash -c \"sha256sum /var/lib/alp-pool/files/t.bin | sed s/^/SUM=/\""
-out=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe3" ALP_PROBE_DELAY=5 ALP_QEMU_ARGS="$with_data" \
+# Also a recovery code on the pool through the API (T42: create, type
+# three words back, commit): one recovery slot on every member, and the
+# words open the pool (recovery/check).
+read -r -d '' rec_script <<'SH' || true
+req() { # method, path, body: prints the answer's body
+    exec 3<>/dev/tcp/127.0.0.1/8411
+    printf '%s /api/v1/live/%s HTTP/1.0\r\nHost: 127.0.0.1:8411\r\nOrigin: http://127.0.0.1:8411\r\nCookie: %s\r\nContent-Type: application/json\r\nContent-Length: %s\r\n\r\n%s' \
+        "$1" "$2" "$(cat /run/qa-cookie)" "${#3}" "$3" >&3
+    timeout 180 cat <&3 | tr -d '\r' | sed '1,/^$/d'
+    exec 3<&-
+}
+slots() { for m in /dev/mapper/alp-pool-*; do
+    d=$(cryptsetup status "${m##*/}" | sed -n 's/^ *device: *//p')
+    echo "REC-SLOTS $(cryptsetup luksDump "$d" | sed -n '/^Keyslots:/,/^[A-Z]/p' | grep -cE '^  [0-9]+: luks2')"
+done; }
+r=$(req POST recovery/create "{\"password\":\"$1\"}")
+read -r -a w <<<"$(grep -o '"words":\[[^]]*\]' <<<"$r" | sed 's/^"words"://' | grep -o '"[a-z]*"' | tr -d '"' | tr '\n' ' ')"
+echo "REC-WORDS ${#w[@]}"
+body=""
+for i in $(grep -o '"check":\[[0-9,]*\]' <<<"$r" | grep -o '[0-9]\+'); do
+    body+="${body:+,}\"$i\":\"${w[i-1]}\""
+done
+slots | sed 's/^REC-SLOTS/REC-SLOTS-PENDING/'
+echo "REC-COMMIT $(req POST recovery/commit "{\"words\":{$body}}")"
+slots
+echo "REC-CHECK $(req POST recovery/check "{\"recovery_key\":\"${w[*]}\"}")"
+SH
+rec_probe="-/bin/bash -c \"echo $(base64 -w0 <<<"$rec_script") | base64 -d > /run/t-rec.sh; bash /run/t-rec.sh $pw\""
+probe3b="$probe3
+$(post SIGNIN /api/v1/live/console/signin "{\"password\":\"$pw\"}")
+$rec_probe"
+out=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe3b" ALP_PROBE_DELAY=5 ALP_QEMU_ARGS="$with_data" \
     "$here/run-vm.sh" "$target" 900) || status=$?
 echo "$out"
 (( status == 0 )) || { echo "FAIL: T-INST-02 (restart failed)" >&2; exit 1; }
+expect "recovery code made (15 words)" '^REC-WORDS 15' "$out"
+expect "pending code: pool key + new slot" '^REC-SLOTS-PENDING 2' "$out"
+expect "three words typed back accepted" '^REC-COMMIT \{\}' "$out"
+if [[ $(grep -c '^REC-SLOTS 2$' <<<"$out") == 2 ]]; then
+    echo "ok:   both members hold the pool key and one recovery slot"
+else
+    echo "FAIL: recovery slots per member: $(grep '^REC-SLOTS' <<<"$out" | tr '\n' ' ')" >&2; fail=1
+fi
+expect "the recovery words open the pool" '^REC-CHECK .*"opens":true' "$out"
 expect "pool opened after restart" '^POOL-OPEN=yes' "$out"
 expect "read-write with both disks" '^POOL-RO=no' "$out"
 expect "file intact after restart" "^SUM=$sum" "$out"

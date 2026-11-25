@@ -181,17 +181,26 @@ pub const NO_PENDING: &str = "no new recovery code is waiting";
 /// code keeps working until [`commit`]. Errors: [`NOT_OPEN`],
 /// [`OLD_ARCHIVE`], [`NOT_ENCRYPTED`], or what failed.
 pub fn bind(secret: &str) -> Result<(), String> {
+    if crate::pool::record().is_some() {
+        return crate::pool::recovery_bind(secret);
+    }
     crate::archive::bind_recovery(secret)
 }
 
 /// Second step: the pending code replaces the current one ([`NO_PENDING`]
 /// when there is none).
 pub fn commit() -> Result<(), String> {
+    if crate::pool::record().is_some() {
+        return crate::pool::recovery_commit();
+    }
     crate::archive::commit_recovery()
 }
 
 /// Forget the pending code; the current one stays valid.
 pub fn cancel() {
+    if crate::pool::record().is_some() {
+        return crate::pool::recovery_cancel();
+    }
     crate::archive::drop_pending_recovery()
 }
 

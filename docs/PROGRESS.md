@@ -59,6 +59,11 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
 - Home screen names a missing pool disk (2026-11-25): the pool record keeps each disk's name from
   the installer (by-id + size), `state.archive.missing_disks`, alert `archive.disk_missing`
   (ALP-STO-001); T-INST-02 part 4 checks it.
+- Recovery code on the pool (2026-11-25, server side): `alp_storage::pool` add/remove/test of LUKS
+  recovery slots 1 and 2 (key and secret only on stdin), `alp_live::pool` two-step with a state file
+  in the index (`pending N` / `commit N`, finished after a restart); `recovery/create|commit|check`
+  work on the installed system; T-INST-02 part 3 checks it. Not yet: opening the pool with the words
+  after the system disk is lost (needs a "recover" flow on a fresh install).
 - Next: native setup screens (password, pool progress, recovery, phone) on alp-screen;
   check gallery and phone approval on the native screen in a VM; code review of installer + pool
   (encryption/storage: opus reviewer) before the PR; `/claude-security` scan before release.

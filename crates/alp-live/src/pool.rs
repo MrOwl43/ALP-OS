@@ -340,7 +340,192 @@ pub fn open() -> Result<Opened, String> {
         .map_err(|e| e.to_string())?;
     show_archive(false)?;
     show_immich()?;
+    // A new recovery code a restart interrupted (pending or commit).
+    if matches!(opened, Opened::Full)
+        && let Err(e) = recovery_settle()
+    {
+        eprintln!("alp-live: recovery code step not finished: {e}");
+    }
     Ok(opened)
+}
+
+/// Recovery code on the pool (ADR 0013, plan `0.2.8-first-start.md`): a
+/// LUKS key slot made from the 15 words on every member, in one of the two
+/// recovery slots. A new code goes into the free slot ("pending"); after
+/// the user typed words back, the state file says "commit" and only then
+/// the old slot is removed. The state file is in the index, so a restart
+/// at any point is finished by [`recovery_settle`]: a pending slot is
+/// removed again (the old code stays), a commit is completed.
+const RECOVERY_STATE_REL: &str = "keys/pool-recovery.state";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecoveryStep {
+    Pending(u8),
+    Commit(u8),
+}
+
+fn parse_recovery_state(s: &str) -> Option<RecoveryStep> {
+    let (word, n) = s.trim().split_once(' ')?;
+    let n: u8 = n.parse().ok()?;
+    if !pool::RECOVERY_SLOTS.contains(&n) {
+        return None;
+    }
+    match word {
+        "pending" => Some(RecoveryStep::Pending(n)),
+        "commit" => Some(RecoveryStep::Commit(n)),
+        _ => None,
+    }
+}
+
+fn recovery_state() -> Option<RecoveryStep> {
+    parse_recovery_state(&fs::read_to_string(crate::index::path(RECOVERY_STATE_REL)).ok()?)
+}
+
+fn set_recovery_state(step: Option<RecoveryStep>) -> Result<(), String> {
+    let path = crate::index::path(RECOVERY_STATE_REL);
+    match step {
+        None => match fs::remove_file(&path) {
+            Ok(()) => sync_parent(&path),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.to_string()),
+        },
+        Some(RecoveryStep::Pending(n)) => {
+            write_atomic(&path, format!("pending {n}\n").as_bytes(), 0o600)
+        }
+        Some(RecoveryStep::Commit(n)) => {
+            write_atomic(&path, format!("commit {n}\n").as_bytes(), 0o600)
+        }
+    }
+}
+
+fn sync_parent(path: &Path) -> Result<(), String> {
+    match path.parent() {
+        Some(dir) => fs::File::open(dir)
+            .and_then(|d| d.sync_all())
+            .map_err(|e| e.to_string()),
+        None => Ok(()),
+    }
+}
+
+fn other_slot(n: u8) -> u8 {
+    if n == pool::RECOVERY_SLOTS[0] {
+        pool::RECOVERY_SLOTS[1]
+    } else {
+        pool::RECOVERY_SLOTS[0]
+    }
+}
+
+/// Every member's device; refused while one is missing, so a code always
+/// opens every disk.
+fn all_members(rec: &Record) -> Result<Vec<String>, String> {
+    let missing = rec.missing(&|u| by_partuuid(u).is_some());
+    if !missing.is_empty() {
+        return Err(format!(
+            "connect every disk of the archive first (missing: {})",
+            missing.join(", ")
+        ));
+    }
+    Ok(rec.members.iter().filter_map(|u| by_partuuid(u)).collect())
+}
+
+/// Finish what a restart interrupted (see [`RECOVERY_STATE_REL`]). Needs
+/// the index open; does nothing without a state file.
+pub fn recovery_settle() -> Result<(), String> {
+    let Some(rec) = record() else { return Ok(()) };
+    let Some(step) = recovery_state() else {
+        return Ok(());
+    };
+    let devs = all_members(&rec)?;
+    let drop_slot = match step {
+        RecoveryStep::Pending(n) => n,
+        RecoveryStep::Commit(n) => other_slot(n),
+    };
+    for d in &devs {
+        pool::remove_recovery(&mut System, d, drop_slot).map_err(|e| e.to_string())?;
+    }
+    set_recovery_state(None)
+}
+
+/// Is there a recovery code on the pool (a committed one)?
+pub fn recovery_has() -> bool {
+    let Some(rec) = record() else { return false };
+    let Some(dev) = rec.members.iter().find_map(|u| by_partuuid(u)) else {
+        return false;
+    };
+    let pending = match recovery_state() {
+        Some(RecoveryStep::Pending(n)) => Some(n),
+        _ => None,
+    };
+    pool::keyslots(&mut System, &dev).is_ok_and(|slots| {
+        pool::RECOVERY_SLOTS
+            .iter()
+            .any(|s| slots.contains(s) && Some(*s) != pending)
+    })
+}
+
+/// First step of a new code: add `secret` to the free recovery slot of
+/// every member. The current code keeps working until [`recovery_commit`].
+pub fn recovery_bind(secret: &str) -> Result<(), String> {
+    let rec = record().ok_or(crate::recovery::NOT_OPEN)?;
+    if !crate::archive::is_open() {
+        return Err(crate::recovery::NOT_OPEN.into());
+    }
+    recovery_settle()?;
+    let devs = all_members(&rec)?;
+    let key = pool_key()?;
+    let used = pool::keyslots(&mut System, &devs[0]).map_err(|e| e.to_string())?;
+    let target = pool::RECOVERY_SLOTS
+        .into_iter()
+        .find(|s| !used.contains(s))
+        .unwrap_or(pool::RECOVERY_SLOTS[1]);
+    set_recovery_state(Some(RecoveryStep::Pending(target)))?;
+    for d in &devs {
+        // A slot left by an interrupted earlier attempt on another member.
+        pool::remove_recovery(&mut System, d, target).map_err(|e| e.to_string())?;
+        pool::add_recovery(&mut System, d, &key, secret, target).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Second step: the new code stays, the old one is removed.
+pub fn recovery_commit() -> Result<(), String> {
+    let Some(RecoveryStep::Pending(n)) = recovery_state() else {
+        return Err(crate::recovery::NO_PENDING.into());
+    };
+    set_recovery_state(Some(RecoveryStep::Commit(n)))?;
+    recovery_settle()
+}
+
+/// Forget a new code that was not confirmed; the current one stays.
+pub fn recovery_cancel() {
+    if matches!(recovery_state(), Some(RecoveryStep::Pending(_))) {
+        let _ = recovery_settle();
+    }
+}
+
+/// Does `secret` open the pool (the committed code, on the first member
+/// connected)? Nothing is opened.
+pub fn recovery_check(secret: &str) -> Result<bool, String> {
+    let rec = record().ok_or(crate::recovery::NOT_OPEN)?;
+    let dev = rec
+        .members
+        .iter()
+        .find_map(|u| by_partuuid(u))
+        .ok_or("no disk of the archive is connected")?;
+    let pending = match recovery_state() {
+        Some(RecoveryStep::Pending(n)) => Some(n),
+        _ => None,
+    };
+    let used = pool::keyslots(&mut System, &dev).map_err(|e| e.to_string())?;
+    for s in pool::RECOVERY_SLOTS {
+        if used.contains(&s)
+            && Some(s) != pending
+            && pool::test_recovery(&mut System, &dev, secret, s).map_err(|e| e.to_string())?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Lock: the archive view first, then the pool.
@@ -432,5 +617,23 @@ mod tests {
             disk_name("usb-Evil\u{202E}_x", 1_000_000_000),
             "Evil? x (1 GB)"
         );
+    }
+    #[test]
+    fn recovery_state_file() {
+        assert_eq!(
+            parse_recovery_state("pending 2\n"),
+            Some(RecoveryStep::Pending(2))
+        );
+        assert_eq!(
+            parse_recovery_state("commit 1"),
+            Some(RecoveryStep::Commit(1))
+        );
+        // Slot 0 (the pool key) or unknown words are never a step.
+        assert_eq!(parse_recovery_state("pending 0"), None);
+        assert_eq!(parse_recovery_state("commit 3"), None);
+        assert_eq!(parse_recovery_state("drop 1"), None);
+        assert_eq!(parse_recovery_state(""), None);
+        assert_eq!(other_slot(1), 2);
+        assert_eq!(other_slot(2), 1);
     }
 }

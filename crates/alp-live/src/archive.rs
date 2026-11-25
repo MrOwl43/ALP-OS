@@ -1799,6 +1799,9 @@ fn find_recovery_key(out: &str) -> Option<String> {
 /// Has the open archive a recovery code? New archives: `recovery.conf` is
 /// there; old ones: the LUKS2 token `systemd-recovery`.
 pub fn has_recovery() -> bool {
+    if crate::pool::record().is_some() {
+        return crate::pool::recovery_has();
+    }
     match record().map(|r| r.format) {
         Some(Format::Gocryptfs) => Path::new(HOST_MNT).join(DIR).join(RECOVERY_CONF).is_file(),
         Some(Format::Plain) => false,
@@ -2272,6 +2275,9 @@ fn opens(conf: &Path, cipherdir: &Path, secret: &str) -> Result<bool, String> {
 /// of `recovery.conf` in /run is re-wrapped with them and thrown away;
 /// nothing on the disk changes. `Ok(false)`: wrong words.
 pub fn check_recovery(secret: &str) -> Result<bool, String> {
+    if crate::pool::record().is_some() {
+        return crate::pool::recovery_check(secret);
+    }
     let rec = record().ok_or(crate::recovery::NOT_OPEN)?;
     if !is_open() {
         return Err(crate::recovery::NOT_OPEN.into());

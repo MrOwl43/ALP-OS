@@ -308,6 +308,131 @@ pub fn close(members: usize, mnt: &str, r: &mut dyn Run) -> Result<()> {
     Ok(())
 }
 
+/// LUKS2 key slots that hold a recovery code (ADR 0013 on the pool): two,
+/// so a new code is added beside the current one and the old one is
+/// removed only after the user typed words back (T42). Slot 0 is the pool
+/// key (luksFormat); these functions refuse any other slot.
+pub const RECOVERY_SLOTS: [u8; 2] = [1, 2];
+
+fn recovery_slot(slot: u8) -> Result<String> {
+    if RECOVERY_SLOTS.contains(&slot) {
+        Ok(slot.to_string())
+    } else {
+        Err(HwError {
+            code: CODE_OPEN,
+            detail: format!("key slot {slot} is not a recovery slot"),
+        })
+    }
+}
+
+/// The LUKS2 key slots in use on `dev` (`cryptsetup luksDump`, section
+/// "Keyslots").
+pub fn keyslots(r: &mut dyn Run, dev: &str) -> Result<Vec<u8>> {
+    let out = r.run("cryptsetup", &owned(&["luksDump", dev]), None);
+    if !out.ok {
+        return Err(err(CODE_OPEN, &format!("luksDump {dev}"), &out));
+    }
+    Ok(parse_keyslots(&out.stdout))
+}
+
+fn parse_keyslots(dump: &str) -> Vec<u8> {
+    let mut inside = false;
+    let mut slots = Vec::new();
+    for line in dump.lines() {
+        if !line.starts_with(char::is_whitespace) {
+            inside = line.trim_end() == "Keyslots:";
+            continue;
+        }
+        // "  1: luks2" opens a slot; its details are indented further.
+        if inside
+            && let Some((n, kind)) = line.trim().split_once(':')
+            && kind.trim() == "luks2"
+            && let Ok(n) = n.parse::<u8>()
+        {
+            slots.push(n);
+        }
+    }
+    slots
+}
+
+/// Add `secret` (the recovery code's unlock secret, one line) to member
+/// `dev` in recovery `slot`, unlocking with the pool key. Both reach
+/// cryptsetup on stdin: the 64-byte key first (`--keyfile-size=64`),
+/// then the secret up to its newline; never argv or a file.
+pub fn add_recovery(
+    r: &mut dyn Run,
+    dev: &str,
+    key: &PoolKey,
+    secret: &str,
+    slot: u8,
+) -> Result<()> {
+    let n = recovery_slot(slot)?;
+    if secret.is_empty() || secret.contains('\n') {
+        return Err(HwError {
+            code: CODE_OPEN,
+            detail: "the recovery secret must be one non-empty line".into(),
+        });
+    }
+    let mut input = key_bytes(key);
+    if input.len() != 64 {
+        return Err(HwError {
+            code: CODE_OPEN,
+            detail: "the pool key file is not 64 bytes".into(),
+        });
+    }
+    input.extend_from_slice(secret.as_bytes());
+    input.push(b'\n');
+    let out = r.run(
+        "cryptsetup",
+        &owned(&[
+            "luksAddKey",
+            "--batch-mode",
+            "--force-password",
+            "--key-file=-",
+            "--keyfile-size=64",
+            &format!("--new-key-slot={n}"),
+            dev,
+        ]),
+        Some(&input),
+    );
+    if !out.ok {
+        return Err(err(CODE_OPEN, &format!("luksAddKey {dev}"), &out));
+    }
+    Ok(())
+}
+
+/// Remove recovery `slot` from `dev` if it is in use (batch mode: no
+/// passphrase; only slots 1 and 2 can be named here).
+pub fn remove_recovery(r: &mut dyn Run, dev: &str, slot: u8) -> Result<()> {
+    let n = recovery_slot(slot)?;
+    if !keyslots(r, dev)?.contains(&slot) {
+        return Ok(());
+    }
+    let out = r.run(
+        "cryptsetup",
+        &owned(&["luksKillSlot", "--batch-mode", dev, &n]),
+        None,
+    );
+    if !out.ok {
+        return Err(err(CODE_OPEN, &format!("luksKillSlot {dev} {n}"), &out));
+    }
+    Ok(())
+}
+
+/// Does `secret` open recovery `slot` of `dev`? Nothing is opened
+/// (`--test-passphrase`); the secret goes on stdin up to its newline.
+pub fn test_recovery(r: &mut dyn Run, dev: &str, secret: &str, slot: u8) -> Result<bool> {
+    let n = recovery_slot(slot)?;
+    let mut input = Zeroizing::new(secret.as_bytes().to_vec());
+    input.push(b'\n');
+    let out = r.run(
+        "cryptsetup",
+        &owned(&["open", "--test-passphrase", &format!("--key-slot={n}"), dev]),
+        Some(&input),
+    );
+    Ok(out.ok)
+}
+
 /// The real runner: the program with these arguments, stdin piped when
 /// given (and then closed), output captured.
 #[derive(Debug, Default)]
@@ -662,5 +787,54 @@ mod tests {
             CODE_OPEN
         );
         assert!(m.ran("cryptsetup").iter().all(|a| a[0] != "luksFormat"));
+    }
+
+    const DUMP: &str = "LUKS header information\nVersion:       \t2\n\nData segments:\n  0: crypt\n\toffset: 16777216 [bytes]\nKeyslots:\n  0: luks2\n\tKey:        512 bits\n  2: luks2\n\tKey:        512 bits\nTokens:\n  0: systemd-tpm2\n\tKeyslot:    3\nDigests:\n  0: pbkdf2\n";
+
+    #[test]
+    fn keyslots_only_from_their_section() {
+        assert_eq!(parse_keyslots(DUMP), [0, 2]);
+        assert!(parse_keyslots("").is_empty());
+    }
+
+    #[test]
+    fn recovery_slots_only_and_secrets_on_stdin() {
+        let key = PoolKey::generate().unwrap();
+        let mut m = Mock::default();
+        // Slot 0 (the pool key) or any other slot is never touched.
+        for bad in [0u8, 3, 31] {
+            assert!(add_recovery(&mut m, "/dev/vdb1", &key, "abc", bad).is_err());
+            assert!(remove_recovery(&mut m, "/dev/vdb1", bad).is_err());
+            assert!(test_recovery(&mut m, "/dev/vdb1", "abc", bad).is_err());
+        }
+        assert!(m.calls.is_empty());
+        assert!(add_recovery(&mut m, "/dev/vdb1", &key, "two\nlines", 1).is_err());
+        assert!(add_recovery(&mut m, "/dev/vdb1", &key, "", 1).is_err());
+        add_recovery(&mut m, "/dev/vdb1", &key, "s3cret-hex", 2).unwrap();
+        let args = m.ran("cryptsetup")[0].clone();
+        assert!(args.contains(&"--new-key-slot=2".to_string()), "{args:?}");
+        assert!(args.contains(&"--keyfile-size=64".to_string()));
+        // Neither the key nor the secret is in argv.
+        assert!(!args.iter().any(|a| a.contains("s3cret")));
+        let sent = m.key_seen.last().unwrap();
+        assert_eq!(sent.len(), 64 + "s3cret-hex".len() + 1);
+        assert_eq!(&sent[..64], key_bytes(&key).as_slice());
+        assert_eq!(&sent[64..], b"s3cret-hex\n");
+    }
+
+    #[test]
+    fn remove_recovery_only_when_in_use() {
+        struct Dump(Vec<String>);
+        impl Run for Dump {
+            fn run(&mut self, program: &str, args: &[String], _: Option<&[u8]>) -> Out {
+                self.0.push(format!("{program} {}", args.join(" ")));
+                ok(DUMP)
+            }
+        }
+        let mut d = Dump(vec![]);
+        remove_recovery(&mut d, "/dev/vdb1", 1).unwrap();
+        assert_eq!(d.0, ["cryptsetup luksDump /dev/vdb1"]);
+        remove_recovery(&mut d, "/dev/vdb1", 2).unwrap();
+        assert_eq!(d.0[2], "cryptsetup luksKillSlot --batch-mode /dev/vdb1 2");
     }
 }
