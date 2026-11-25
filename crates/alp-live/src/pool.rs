@@ -42,6 +42,9 @@ pub struct Record {
     pub members: Vec<String>,
     /// Data profile name (`dup`, `raid1`, ...).
     pub data_profile: String,
+    /// What to call each member disk on screen (same order as `members`),
+    /// from the installer's disk names; empty in records without them.
+    pub names: Vec<String>,
 }
 
 impl Record {
@@ -54,6 +57,12 @@ impl Record {
             "members".into(),
             toml::Value::Array(self.members.iter().map(|m| m.clone().into()).collect()),
         );
+        if !self.names.is_empty() {
+            t.insert(
+                "member_names".into(),
+                toml::Value::Array(self.names.iter().map(|m| m.clone().into()).collect()),
+            );
+        }
         t.to_string()
     }
 
@@ -71,11 +80,43 @@ impl Record {
         if members.is_empty() {
             return None;
         }
+        // Optional (added in 0.2.8 before the first release); a list that
+        // does not match the members is ignored, never an error.
+        let names: Vec<String> = t
+            .get("member_names")
+            .and_then(toml::Value::as_array)
+            .and_then(|a| {
+                a.iter()
+                    .map(|v| v.as_str().map(str::to_string))
+                    .collect::<Option<Vec<_>>>()
+            })
+            .filter(|n| n.len() == members.len())
+            .unwrap_or_default();
         Some(Self {
             fs_uuid: t.get("fs_uuid")?.as_str()?.to_string(),
             data_profile: t.get("data_profile")?.as_str()?.to_string(),
             members,
+            names,
         })
+    }
+
+    /// What to call member `i` on screen.
+    pub fn name(&self, i: usize) -> String {
+        match self.names.get(i) {
+            Some(n) if !n.is_empty() => n.clone(),
+            _ => format!("disk {} of {}", i + 1, self.members.len()),
+        }
+    }
+
+    /// Names of the member disks not connected now (`present` says
+    /// whether a member partition UUID is there).
+    pub fn missing(&self, present: &dyn Fn(&str) -> bool) -> Vec<String> {
+        self.members
+            .iter()
+            .enumerate()
+            .filter(|(_, u)| !present(u))
+            .map(|(i, _)| self.name(i))
+            .collect()
     }
 
     /// How many member disks may be missing with the data still whole:
@@ -96,6 +137,37 @@ pub fn seed_waiting() -> bool {
 
 pub fn record() -> Option<Record> {
     Record::from_toml(&fs::read_to_string(RECORD).ok()?)
+}
+
+/// Names of the pool's disks that are not connected now (empty without a
+/// pool). Read live from `/dev/disk/by-partuuid`, so a disk plugged back
+/// in disappears from the list at once (the pool stays read-only until
+/// the next start).
+pub fn missing_disks() -> Vec<String> {
+    record().map_or_else(Vec::new, |r| r.missing(&|u| by_partuuid(u).is_some()))
+}
+
+/// A disk's screen name from its `/dev/disk/by-id` name and size, e.g.
+/// `ata-WDC_WD20EZRZ-00Z5HB0_WD-WCC4M1234567` and 2 TB become
+/// "WDC WD20EZRZ-00Z5HB0 WD-WCC4M1234567 (2.0 TB)": maker, model and the
+/// serial printed on the disk's label, so the user can find it.
+pub fn disk_name(by_id: &str, size_bytes: u64) -> String {
+    let bare = ["ata-", "nvme-", "usb-", "scsi-", "mmc-", "virtio-", "wwn-"]
+        .iter()
+        .find_map(|p| by_id.strip_prefix(p))
+        .unwrap_or(by_id);
+    let words = crate::fail::display_safe(&bare.replace('_', " "), 80);
+    let words = words.trim();
+    let size = if size_bytes >= 1_000_000_000_000 {
+        format!("{:.1} TB", size_bytes as f64 / 1e12)
+    } else {
+        format!("{} GB", size_bytes / 1_000_000_000)
+    };
+    if words.is_empty() {
+        format!("a {size} disk")
+    } else {
+        format!("{words} ({size})")
+    }
 }
 
 fn write_atomic(path: &Path, body: &[u8], mode: u32) -> Result<(), String> {
@@ -239,6 +311,11 @@ pub fn create(say: &mut dyn FnMut(&str)) -> Result<(), HwError> {
             .map(|m| m.partition_uuid.to_ascii_lowercase())
             .collect(),
         data_profile: seed.data_profile.name().into(),
+        names: seed
+            .members
+            .iter()
+            .map(|m| disk_name(&m.by_id, m.size_bytes))
+            .collect(),
     };
     fs::create_dir_all(STATE_DIR).map_err(|e| fail(e.to_string()))?;
     write_atomic(Path::new(RECORD), rec.to_toml().as_bytes(), 0o644).map_err(fail)?;
@@ -289,8 +366,17 @@ mod tests {
             fs_uuid: "f00d".into(),
             members: vec!["u1".into(), "u2".into()],
             data_profile: "raid1".into(),
+            names: vec!["Disk A (2.0 TB)".into(), "Disk B (2.0 TB)".into()],
         };
         assert_eq!(Record::from_toml(&r.to_toml()), Some(r.clone()));
+        // Without names (or with a list of the wrong length): still read.
+        let bare = Record {
+            names: vec![],
+            ..r.clone()
+        };
+        assert_eq!(Record::from_toml(&bare.to_toml()), Some(bare.clone()));
+        let odd = r.to_toml().replace("\"Disk B (2.0 TB)\"", "");
+        assert_eq!(Record::from_toml(&odd).map(|x| x.names), Some(vec![]));
         assert_eq!(r.can_lose(), 1);
         let one = Record {
             data_profile: "dup".into(),
@@ -310,6 +396,41 @@ mod tests {
                 "format_version = 1\nfs_uuid = \"x\"\ndata_profile = \"dup\"\nmembers = []"
             ),
             None
+        );
+    }
+
+    #[test]
+    fn missing_disks_by_name() {
+        let r = Record {
+            fs_uuid: "f00d".into(),
+            members: vec!["u1".into(), "u2".into()],
+            data_profile: "raid1".into(),
+            names: vec!["Disk A (2.0 TB)".into(), "Disk B (2.0 TB)".into()],
+        };
+        assert!(r.missing(&|_| true).is_empty());
+        assert_eq!(r.missing(&|u| u == "u1"), ["Disk B (2.0 TB)"]);
+        let bare = Record { names: vec![], ..r };
+        assert_eq!(bare.missing(&|u| u == "u2"), ["disk 1 of 2"]);
+    }
+
+    #[test]
+    fn disk_names_for_the_screen() {
+        assert_eq!(
+            disk_name(
+                "ata-WDC_WD20EZRZ-00Z5HB0_WD-WCC4M1234567",
+                2_000_398_934_016
+            ),
+            "WDC WD20EZRZ-00Z5HB0 WD-WCC4M1234567 (2.0 TB)"
+        );
+        assert_eq!(
+            disk_name("nvme-Samsung_SSD_980_500GB_S64DNX0R123456", 500_107_862_016),
+            "Samsung SSD 980 500GB S64DNX0R123456 (500 GB)"
+        );
+        assert_eq!(disk_name("", 64_000_000_000), "a 64 GB disk");
+        // Device text is made safe for the screen.
+        assert_eq!(
+            disk_name("usb-Evil\u{202E}_x", 1_000_000_000),
+            "Evil? x (1 GB)"
         );
     }
 }

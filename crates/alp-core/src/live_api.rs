@@ -2502,6 +2502,9 @@ impl Live {
         if !index::is_open() {
             return none_json(if archive_set_up() { "locked" } else { "none" }, None);
         }
+        // Installed system (ADR 0028): the pool's disks not connected now,
+        // by the names the user saw in the installer (ALP-STO-001).
+        let missing = pool::missing_disks();
         match archive::status() {
             archive::Status::Open {
                 place,
@@ -2512,15 +2515,31 @@ impl Live {
                 "place": place.map(|p| json!({"partuuid": p.partuuid, "name": p.name, "label": p.label})),
                 "size_bytes": size_bytes, "free_bytes": free_bytes,
                 "space": index::space_level(size_bytes, free_bytes, self.low_percent),
-                "job": job.as_ref().map(Job::json), "error": null,
+                "job": job.as_ref().map(Job::json),
+                "error": disk_missing_fail(&missing).as_ref().map(fail_json),
+                "missing_disks": missing,
                 "recovery": if self.has_recovery() { "set" } else { "none" },
                 "password_reopen": archive::password_reopen(),
                 "serious": (self.serious)(),
             }),
-            archive::Status::Missing(why) => none_json(
-                "missing",
-                Some(fail_json(&Fail::new("archive.missing", why))),
-            ),
+            archive::Status::Missing(why) => {
+                let why = if missing.is_empty() {
+                    why
+                } else {
+                    format!(
+                        "The archive could not be opened because {} {} not connected. Connect {}, then restart the server.",
+                        list_names(&missing),
+                        if missing.len() == 1 { "is" } else { "are" },
+                        if missing.len() == 1 { "it" } else { "them" },
+                    )
+                };
+                let mut v = none_json(
+                    "missing",
+                    Some(fail_json(&Fail::new("archive.missing", why))),
+                );
+                v["missing_disks"] = json!(missing);
+                v
+            }
             archive::Status::None => match job.as_ref().and_then(|j| j.error.clone()) {
                 Some(e) => none_json("failed", Some(fail_json(&e))),
                 None => none_json("none", None),
@@ -4202,6 +4221,39 @@ fn alert(key: &str, level: &str, message: &str, code: Option<&str>) -> Value {
 /// The standing problems in a state (pure, T54): space, the archive's
 /// error, Immich paused, the archive disk's own health. Each has a level
 /// (ADR 0023); critical only from alpd's own checks (review R7).
+/// "A", "A and B", "A, B and C".
+fn list_names(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// The open pool with disks not connected (ALP-STO-001): it is read-only
+/// until they are back (alp_storage::pool::Opened::Degraded).
+fn disk_missing_fail(missing: &[String]) -> Option<Fail> {
+    if missing.is_empty() {
+        return None;
+    }
+    let (n, it) = if missing.len() == 1 {
+        ("A disk of your archive is missing", "it")
+    } else {
+        ("Disks of your archive are missing", "them")
+    };
+    Some(
+        Fail::new(
+            "archive.disk_missing",
+            format!(
+                "{n}: {}. Your photos can still be viewed, but new photos are not saved until {it} {} back. Connect {it} again, then restart the server.",
+                list_names(missing),
+                if missing.len() == 1 { "is" } else { "are" },
+            ),
+        )
+        .with_code("ALP-STO-001"),
+    )
+}
+
 fn alerts(st: &Value, archive_health: Option<&str>) -> Vec<Value> {
     let mut v = Vec::new();
     let space = |what: &str, word: &Value, v: &mut Vec<Value>| match word.as_str() {
@@ -5153,6 +5205,37 @@ mod tests {
             "Done: the disk is formatted (secure: overwritten with zeros)."
         );
         assert_eq!(RAN.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_missing_pool_disk_is_named() {
+        assert!(disk_missing_fail(&[]).is_none());
+        let f = disk_missing_fail(&["WDC WD20 X1 (2.0 TB)".into()]).unwrap();
+        assert_eq!(
+            (f.key, f.code, f.level()),
+            ("archive.disk_missing", Some("ALP-STO-001"), "now")
+        );
+        assert!(
+            f.message
+                .starts_with("A disk of your archive is missing: WDC WD20 X1 (2.0 TB)."),
+            "{}",
+            f.message
+        );
+        assert!(f.message.contains("until it is back"), "{}", f.message);
+        let two = disk_missing_fail(&["A".into(), "B".into()]).unwrap();
+        assert!(
+            two.message
+                .starts_with("Disks of your archive are missing: A and B."),
+            "{}",
+            two.message
+        );
+        assert_eq!(
+            list_names(&["A".into(), "B".into(), "C".into()]),
+            "A, B and C"
+        );
+        // It reaches the home screen as an alert.
+        let st = json!({"archive": {"error": fail_json(&f)}});
+        assert_eq!(alerts(&st, None)[0]["code"], "ALP-STO-001");
     }
 
     #[test]

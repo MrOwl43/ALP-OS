@@ -64,6 +64,7 @@ show='-/bin/bash -c "btrfs filesystem df /run/alp/pool | sed s/^/DF=/"
 -/bin/bash -c "findmnt -no OPTIONS /run/alp/pool | tr , \"\\n\" | grep -qx ro && echo POOL-RO=yes || echo POOL-RO=no"
 -/bin/bash -c "test -e /var/lib/alp/firstboot-seed.toml && echo SEED=yes || echo SEED=no"
 -/bin/bash -c "sed -n s/^data_profile/RECORD-PROFILE/p /var/lib/alp/pool.toml"
+-/bin/bash -c "grep -q ALPDATA03 /var/lib/alp/pool.toml && echo RECORD-NAMES=yes || echo RECORD-NAMES=no"
 -/bin/bash -c "findmnt -no SOURCE /var/lib/alp-index/immich | grep -q @immich && echo IMMICH-ON-POOL=yes || echo IMMICH-ON-POOL=no"'
 
 # Part 2: first start.
@@ -82,6 +83,7 @@ expect "data is RAID1" '^DF=Data, RAID1' "$out"
 expect "metadata is RAID1" '^DF=Metadata, RAID1' "$out"
 expect "seed removed" '^SEED=no' "$out"
 expect "record written" '^RECORD-PROFILE = "raid1"' "$out"
+expect "record names the disks" '^RECORD-NAMES=yes' "$out"
 expect "photo service data is on the pool" '^IMMICH-ON-POOL=yes' "$out"
 sum=$(sed -n 's/^SUM=\([0-9a-f]\{64\}\).*/\1/p' <<<"$out" | head -1)
 if [[ -n $sum ]]; then echo "ok:   test file written"; else echo "FAIL: test file written" >&2; fail=1; fi
@@ -103,14 +105,21 @@ expect "pool opened after restart" '^POOL-OPEN=yes' "$out"
 expect "read-write with both disks" '^POOL-RO=no' "$out"
 expect "file intact after restart" "^SUM=$sum" "$out"
 
-# Part 4: the second data disk is missing: read-only, degraded, file readable.
-out=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe3" ALP_PROBE_DELAY=5 ALP_QEMU_ARGS="$one_data" \
+# Part 4: the second data disk is missing: read-only, degraded, file readable,
+# and the state names the missing disk for the home screen (ALP-STO-001).
+probe4="$probe3
+$(post SIGNIN /api/v1/live/console/signin "{\"password\":\"$pw\"}")
+$(QA_HTTP_MAX=262144 qa_http_probe STATE GET /api/v1/live/state "$origin")"
+out=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe4" ALP_PROBE_DELAY=5 ALP_QEMU_ARGS="$one_data" \
     "$here/run-vm.sh" "$target" 900) || status=$?
 echo "$out"
 (( status == 0 )) || { echo "FAIL: T-INST-02 (start without the data disk failed)" >&2; exit 1; }
 expect "pool opened with one data disk missing" '^POOL-OPEN=yes' "$out"
 expect "read-only when a disk is missing" '^POOL-RO=yes' "$out"
 expect "file readable when a disk is missing" "^SUM=$sum" "$out"
+state=$(sed -n '/STATE-BEGIN/,/STATE-END/p' <<<"$out")
+expect "the state names the missing disk" '"missing_disks":\["[^"]*ALPDATA03' "$state"
+expect "the home screen alert is ALP-STO-001" '"code":"ALP-STO-001"' "$state"
 
 (( fail == 0 )) || { echo "FAIL: T-INST-02" >&2; exit 1; }
 echo "PASS: T-INST-02"

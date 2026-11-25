@@ -978,6 +978,13 @@ changed since installation) or `ALP-STO-008`; a retry resumes.
 State gains `"pool": "none" | "waiting" | "made"`: `waiting` means setup
 skips the "where" step and calls this instead.
 
+With a pool, `archive` gains `missing_disks`: the screen names (from the
+installer's disk list, else "disk N of M") of the pool's disks not
+connected now. An open pool with missing disks is read-only and carries
+`error` `archive.disk_missing` (`ALP-STO-001`, level `now`), so the home
+screen names the disk; a pool that could not open says which disks to
+connect in its `archive.missing` message. Additive.
+
 ### `POST /api/v1/live/archive/cancel` → 202 `{ "job": Job }`
 
 Body `{}`. Stops a running `archive.create` job (or the `erasing` step of a

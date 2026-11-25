@@ -56,7 +56,10 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   graphics" (nomodeset) entry in the same start file (UKI profile); the boot menu shows 3 s; the
   installer copies loader.conf to the installed ESP (before: no `editor no` there). Next: the owner
   tries the next build on both laptops and sends a photo of the screen.
-- Next: home screen names a missing pool disk (ALP-STO-001); native setup screens (password, pool progress, recovery, phone) on alp-screen;
+- Home screen names a missing pool disk (2026-11-25): the pool record keeps each disk's name from
+  the installer (by-id + size), `state.archive.missing_disks`, alert `archive.disk_missing`
+  (ALP-STO-001); T-INST-02 part 4 checks it.
+- Next: native setup screens (password, pool progress, recovery, phone) on alp-screen;
   check gallery and phone approval on the native screen in a VM; code review of installer + pool
   (encryption/storage: opus reviewer) before the PR; `/claude-security` scan before release.
 
