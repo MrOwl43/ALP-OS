@@ -46,7 +46,8 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   read-only and readable with one data disk missing.
 - 0.2.8 item: old laptops (2013/2016) do not start the stick. Cause unknown, not reproduced; likely
   candidates: firmware with legacy BIOS only or 32-bit UEFI (we ship 64-bit UEFI only), or the
-  graphics driver hanging at start. Waiting on the owner: models, and what the screen shows.
+  graphics driver hanging at start. Owner: one is a MacBook A1278 (13", 2009-2012, Apple 64-bit EFI,
+  boot menu by holding Option; NVIDIA 9400M/320M or Intel HD 3000/4000). Waiting: what the screen shows.
 - Next: home screen names a missing pool disk (ALP-STO-001); native setup screens (password, pool progress, recovery, phone) on alp-screen;
   check gallery and phone approval on the native screen in a VM; code review of installer + pool
   (encryption/storage: opus reviewer) before the PR; `/claude-security` scan before release.
