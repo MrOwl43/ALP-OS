@@ -518,6 +518,12 @@ fn field<'a>(v: &'a Value, k: &str) -> Result<&'a Value, Fail> {
         .ok_or_else(|| Fail::new("request.json", format!("The request misses \"{k}\".")))
 }
 
+/// An archive exists: Live's on a backup disk, or the installed system's
+/// pool (ADR 0028). Both open through `alp-live-archive.service`.
+fn archive_set_up() -> bool {
+    archive::record().is_some() || pool::record().is_some()
+}
+
 fn systemctl(args: &[&str]) {
     let _ = Command::new("systemctl").args(args).status();
 }
@@ -752,7 +758,7 @@ impl Live {
                         }
                     );
                     systemctl(&["start", "alp-live-index.service"]);
-                    if archive::record().is_some() {
+                    if archive_set_up() {
                         systemctl(&["start", "--no-block", "alp-live-archive.service"]);
                         systemctl(&["start", "--no-block", immich::UNIT]);
                     }
@@ -1608,7 +1614,7 @@ impl Live {
                     // Encrypt later was cut off (ADR 0018): it goes on now,
                     // Immich only at its end.
                     self.start_encrypt(zeroize::Zeroizing::new(pw.to_string()));
-                } else if archive::record().is_some() {
+                } else if archive_set_up() {
                     // Opens the archive with the key from the index; Immich
                     // follows (the archive unit wants it; T14).
                     systemctl(&["start", "--no-block", "alp-live-archive.service"]);
@@ -2494,14 +2500,7 @@ impl Live {
             return none_json(if prep { "none" } else { "creating" }, None);
         }
         if !index::is_open() {
-            return none_json(
-                if archive::record().is_some() || pool::record().is_some() {
-                    "locked"
-                } else {
-                    "none"
-                },
-                None,
-            );
+            return none_json(if archive_set_up() { "locked" } else { "none" }, None);
         }
         match archive::status() {
             archive::Status::Open {
@@ -2824,7 +2823,7 @@ impl Live {
             }
             _ => None,
         };
-        if archive::record().is_some() {
+        if archive_set_up() {
             return Err(Fail::new(
                 "archive.exists",
                 "An archive is already set up with this stick.",
@@ -3035,7 +3034,7 @@ impl Live {
                 .to_string(),
         );
         self.check_password(&pw)?;
-        if archive::record().is_some() {
+        if archive_set_up() {
             return Err(Fail::new(
                 "archive.exists",
                 "An archive is already set up with this stick.",
@@ -3450,7 +3449,7 @@ impl Live {
             }
             None => recovery_input(&typed, &passphrase)?,
         };
-        if archive::record().is_some() {
+        if archive_set_up() {
             return Err(Fail::new(
                 "archive.exists",
                 "An archive is already set up with this stick.",
@@ -3595,7 +3594,7 @@ impl Live {
                 "paused",
                 Some("There is no room left, so phones cannot save photos now. Make room or use a bigger disk.".into()),
             ),
-            immich::State::Off if archive::record().is_none() => (
+            immich::State::Off if !archive_set_up() => (
                 "off",
                 Some("Set up the archive first; your photos are kept there.".into()),
             ),
