@@ -213,13 +213,18 @@ window.alp {
 .cat-list row:selected label { color: #ffffff; font-weight: 600; }
 .cat-list .chip { border-radius: 8px; padding: 6px; }
 
-.alp menubutton.help-btn > button:not(.flat):not(.suggested-action):not(.destructive-action):not(.glass-btn) {
+.alp button.help-btn:not(.flat):not(.suggested-action):not(.destructive-action):not(.glass-btn) {
   min-width: 28px; min-height: 28px; padding: 0; border-radius: 99px;
   background-color: #e6f0fd; color: @ACCENT@; font-weight: 800; }
-.alp menubutton.help-btn > button:not(.flat):not(.suggested-action):not(.destructive-action):not(.glass-btn):hover { background-color: #d6e6fb; }
+.alp button.help-btn:not(.flat):not(.suggested-action):not(.destructive-action):not(.glass-btn):hover { background-color: #d6e6fb; }
 .advice { font-size: 10.5pt; font-weight: 600; }
 .advice.tone-warn { color: #8a4300; }
 .advice.tone-ok { color: #17672e; }
+
+.alp popover.help-pop { margin: 0; padding: 0; box-shadow: none; background: transparent; }
+.alp popover.help-pop > contents { margin: 0; box-shadow: none; border-radius: 12px;
+  background-color: #1d2742; color: #ffffff; border: none; padding: 4px; }
+.alp popover.help-pop label { color: #ffffff; font-weight: 400; }
 
 /* Slide to confirm */
 .alp scale trough { min-height: 10px; border-radius: 99px; background-color: #e2e4ea; }
@@ -507,28 +512,72 @@ impl Note {
 }
 
 /// A round "?" that opens a short explanation (owner, 2026-11-25: one
-/// sentence on screen, more only for those who ask).
-pub fn help(more: &str, spoken: &str) -> gtk4::MenuButton {
-    let words = gtk4::Label::builder()
-        .label(more)
-        .wrap(true)
-        .max_width_chars(40)
-        .xalign(0.0)
-        .margin_top(8)
-        .margin_bottom(8)
-        .margin_start(8)
-        .margin_end(8)
-        .build();
-    let pop = gtk4::Popover::builder().child(&words).build();
-    let b = gtk4::MenuButton::builder()
-        .child(&gtk4::Label::new(Some("?")))
-        .popover(&pop)
-        .valign(gtk4::Align::Center)
-        .css_classes(["help-btn"])
-        .build();
-    // Spoken name only: a tooltip would cover the answer.
-    b.update_property(&[gtk4::accessible::Property::Label(spoken)]);
-    b
+/// sentence on screen, more only for those who ask). The bubble opens
+/// while the pointer rests on the "?" and closes when it leaves; a tap or
+/// click (touch screens) opens it for a few seconds.
+pub struct Help {
+    pub button: gtk4::Button,
+    words: gtk4::Label,
+}
+
+impl Help {
+    pub fn new(more: &str, spoken: &str) -> Self {
+        let words = gtk4::Label::builder()
+            .label(more)
+            .wrap(true)
+            .max_width_chars(40)
+            .xalign(0.0)
+            .margin_top(8)
+            .margin_bottom(8)
+            .margin_start(8)
+            .margin_end(8)
+            .build();
+        // No arrow and no shadow: a plain rounded card, so no dark corners
+        // show where a screen cannot draw see-through edges.
+        let pop = gtk4::Popover::builder()
+            .child(&words)
+            .has_arrow(false)
+            .autohide(false)
+            .css_classes(["help-pop"])
+            .build();
+        let button = gtk4::Button::builder()
+            .label("?")
+            .valign(gtk4::Align::Center)
+            .css_classes(["help-btn"])
+            .build();
+        pop.set_parent(&button);
+        {
+            let p = pop.clone();
+            button.connect_destroy(move |_| p.unparent());
+        }
+        let hover = gtk4::EventControllerMotion::new();
+        {
+            let p = pop.clone();
+            hover.connect_enter(move |_, _, _| p.popup());
+            let p = pop.clone();
+            hover.connect_leave(move |_| p.popdown());
+        }
+        button.add_controller(hover);
+        {
+            let p = pop.clone();
+            button.connect_clicked(move |_| {
+                p.popup();
+                let p = p.clone();
+                gtk4::glib::timeout_add_seconds_local_once(8, move || p.popdown());
+            });
+        }
+        let h = Help { button, words };
+        h.set(more, spoken);
+        h
+    }
+
+    /// New words in the bubble; `spoken` is the "?"'s name for screen
+    /// readers (no tooltip: it would cover the bubble).
+    pub fn set(&self, more: &str, spoken: &str) {
+        self.words.set_label(more);
+        self.button
+            .update_property(&[gtk4::accessible::Property::Label(spoken)]);
+    }
 }
 
 /// "Step 2 of 4" with dots, for the first-start pages.

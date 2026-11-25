@@ -71,7 +71,7 @@ pub struct InstallUi {
     /// The archive would be kept on an SSD or USB system disk.
     on_system: style::Note,
     /// Its "?", with the reason.
-    on_system_help: gtk4::MenuButton,
+    on_system_help: style::Help,
     rows: RefCell<Vec<adw::ActionRow>>,
     /// Archive disk rows by name: the system disk cannot also be one.
     data_checks: RefCell<Vec<(String, adw::ActionRow, gtk4::CheckButton)>>,
@@ -215,7 +215,7 @@ fn advice(t: &Texts, kind: &str) -> Option<gtk4::Box> {
         .build();
     b.append(&i);
     b.append(&l);
-    b.append(&style::help(&more, &format!("{short}: {more}")));
+    b.append(&style::Help::new(&more, &format!("{short}: {more}")).button);
     Some(b)
 }
 
@@ -270,8 +270,8 @@ impl InstallUi {
             .visible(false)
             .build();
         let on_system = style::Note::new("warn", "");
-        let on_system_help = style::help("", "");
-        on_system.root.append(&on_system_help);
+        let on_system_help = style::Help::new("", "");
+        on_system.root.append(&on_system_help.button);
         let note_group = adw::PreferencesGroup::new();
         note_group.add(&on_system.root);
         choose.add(&system_group);
@@ -758,18 +758,7 @@ impl InstallUi {
                     "Your photos will be kept on the system disk.",
                 );
                 self.on_system.say("warn", &short);
-                if let Some(l) = self
-                    .on_system_help
-                    .popover()
-                    .and_then(|p| p.child())
-                    .and_downcast::<gtk4::Label>()
-                {
-                    l.set_label(&why);
-                }
-                self.on_system_help
-                    .update_property(&[gtk4::accessible::Property::Label(&format!(
-                        "{short} {why}"
-                    ))]);
+                self.on_system_help.set(&why, &format!("{short} {why}"));
             }
             None => self.on_system.set(""),
         }
