@@ -73,6 +73,67 @@ struct LockUi {
     password: gtk4::PasswordEntry,
     sign_in: gtk4::Button,
     error: style::Note,
+    tiles: LockTiles,
+}
+
+/// What the lock screen always shows (owner, 2026-11-25): temperature,
+/// the disks, phones and the last backup. An item the owner hid in the
+/// settings says so instead of showing a value.
+struct LockTiles {
+    temp: Tile,
+    disks: Tile,
+    phones: Tile,
+    backup: Tile,
+}
+
+impl LockTiles {
+    fn show(&self, texts: &Texts, t: &model::home::Tiles) {
+        use model::home::size;
+        let hidden = |k: &str| t.hidden.iter().any(|h| h == k);
+        let hid = texts.t("lock.hidden");
+        match t.temperature_c {
+            Some(c) => {
+                self.temp.set(&format!("{c} °C"), "", c >= 80);
+                if c >= 90 {
+                    Tone::Bad.apply(&self.temp.chip);
+                }
+            }
+            None => self.temp.set("–", &texts.t("lock.temp.none"), false),
+        }
+        let free = if hidden("space") {
+            hid.clone()
+        } else {
+            texts.fill("lock.free", &[("free", &size(t.free_bytes))])
+        };
+        self.disks.set(
+            &texts.t(&format!("health.{}", t.health)),
+            &free,
+            t.health != "ok",
+        );
+        if hidden("phones") {
+            self.phones.set(&hid, "", false);
+        } else if t.phones > 0 {
+            self.phones.set(
+                &texts.fill("status.phones.n", &[("n", &t.phones.to_string())]),
+                "",
+                false,
+            );
+        } else {
+            self.phones.set(&texts.t("status.phones.none"), "", false);
+        }
+        let last = t
+            .last_upload
+            .as_deref()
+            .and_then(|s| glib::DateTime::from_iso8601(s, None).ok())
+            .and_then(|d| d.to_local().ok())
+            .and_then(|d| d.format("%e %b, %H:%M").ok())
+            .map(|w| w.trim().to_string());
+        match (hidden("backup"), last) {
+            (true, _) => self.backup.set(&hid, "", false),
+            (false, Some(w)) => self.backup.set(&w, "", false),
+            (false, None) => self.backup.set("–", "", false),
+        }
+    }
 }
 
 /// The home page's changing parts.
@@ -80,7 +141,6 @@ struct HomeUi {
     badge: gtk4::Image,
     title: gtk4::Label,
     line: gtk4::Label,
-    install_btn: gtk4::Button,
     photos_btn: gtk4::Button,
 }
 
@@ -95,6 +155,9 @@ struct SettingsUi {
     phone_rows: RefCell<Vec<adw::ActionRow>>,
     last: RefCell<Settings>,
     note: style::Note,
+    /// Advanced: install on this computer (only while running from a stick).
+    advanced: adw::PreferencesGroup,
+    install_btn: gtk4::Button,
 }
 
 fn main() -> glib::ExitCode {
@@ -115,7 +178,7 @@ fn lock_page(texts: &Texts) -> (gtk4::ScrolledWindow, LockUi) {
     let badge = style::icon("system-lock-screen-symbolic", 48);
     badge.add_css_class("avatar");
     badge.set_halign(gtk4::Align::Center);
-    badge.set_margin_top(48);
+    badge.set_margin_top(20);
     let user = gtk4::Label::builder()
         .label(texts.t("lock.user"))
         .css_classes(["login-name"])
@@ -161,7 +224,54 @@ fn lock_page(texts: &Texts) -> (gtk4::ScrolledWindow, LockUi) {
         .margin_top(24)
         .margin_bottom(24)
         .build();
-    let page = style::scroll(&clamp);
+    // The facts row under the sign-in.
+    let tiles = LockTiles {
+        temp: Tile::new(
+            &texts.t("lock.temp"),
+            "computer-symbolic",
+            Tone::Warn,
+            false,
+        ),
+        disks: Tile::new(
+            &texts.t("lock.disks"),
+            "drive-harddisk-symbolic",
+            Tone::Ok,
+            false,
+        ),
+        phones: Tile::new(
+            &texts.t("status.phones"),
+            "phone-symbolic",
+            Tone::Violet,
+            false,
+        ),
+        backup: Tile::new(
+            &texts.t("lock.last"),
+            "emblem-synchronizing-symbolic",
+            Tone::Blue,
+            false,
+        ),
+    };
+    let facts = gtk4::Box::builder().spacing(14).homogeneous(true).build();
+    for t in [&tiles.temp, &tiles.disks, &tiles.phones, &tiles.backup] {
+        facts.append(&t.frame);
+    }
+    let facts = adw::Clamp::builder()
+        .vexpand(false)
+        .valign(gtk4::Align::End)
+        .maximum_size(1000)
+        .tightening_threshold(1000)
+        .child(&facts)
+        .margin_start(32)
+        .margin_end(32)
+        .margin_bottom(28)
+        .build();
+    let whole = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .build();
+    clamp.set_vexpand(true);
+    whole.append(&clamp);
+    whole.append(&facts);
+    let page = style::scroll(&whole);
     let ui = LockUi {
         clock,
         date,
@@ -170,6 +280,7 @@ fn lock_page(texts: &Texts) -> (gtk4::ScrolledWindow, LockUi) {
         password,
         sign_in,
         error,
+        tiles,
     };
     (page, ui)
 }
@@ -196,18 +307,12 @@ fn build(app: &adw::Application) {
         badge: style::hero("emblem-ok-symbolic", Tone::Ok),
         title: style::text("", &["title-1"], false),
         line: style::text("", &["lead"], false),
-        install_btn: style::button(
-            "drive-harddisk-symbolic",
-            &texts.t("install.open"),
-            &["suggested-action", "pill"],
-        ),
         photos_btn: style::button(
             "image-x-generic-symbolic",
             &texts.t("home.gallery"),
             &["suggested-action", "pill"],
         ),
     };
-    home.install_btn.set_visible(false);
     home.photos_btn.set_visible(false);
     let lock_btn = style::button(
         "system-lock-screen-symbolic",
@@ -220,16 +325,7 @@ fn build(app: &adw::Application) {
         &["pill"],
     );
     let tiles = HomeTiles::new(&texts);
-    let home_page = home_layout(
-        &home,
-        &[
-            &home.photos_btn,
-            &home.install_btn,
-            &settings_btn,
-            &lock_btn,
-        ],
-        &tiles,
-    );
+    let home_page = home_layout(&home, &[&home.photos_btn, &settings_btn, &lock_btn], &tiles);
 
     let stack = gtk4::Stack::builder()
         .transition_type(gtk4::StackTransitionType::Crossfade)
@@ -280,7 +376,9 @@ fn build(app: &adw::Application) {
         setup: setup_ui,
         set,
     });
-    ui.home.install_btn.connect_clicked(move |_| inst.open());
+    // Install from the stick: chosen in the first setup; here only under
+    // Settings > Advanced, for testing (owner, 2026-11-25).
+    ui.set.install_btn.connect_clicked(move |_| inst.open());
     {
         let u = ui.clone();
         ui.bar.home.connect_clicked(move |_| {
@@ -483,7 +581,7 @@ fn handle(ui: &Ui, m: Msg) {
                 ui.pair.show_pending(&model::pairing::pending(&w));
                 show_settings(&ui.set, &ui.texts, &Settings::from_state(&w));
                 let (can_install, job) = model::install::state(&w);
-                ui.home.install_btn.set_visible(can_install);
+                ui.set.advanced.set_visible(can_install);
                 ui.inst.show_job(&job);
                 if ui.stack.visible_child_name().as_deref() == Some("lock") {
                     ui.stack.set_visible_child_name("home");
@@ -495,6 +593,9 @@ fn handle(ui: &Ui, m: Msg) {
                     "lock.msg.ok"
                 };
                 ui.lock.status.set_label(&ui.texts.t(key));
+                ui.lock
+                    .tiles
+                    .show(&ui.texts, &model::home::Tiles::from_state(&w));
                 let (icon, tone) = if s.level.needs_user() {
                     level_look(s.level)
                 } else {
@@ -651,12 +752,28 @@ fn settings_page(
         act("live/power/off", json!({"restart": false})),
     );
 
+    let install_btn = style::button("go-next-symbolic", &texts.t("set.install.go"), &[]);
+    install_btn.set_valign(gtk4::Align::Center);
+    let install_row = icon_row(
+        &texts.t("install.open"),
+        "drive-harddisk-symbolic",
+        Tone::Teal,
+    );
+    install_row.set_subtitle(&texts.t("set.install.d"));
+    install_row.add_suffix(&install_btn);
+    let advanced = adw::PreferencesGroup::builder()
+        .title(texts.t("cat.advanced"))
+        .visible(false)
+        .build();
+    advanced.add(&install_row);
+
     let about = adw::PreferencesGroup::builder()
         .title(texts.t("set.h.about"))
         .build();
     let version = icon_row(&texts.t("about.version"), "help-about-symbolic", Tone::Blue);
     about.add(&version);
     page.add(&about);
+    page.add(&advanced);
 
     let note = style::Note::new("bad", "");
     note.root.set_margin_start(24);
@@ -690,6 +807,8 @@ fn settings_page(
         phone_rows: RefCell::new(Vec::new()),
         last: RefCell::new(Settings::default()),
         note,
+        advanced,
+        install_btn,
     };
     (b, ui)
 }
