@@ -378,6 +378,10 @@ fn build(app: &adw::Application) {
     });
     // Install from the stick: chosen in the first setup; here only under
     // Settings > Advanced, for testing (owner, 2026-11-25).
+    {
+        let i = inst.clone();
+        *ui.setup.open_install.borrow_mut() = Some(Box::new(move || i.open()));
+    }
     ui.set.install_btn.connect_clicked(move |_| inst.open());
     {
         let u = ui.clone();
@@ -552,6 +556,8 @@ fn handle(ui: &Ui, m: Msg) {
             let in_setup = ui.setup.show(model::setup::step(&w).as_ref());
             ui.in_setup.set(in_setup);
             if in_setup {
+                // The place step uses the install pages: keep their progress.
+                ui.inst.show_job(&model::install::state(&w).1);
                 if s.open {
                     ui.pair.show_pending(&model::pairing::pending(&w));
                 }

@@ -37,12 +37,13 @@ pub enum SetupMsg {
 }
 
 /// The pages this module adds to the stack.
-const PAGES: [&str; 5] = [
+const PAGES: [&str; 6] = [
     "setup-password",
     "setup-pool",
     "setup-recovery",
     "setup-confirm",
     "setup-phone",
+    "setup-installed",
 ];
 
 pub struct SetupUi {
@@ -79,6 +80,8 @@ pub struct SetupUi {
     // Phone.
     /// Opens the pairing pages (wired in main.rs).
     pub phone_connect: gtk4::Button,
+    /// Opens the install pages (wired in main.rs): the place step.
+    pub open_install: std::cell::RefCell<Option<Box<dyn Fn()>>>,
     phone_note: style::Note,
 }
 
@@ -355,6 +358,45 @@ impl SetupUi {
             Some(PAGES[4]),
         );
 
+        // Installed from this stick: remove it, then restart.
+        let restart = main_button("system-reboot-symbolic", &t.t("power.restart.yes"));
+        stack.add_named(
+            &style::scroll(&style::panel(
+                &[
+                    style::hero("emblem-ok-symbolic", Tone::Ok).upcast_ref(),
+                    style::text(
+                        &text(t, "setup.installed.title", "ALP-OS is installed"),
+                        &["title-1"],
+                        true,
+                    )
+                    .upcast_ref(),
+                    style::text(
+                        &text(
+                            t,
+                            "setup.installed.sub",
+                            "Remove the USB stick, then restart. Setup goes on from the computer's own disk.",
+                        ),
+                        &["lead"],
+                        true,
+                    )
+                    .upcast_ref(),
+                    restart.upcast_ref(),
+                ],
+                560,
+            )),
+            Some(PAGES[5]),
+        );
+        {
+            let c = client.clone();
+            restart.connect_clicked(move |b| {
+                b.set_sensitive(false);
+                let c = c.clone();
+                std::thread::spawn(move || {
+                    let _ = c.post("live/power/off", &json!({"restart": true}));
+                });
+            });
+        }
+
         let ui = Rc::new(SetupUi {
             texts: texts.clone(),
             client,
@@ -384,6 +426,7 @@ impl SetupUi {
             confirm_note,
             phone_connect,
             phone_note,
+            open_install: std::cell::RefCell::new(None),
         });
         {
             let u = ui.clone();
@@ -533,6 +576,18 @@ impl SetupUi {
             return true;
         }
         let want = match step {
+            // Where ALP-OS lives: the install pages (install on a disk, or
+            // keep running from the stick); they stay while in use.
+            Step::Place => {
+                let on_install = visible
+                    .as_deref()
+                    .is_some_and(|v| v == "install" || v.starts_with("install-"));
+                if !on_install && let Some(f) = self.open_install.borrow().as_ref() {
+                    f();
+                }
+                return true;
+            }
+            Step::Installed => PAGES[5],
             Step::Password => PAGES[0],
             Step::Pool {
                 start,

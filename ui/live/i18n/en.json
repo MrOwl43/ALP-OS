@@ -1042,5 +1042,7 @@
  "lock.temp.none": "Not measured yet",
  "lock.disks": "Disks",
  "set.install.d": "For testing. Normally chosen in the first setup.",
- "set.install.go": "Choose disks"
+ "set.install.go": "Choose disks",
+ "setup.installed.title": "ALP-OS is installed",
+ "setup.installed.sub": "Remove the USB stick, then restart. Setup goes on from the computer's own disk."
 }

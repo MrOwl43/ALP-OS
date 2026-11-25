@@ -289,6 +289,13 @@ pub mod setup {
 
     #[derive(Debug, Clone, PartialEq)]
     pub enum Step {
+        /// Running from a USB stick, nothing set up: where ALP-OS lives
+        /// (install on a disk, or keep running from the stick). Comes
+        /// first: nothing secret carries over to an installed disk.
+        Place,
+        /// Installed on a disk from this stick: remove it and restart;
+        /// setup goes on on the installed disk.
+        Installed,
         /// No password yet (`lock.state` `setup`).
         Password,
         /// The archive is being made on the chosen disks (or must be).
@@ -305,6 +312,12 @@ pub mod setup {
     }
 
     pub fn step(w: &Value) -> Option<Step> {
+        // `setup.place` (alpd 0.2.8): checked before everything else.
+        match w["setup"]["place"].as_str() {
+            Some("choose") => return Some(Step::Place),
+            Some("installed") => return Some(Step::Installed),
+            _ => {}
+        }
         if w["lock"]["state"].as_str() == Some("setup") {
             return Some(Step::Password);
         }
@@ -949,6 +962,27 @@ mod tests {
         assert!(cells[0] && cells[n - 1] && cells[n * (n - 1)]);
         assert_eq!(left(125), ("2".to_string(), "05".to_string()));
     }
+    #[test]
+    fn setup_place_comes_first() {
+        use super::setup::{Step, step};
+        // On the stick, nothing set up: the place before the password.
+        let w = json!({"setup": {"place": "choose"}, "lock": {"state": "setup"}});
+        assert_eq!(step(&w), Some(Step::Place));
+        // Installed from this stick: restart into the disk, even though no
+        // password was set here.
+        let w = json!({"setup": {"place": "installed"}, "lock": {"state": "setup"}});
+        assert_eq!(step(&w), Some(Step::Installed));
+        // Done (or an older alpd without the field): the usual order.
+        for place in [json!("done"), Value::Null] {
+            let w = json!({"setup": {"place": place}, "lock": {"state": "setup"}});
+            assert_eq!(step(&w), Some(Step::Password));
+        }
+        let w = json!({"setup": {"place": "done"}, "lock": {"state": "open"},
+            "console": {"state": "open"}, "pool": "waiting",
+            "archive": {"state": "none", "job": null}});
+        assert!(matches!(step(&w), Some(Step::Pool { start: true, .. })));
+    }
+
     #[test]
     fn setup_steps_in_order() {
         use super::setup::{Step, asked, step};
