@@ -72,6 +72,26 @@ fn probe(r: &mut dyn Run, dev: &str, tag: &str) -> Option<String> {
     (out.ok && !v.is_empty()).then(|| v.to_string())
 }
 
+/// Like [`probe`], but only "nothing found" counts as empty: `blkid -p`
+/// says so with exit 2 and no output. Any other failure (two signatures,
+/// exit 8; an I/O error on a failing disk) is an error, never "empty", so
+/// it can never lead to formatting.
+fn probe_sure(r: &mut dyn Run, dev: &str, tag: &str, code: &'static str) -> Result<Option<String>> {
+    let out = r.run(
+        "blkid",
+        &owned(&["-p", "-o", "value", "-s", tag, dev]),
+        None,
+    );
+    let v = out.stdout.trim();
+    if out.ok && !v.is_empty() {
+        return Ok(Some(v.to_string()));
+    }
+    if !out.ok && v.is_empty() && out.stderr.trim().is_empty() {
+        return Ok(None);
+    }
+    Err(err(code, &format!("blkid {dev}"), &out))
+}
+
 /// Make member `dev` a LUKS2 container (unless it already is ours) and
 /// open it as `name`.
 fn unlock(
@@ -91,16 +111,21 @@ fn unlock(
     {
         return Ok(());
     }
-    let is_ours = probe(r, dev, "TYPE").as_deref() == Some("crypto_LUKS")
-        && probe(r, dev, "LABEL").as_deref() == Some(LABEL);
-    if !is_ours {
+    let kind = probe_sure(r, dev, "TYPE", code)?;
+    let is_ours =
+        kind.as_deref() == Some("crypto_LUKS") && probe(r, dev, "LABEL").as_deref() == Some(LABEL);
+    // A power cut during luksFormat leaves our header (with the label)
+    // before the key slot exists: no key opens it. The partition is still
+    // empty then, so it is formatted again (only on the first start).
+    let unfinished = is_ours && may_format && keyslots(r, dev)?.is_empty();
+    if !is_ours || unfinished {
         if !may_format {
             return Err(HwError {
                 code,
                 detail: format!("{dev} is not an ALP-OS pool member"),
             });
         }
-        if probe(r, dev, "TYPE").is_some() {
+        if !unfinished && kind.is_some() {
             // Never format over something: the installer made this
             // partition empty, so anything here was not put there by us.
             return Err(HwError {
@@ -402,7 +427,9 @@ pub fn add_recovery(
 }
 
 /// Remove recovery `slot` from `dev` if it is in use (batch mode: no
-/// passphrase; only slots 1 and 2 can be named here).
+/// passphrase; only slots 1 and 2 can be named here). With stdin empty
+/// cryptsetup 2.7 skips the passphrase check in batch mode
+/// (action_luksKillSlot ignores "Nothing to read on input").
 pub fn remove_recovery(r: &mut dyn Run, dev: &str, slot: u8) -> Result<()> {
     let n = recovery_slot(slot)?;
     if !keyslots(r, dev)?.contains(&slot) {
@@ -430,7 +457,16 @@ pub fn test_recovery(r: &mut dyn Run, dev: &str, secret: &str, slot: u8) -> Resu
         &owned(&["open", "--test-passphrase", &format!("--key-slot={n}"), dev]),
         Some(&input),
     );
-    Ok(out.ok)
+    // Wrong words: cryptsetup says "No key available with this
+    // passphrase" (tools_passphrase_msg, -EPERM). Anything else (out of
+    // memory for Argon2, an I/O error) is a failure, not "wrong words".
+    if out.ok {
+        Ok(true)
+    } else if out.stderr.contains("No key available") {
+        Ok(false)
+    } else {
+        Err(err(CODE_OPEN, &format!("test {dev}"), &out))
+    }
 }
 
 /// The real runner: the program with these arguments, stdin piped when
@@ -496,6 +532,8 @@ mod tests {
         calls: Vec<(String, Vec<String>, bool)>,
         fail: Option<&'static str>,
         key_seen: Vec<Vec<u8>>,
+        /// LUKS headers without a key slot (power cut during luksFormat).
+        no_slots: HashSet<String>,
     }
 
     impl Mock {
@@ -538,10 +576,22 @@ mod tests {
             }
             let a = |i: usize| args[i].as_str();
             match program {
+                // Nothing found: exit 2 without output (blkid -p).
                 "blkid" => match self.probes.get(&(a(5).into(), a(4).into())) {
                     Some(v) => ok(v),
-                    None => no(),
+                    None => Out {
+                        ok: false,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    },
                 },
+                "cryptsetup" if a(0) == "luksDump" => {
+                    if self.no_slots.contains(a(1)) {
+                        ok("Keyslots:\nTokens:\n")
+                    } else {
+                        ok("Keyslots:\n  0: luks2\n")
+                    }
+                }
                 "test" => {
                     if self.exists.contains(a(1)) {
                         ok("")
@@ -558,6 +608,7 @@ mod tests {
                 }
                 "cryptsetup" if a(0) == "luksFormat" => {
                     let dev = args.last().unwrap().clone();
+                    self.no_slots.remove(&dev);
                     self.set(&dev, "TYPE", "crypto_LUKS");
                     self.set(&dev, "LABEL", LABEL);
                     ok("")
@@ -695,8 +746,57 @@ mod tests {
         // The mappings were closed by the restart; the headers stay.
         m.exists.clear();
         create(&plan(2), &devs(2), &key(), MNT, &mut m).unwrap();
-        assert!(m.ran("cryptsetup").iter().all(|a| a[0] == "open"));
+        assert!(
+            m.ran("cryptsetup")
+                .iter()
+                .all(|a| a[0] == "open" || a[0] == "luksDump")
+        );
         assert!(m.ran("mkfs.btrfs").is_empty());
+    }
+
+    #[test]
+    fn a_header_without_a_key_slot_is_formatted_again() {
+        // Power cut between the LUKS2 header and its first key slot.
+        let mut m = Mock::default();
+        for d in devs(2) {
+            m.set(&d, "TYPE", "crypto_LUKS");
+            m.set(&d, "LABEL", LABEL);
+        }
+        m.no_slots.insert("/dev/vdb1".into());
+        create(&plan(2), &devs(2), &key(), MNT, &mut m).unwrap();
+        let formatted: Vec<_> = m
+            .ran("cryptsetup")
+            .into_iter()
+            .filter(|a| a[0] == "luksFormat")
+            .map(|a| a.last().unwrap().clone())
+            .collect();
+        assert_eq!(formatted, ["/dev/vdb1"]);
+    }
+
+    #[test]
+    fn a_failed_probe_never_formats() {
+        // blkid -p exit 8 (two signatures) or an I/O error: not "empty".
+        struct Bad(Mock);
+        impl Run for Bad {
+            fn run(&mut self, p: &str, a: &[String], i: Option<&[u8]>) -> Out {
+                if p == "blkid" && a.last().map(String::as_str) == Some("/dev/vdc1") {
+                    return Out {
+                        ok: false,
+                        stdout: String::new(),
+                        stderr: "ambivalent result".into(),
+                    };
+                }
+                self.0.run(p, a, i)
+            }
+        }
+        let mut b = Bad(Mock::default());
+        let e = create(&plan(2), &devs(2), &key(), MNT, &mut b).unwrap_err();
+        assert_eq!(e.code, CODE_CREATE);
+        assert!(
+            !b.0.ran("cryptsetup")
+                .iter()
+                .any(|a| a[0] == "luksFormat" && a.last().unwrap() == "/dev/vdc1")
+        );
     }
 
     #[test]

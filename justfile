@@ -130,6 +130,7 @@ test-vm-update:
 # The installed version (ALP_PROFILE=installed, 0.2.8): T-INST-01 installs
 # onto a virtual disk next to a fake Windows disk that must stay untouched.
 test-vm-installed:
+    tests/vm/t-core.sh {{image}}
     tests/vm/t-inst-01.sh {{image}}
     tests/vm/t-inst-02.sh {{image}}
 

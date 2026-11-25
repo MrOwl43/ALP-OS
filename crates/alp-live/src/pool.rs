@@ -147,6 +147,27 @@ pub fn missing_disks() -> Vec<String> {
     record().map_or_else(Vec::new, |r| r.missing(&|u| by_partuuid(u).is_some()))
 }
 
+/// Is the pool mounted read-only or `degraded` (a disk was missing at
+/// start)? Stays true until the next start even when the disk comes back,
+/// because the mount does not change by itself.
+pub fn is_degraded() -> bool {
+    record().is_some()
+        && fs::read_to_string("/proc/self/mountinfo").is_ok_and(|m| mountinfo_degraded(&m, TOP_MNT))
+}
+
+fn mountinfo_degraded(mountinfo: &str, at: &str) -> bool {
+    mountinfo.lines().any(|l| {
+        let f: Vec<&str> = l.split_whitespace().collect();
+        let Some(sep) = f.iter().position(|x| *x == "-") else {
+            return false;
+        };
+        f.get(4) == Some(&at)
+            && (f.get(5).is_some_and(|o| o.split(',').any(|x| x == "ro"))
+                || f.get(sep + 3)
+                    .is_some_and(|o| o.split(',').any(|x| x == "degraded" || x == "ro")))
+    })
+}
+
 /// A disk's screen name from its `/dev/disk/by-id` name and size, e.g.
 /// `ata-WDC_WD20EZRZ-00Z5HB0_WD-WCC4M1234567` and 2 TB become
 /// "WDC WD20EZRZ-00Z5HB0 WD-WCC4M1234567 (2.0 TB)": maker, model and the
@@ -191,12 +212,17 @@ fn write_atomic(path: &Path, body: &[u8], mode: u32) -> Result<(), String> {
     Ok(())
 }
 
-/// The pool key from the unlocked index; made on the first call.
-fn pool_key() -> Result<alp_crypto::keys::PoolKey, String> {
+/// The pool key from the unlocked index. Only the first start (`make`,
+/// from [`create`]) may make it; an existing pool whose key file is gone
+/// never gets a new one written in its place.
+fn pool_key(make: bool) -> Result<alp_crypto::keys::PoolKey, String> {
     if !crate::index::is_open() {
         return Err("the archive is locked; type your password first".into());
     }
     let path = crate::index::path(KEY_REL);
+    if !path.is_file() && !make {
+        return Err("the archive's key is missing from the index".into());
+    }
     if !path.is_file() {
         let key = alp_crypto::keys::PoolKey::generate().map_err(|e| e.to_string())?;
         let mut bytes = zeroize::Zeroizing::new(Vec::with_capacity(64));
@@ -292,7 +318,7 @@ pub fn create(say: &mut dyn FnMut(&str)) -> Result<(), HwError> {
     // No ledger on this system yet: the seed's digest is the evidence the
     // user confirmed (contract firstboot-seed.md, rule 3); seq 0.
     let checked = seed_check::check(&seed, &disks, &by_id_disk, 0)?;
-    let key = pool_key().map_err(fail)?;
+    let key = pool_key(true).map_err(fail)?;
     say("Locking your disks with a new key…");
     let devs: Vec<String> = checked
         .found
@@ -327,7 +353,7 @@ pub fn create(say: &mut dyn FnMut(&str)) -> Result<(), HwError> {
 /// Every start: open the pool (read-only if a mirrored disk is missing).
 pub fn open() -> Result<Opened, String> {
     let rec = record().ok_or("no pool set up yet")?;
-    let key = pool_key()?;
+    let key = pool_key(false)?;
     let members: Vec<(String, bool)> = rec
         .members
         .iter()
@@ -472,12 +498,14 @@ pub fn recovery_bind(secret: &str) -> Result<(), String> {
     }
     recovery_settle()?;
     let devs = all_members(&rec)?;
-    let key = pool_key()?;
+    let key = pool_key(false)?;
     let used = pool::keyslots(&mut System, &devs[0]).map_err(|e| e.to_string())?;
+    // Both slots in use without a state file: never guess which one is
+    // the current code (removing it before the new one is confirmed).
     let target = pool::RECOVERY_SLOTS
         .into_iter()
         .find(|s| !used.contains(s))
-        .unwrap_or(pool::RECOVERY_SLOTS[1]);
+        .ok_or("both recovery slots are in use; ask for help before making a new code")?;
     set_recovery_state(Some(RecoveryStep::Pending(target)))?;
     for d in &devs {
         // A slot left by an interrupted earlier attempt on another member.
@@ -635,5 +663,13 @@ mod tests {
         assert_eq!(parse_recovery_state(""), None);
         assert_eq!(other_slot(1), 2);
         assert_eq!(other_slot(2), 1);
+    }
+    #[test]
+    fn degraded_from_the_mount() {
+        let ro = "40 30 0:52 / /run/alp/pool ro,relatime shared:1 - btrfs /dev/mapper/alp-pool-0 ro,degraded,space_cache=v2\n";
+        let rw = "40 30 0:52 / /run/alp/pool rw,relatime shared:1 - btrfs /dev/mapper/alp-pool-0 rw,space_cache=v2\n";
+        assert!(mountinfo_degraded(ro, "/run/alp/pool"));
+        assert!(!mountinfo_degraded(rw, "/run/alp/pool"));
+        assert!(!mountinfo_degraded(ro, "/elsewhere"));
     }
 }

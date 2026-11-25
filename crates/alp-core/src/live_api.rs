@@ -2516,7 +2516,7 @@ impl Live {
                 "size_bytes": size_bytes, "free_bytes": free_bytes,
                 "space": index::space_level(size_bytes, free_bytes, self.low_percent),
                 "job": job.as_ref().map(Job::json),
-                "error": disk_missing_fail(&missing).as_ref().map(fail_json),
+                "error": disk_missing_fail(&missing, pool::is_degraded()).as_ref().map(fail_json),
                 "missing_disks": missing,
                 "recovery": if self.has_recovery() { "set" } else { "none" },
                 "password_reopen": archive::password_reopen(),
@@ -4231,10 +4231,18 @@ fn list_names(names: &[String]) -> String {
 }
 
 /// The open pool with disks not connected (ALP-STO-001): it is read-only
-/// until they are back (alp_storage::pool::Opened::Degraded).
-fn disk_missing_fail(missing: &[String]) -> Option<Fail> {
+/// until they are back (alp_storage::pool::Opened::Degraded). A disk
+/// connected again leaves the pool read-only until the next start
+/// (`degraded`), so the alert stays, saying to restart.
+fn disk_missing_fail(missing: &[String], degraded: bool) -> Option<Fail> {
     if missing.is_empty() {
-        return None;
+        return degraded.then(|| {
+            Fail::new(
+                "archive.disk_missing",
+                "A disk of your archive was missing when the server started, so new photos are not saved. Every disk is connected now: restart the server.",
+            )
+            .with_code("ALP-STO-001")
+        });
     }
     let (n, it) = if missing.len() == 1 {
         ("A disk of your archive is missing", "it")
@@ -5209,8 +5217,14 @@ mod tests {
 
     #[test]
     fn a_missing_pool_disk_is_named() {
-        assert!(disk_missing_fail(&[]).is_none());
-        let f = disk_missing_fail(&["WDC WD20 X1 (2.0 TB)".into()]).unwrap();
+        assert!(disk_missing_fail(&[], false).is_none());
+        let back = disk_missing_fail(&[], true).unwrap();
+        assert!(
+            back.message.contains("restart the server"),
+            "{}",
+            back.message
+        );
+        let f = disk_missing_fail(&["WDC WD20 X1 (2.0 TB)".into()], true).unwrap();
         assert_eq!(
             (f.key, f.code, f.level()),
             ("archive.disk_missing", Some("ALP-STO-001"), "now")
@@ -5222,7 +5236,7 @@ mod tests {
             f.message
         );
         assert!(f.message.contains("until it is back"), "{}", f.message);
-        let two = disk_missing_fail(&["A".into(), "B".into()]).unwrap();
+        let two = disk_missing_fail(&["A".into(), "B".into()], true).unwrap();
         assert!(
             two.message
                 .starts_with("Disks of your archive are missing: A and B."),

@@ -38,13 +38,17 @@ else
     echo "FAIL: loader.conf on the ESP has no menu timeout" >&2; exit 1
 fi
 uki_name=$(mdir -b -i "$image@@$esp_offset" ::/EFI/Linux | grep -i '\.efi$' | head -1)
-if [[ -n $uki_name ]] && mtype -i "$image@@$esp_offset" "$uki_name" \
-        | grep -aq 'ID=.\?safe-graphics' \
-    && mtype -i "$image@@$esp_offset" "$uki_name" | grep -aq 'nomodeset'; then
-    echo "  ok: start file has the safe graphics entry"
-else
-    echo "FAIL: start file ${uki_name:-(none)} has no safe graphics entry" >&2; exit 1
-fi
+[[ -n $uki_name ]] || { echo "FAIL: no start file in the ESP's EFI/Linux" >&2; exit 1; }
+uki_copy=$(mktemp)
+trap 'rm -f "$uki_copy"' EXIT
+mcopy -o -n -i "$image@@$esp_offset" "$uki_name" "$uki_copy"
+# The profile's own command line (the kernel also contains "nomodeset").
+python3 -I "$here/check-uki.py" profile "$uki_copy" safe-graphics nomodeset || exit 1
+# The initrd finds the root on common disks (image/mkosi.conf
+# KernelInitrdModules=; the start file must stay small for old firmware).
+python3 -I "$here/check-uki.py" modules "$uki_copy" sd_mod usb_storage uas xhci_pci nvme ahci \
+    mmc_block sdhci_pci dm_verity erofs virtio_blk hv_storvsc vmw_pvscsi || exit 1
+rm -f "$uki_copy"
 
 if [[ -n ${ALP_SHARED_OUT:-} ]]; then
     # Shared boot (tests/vm/t-core.sh): the probe output is already there.
