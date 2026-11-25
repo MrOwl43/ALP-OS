@@ -86,6 +86,10 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   says to remove the stick and restart (ALP-BOOT-002). T-INST-01 part 3 starts with the stick in.
 - Failed install (review item 4): the ESP is labelled `alp-installing` until the last install step;
   such a disk (installer partitions only, nothing encrypted) is offered again with the strong confirm.
+- CI green 2026-11-25 on 44c49dd (installed run 45704305606, base green on 7583abf): T-INST-01 part 3
+  reproduced the root read from the stick; state still came from the installed disk.
+- Design pass from the UI/UX thread waits on branch claude/project-thread-2tu0xs (fast-forwards here)
+  for the owner's OK.
 - Owner (2026-11-25): no interim laptop build; he tests the finished product on old and new laptops.
 - Next: T-SCREEN-01 VM test of the native setup
   screens; review items 4 and 5; PR with the owner's OK; `/claude-security` scan before release.
