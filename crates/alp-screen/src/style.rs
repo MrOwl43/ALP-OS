@@ -1,13 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The screen's look (0.2.8 design pass): the 0.2.7 console's blue
-//! gradient and system bar, coloured icons, cards, and the shared widgets
-//! every page is built from. Accessibility rules kept here:
+//! The screen's look (0.2.8 design pass 2): calm and plain, inspired by
+//! the desktop computers of 2016-2020: a wallpaper behind everything,
+//! light windows with dark text, filled rounded colour icons, a thin top
+//! bar, rounded-rectangle buttons with one blue for the main action.
+//! Inspiration only: no other system's images, icons or names are used.
 //!
-//! - Text on the gradient is white or near white (contrast at least 4.5:1
-//!   on the lightest blue; `dim-label` is raised from 55 % to 80 %).
+//! Colours and the wallpaper are a [`Theme`], so a later version can offer
+//! other colour sets and a picture of the user's own as the background
+//! (owner, 2026-11-25). Everything else reads the theme's colours.
+//!
+//! Accessibility rules kept here:
+//! - Dark text on light windows (contrast at least 4.5:1; grey text is
+//!   #5f5f66 or darker); white text only on the darkened top bar and on
+//!   the sign-in page, which has its own shade over the wallpaper.
 //! - A colour never stands alone: every status has an icon and words.
-//! - Buttons and fields are at least 44 px high; the keyboard focus ring
-//!   is a thick yellow line that shows on blue and on white.
+//! - Buttons and fields are at least 44 px high; base text 12 pt.
+//! - A clear 3 px focus ring for the keyboard.
 //! - Icon-only controls carry a spoken name ([`name`]).
 //!
 //! Icons are the Adwaita symbolic set (package adwaita-icon-theme).
@@ -15,141 +23,183 @@
 use gtk4::prelude::*;
 use libadwaita as adw;
 
+/// A colour set and background. Only [`Theme::DEFAULT`] exists in 0.2.8.
+pub struct Theme {
+    /// CSS `background-image` of the whole screen: a gradient now, later
+    /// also `url("file:///...")` for the user's own picture.
+    pub wallpaper: &'static str,
+    /// The colour of main buttons, ticks and focus rings (white text on it
+    /// must reach 4.5:1).
+    pub accent: &'static str,
+}
+
+impl Theme {
+    pub const DEFAULT: Theme = Theme {
+        wallpaper: "radial-gradient(circle at 18% 12%, rgba(255,255,255,0.28), rgba(255,255,255,0) 42%), \
+                    radial-gradient(circle at 85% 90%, rgba(120,90,220,0.45), rgba(120,90,220,0) 50%), \
+                    linear-gradient(160deg, #4a8ee6 0%, #2f5bbf 45%, #1d2d6b 100%)",
+        accent: "#0a62d9",
+    };
+}
+
 const CSS: &str = r#"
-@define-color window_bg_color #12307f;
-@define-color window_fg_color #ffffff;
-@define-color view_bg_color #0f2766;
-@define-color view_fg_color #ffffff;
-@define-color card_bg_color rgba(255,255,255,0.09);
-@define-color card_fg_color #ffffff;
-@define-color dialog_bg_color #17358a;
-@define-color dialog_fg_color #ffffff;
-@define-color popover_bg_color #17358a;
-@define-color popover_fg_color #ffffff;
-@define-color accent_bg_color #4f8cff;
+@define-color accent_bg_color @ACCENT@;
 @define-color accent_fg_color #ffffff;
-@define-color accent_color #a9c8ff;
-@define-color destructive_bg_color #d62a33;
+@define-color accent_color @ACCENT@;
+@define-color window_bg_color #f2f2f5;
+@define-color window_fg_color #1d1d1f;
+@define-color view_bg_color #ffffff;
+@define-color view_fg_color #1d1d1f;
+@define-color card_bg_color #ffffff;
+@define-color card_fg_color #1d1d1f;
+@define-color dialog_bg_color #f6f6f8;
+@define-color dialog_fg_color #1d1d1f;
+@define-color popover_bg_color #ffffff;
+@define-color popover_fg_color #1d1d1f;
+@define-color destructive_bg_color #d70015;
 @define-color destructive_fg_color #ffffff;
-@define-color destructive_color #ffa39e;
-@define-color error_color #ffa39e;
-@define-color warning_color #ffd06b;
-@define-color success_color #6fe3a0;
+@define-color destructive_color #c4000f;
+@define-color error_color #c4000f;
+@define-color warning_color #9a4a00;
+@define-color success_color #1a7f37;
 
 window.alp {
-  background-image: linear-gradient(135deg, #2054e0 0%, #173a9e 50%, #0c1f55 100%);
-  color: #ffffff;
+  background-color: #2f5bbf;
+  background-image: @WALLPAPER@;
+  color: #1d1d1f;
   font-size: 12pt;
 }
 
 /* Text */
-.dim-label { opacity: 0.8; }
-.alp .title-1 { font-size: 24pt; font-weight: 800; }
-.alp .title-2 { font-size: 20pt; font-weight: 800; }
-.lead { font-size: 13pt; }
-.caption-up { font-size: 10pt; font-weight: 700; letter-spacing: 1px; opacity: 0.8; }
-.big-number { font-size: 54pt; font-weight: 800; }
-.error { color: #ffb4ae; }
-.warning { color: #ffd06b; }
+.dim-label { opacity: 1; color: #5f5f66; }
+.alp .title-1 { font-size: 22pt; font-weight: 700; }
+.alp .title-2 { font-size: 17pt; font-weight: 700; }
+.alp .title-3 { font-size: 14pt; font-weight: 600; }
+.lead { font-size: 12.5pt; color: #3a3a40; }
+.caption-up { font-size: 10pt; font-weight: 600; color: #5f5f66; }
+.big-number { font-size: 46pt; font-weight: 700; }
+.error { color: #c4000f; }
+.warning { color: #9a4a00; }
+.on-wallpaper, .on-wallpaper label { color: #ffffff; }
 
-/* Top bar */
-.topbar { background-color: rgba(4,14,48,0.35); min-height: 48px; padding: 0 12px; }
-.topbar .brand { font-weight: 800; font-size: 12pt; }
-.topbar .tag { background-color: #ffe9a8; color: #6b4600; border-radius: 99px;
-  padding: 1px 9px; font-size: 9.5pt; font-weight: 800; }
+/* Top bar: thin, darkened, monochrome icons */
+.topbar { background-color: rgba(10,16,40,0.45); min-height: 36px; padding: 0 10px; color: #ffffff; }
+.topbar label { color: #ffffff; }
+.topbar .brand { font-weight: 700; }
+.topbar .tag { background-color: rgba(255,255,255,0.22); color: #ffffff; border-radius: 6px;
+  padding: 1px 8px; font-size: 9.5pt; font-weight: 700; }
 .topbar .ip { font-family: monospace; font-size: 11pt; }
-.topbar .stat { padding: 0 6px; }
-.topbar button { min-height: 36px; min-width: 36px; padding: 0 10px; border-radius: 10px;
-  background: transparent; color: #ffffff; }
-.topbar button:hover { background-color: rgba(255,255,255,0.14); }
-.topbar .home-btn { background-color: rgba(255,255,255,0.12); }
+.topbar .stat { padding: 0 6px; color: #ffffff; }
+.topbar .stat.tone-warn { color: #ffd479; }
+.topbar .stat.tone-bad { color: #ff9b94; }
+.topbar button { min-height: 30px; min-width: 30px; padding: 0 8px; border-radius: 6px;
+  background: transparent; color: #ffffff; box-shadow: none; }
+.topbar button:hover { background-color: rgba(255,255,255,0.18); }
+.topbar .home-btn { background-color: rgba(255,255,255,0.16); }
+.topbar *:focus-visible { outline-color: #ffffff; }
+.topbar .tone-ok { color: #ffffff; }
+.topbar .tone-warn { color: #ffd479; }
+.topbar .tone-bad { color: #ff9b94; }
 
-/* Tones: an icon chip or text in a status colour */
-.tone-ok { color: #6fe3a0; }
-.tone-warn { color: #ffd06b; }
-.tone-bad { color: #ff9a92; }
-.tone-blue { color: #9cc4ff; }
-.tone-violet { color: #d2b3ff; }
-.tone-teal { color: #79e6d6; }
+/* Status colours (text and glyphs) */
+.tone-ok { color: #1a7f37; }
+.tone-warn { color: #9a4a00; }
+.tone-bad { color: #c4000f; }
+.tone-blue { color: @ACCENT@; }
+.tone-violet { color: #7b3fc4; }
+.tone-teal { color: #0b7a75; }
 
-.chip { border-radius: 14px; padding: 10px; min-width: 24px; min-height: 24px; }
-.chip.tone-ok { background-color: rgba(111,227,160,0.16); }
-.chip.tone-warn { background-color: rgba(255,208,107,0.16); }
-.chip.tone-bad { background-color: rgba(255,154,146,0.16); }
-.chip.tone-blue { background-color: rgba(156,196,255,0.16); }
-.chip.tone-violet { background-color: rgba(210,179,255,0.16); }
-.chip.tone-teal { background-color: rgba(121,230,214,0.16); }
-.hero-badge { border-radius: 999px; padding: 16px; }
-.hero-badge.tone-ok { background-color: rgba(111,227,160,0.18); }
-.hero-badge.tone-warn { background-color: rgba(255,208,107,0.18); }
-.hero-badge.tone-bad { background-color: rgba(255,154,146,0.18); }
-.hero-badge.tone-blue { background-color: rgba(156,196,255,0.18); }
-.hero-badge.tone-violet { background-color: rgba(210,179,255,0.18); }
-.hero-badge.tone-teal { background-color: rgba(121,230,214,0.18); }
+/* Filled rounded icons, white glyph on colour */
+.chip { border-radius: 9px; padding: 8px; color: #ffffff; }
+.hero-badge { border-radius: 18px; padding: 16px; color: #ffffff; }
+.chip.tone-ok, .hero-badge.tone-ok { background-color: #2a9d4b; color: #ffffff; }
+.chip.tone-warn, .hero-badge.tone-warn { background-color: #e08600; color: #ffffff; }
+.chip.tone-bad, .hero-badge.tone-bad { background-color: #e0262f; color: #ffffff; }
+.chip.tone-blue, .hero-badge.tone-blue { background-color: #1f7aeb; color: #ffffff; }
+.chip.tone-violet, .hero-badge.tone-violet { background-color: #8a4fd8; color: #ffffff; }
+.chip.tone-teal, .hero-badge.tone-teal { background-color: #109c96; color: #ffffff; }
 
-/* Cards */
-.alp .card, .panel { background-color: rgba(255,255,255,0.09); border-radius: 18px;
-  border: 1px solid rgba(255,255,255,0.14); box-shadow: none; color: #ffffff; }
-.panel { padding: 26px 34px; }
-.tile-photos { background-image: linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06)); }
+/* Windows: light, rounded, a soft shadow over the wallpaper */
+.alp .card, .panel, .window-card { background-color: #f6f6f8; color: #1d1d1f; border-radius: 12px;
+  border: 1px solid rgba(0,0,0,0.10); box-shadow: 0 12px 36px rgba(0,0,0,0.28); }
+.panel { padding: 28px 36px; }
+.window-card { padding: 0; }
+.tile-photos { background-color: #ffffff; }
 
 /* Notes with an icon in front (info, warning, danger) */
-.note { border-radius: 12px; padding: 12px 14px; background-color: rgba(255,255,255,0.08); }
-.note.warn { background-color: rgba(255,208,107,0.14); border: 1px solid rgba(255,208,107,0.45); }
-.note.bad { background-color: rgba(255,120,110,0.16); border: 1px solid rgba(255,154,146,0.55); }
+.note { border-radius: 8px; padding: 10px 12px; background-color: #e9f1fe; color: #1d1d1f; }
+.note.warn { background-color: #fff4dc; border: 1px solid #f1c76b; }
+.note.bad { background-color: #ffeceb; border: 1px solid #f2a29d; }
 
-/* Buttons: white main button with blue text, as in 0.2.7 */
-.alp button { min-height: 44px; font-weight: 700; }
-.alp button.suggested-action { background-color: #ffffff; color: #173a9e; }
-.alp button.suggested-action:hover { background-color: #e8efff; }
-.alp button.suggested-action:disabled { background-color: rgba(255,255,255,0.35); color: rgba(23,58,158,0.7); }
-.alp button.destructive-action { background-color: #d62a33; color: #ffffff; }
-.alp button.pill { padding-left: 26px; padding-right: 26px; }
-.alp button.flat { color: #ffffff; }
-.alp button.wide { min-width: 320px; }
+/* Buttons: rounded rectangles; one blue main button */
+.alp button { min-height: 44px; border-radius: 8px; font-weight: 600; }
+.alp button.pill { border-radius: 8px; padding-left: 20px; padding-right: 20px; }
+.alp button:not(.flat):not(.suggested-action):not(.destructive-action) {
+  background-color: #ffffff; color: #1d1d1f; border: 1px solid rgba(0,0,0,0.16);
+  box-shadow: 0 1px 1px rgba(0,0,0,0.06); }
+.alp button:not(.flat):not(.suggested-action):not(.destructive-action):hover { background-color: #f0f0f3; }
+.alp button.suggested-action { background-color: @ACCENT@; color: #ffffff; }
+.alp button.suggested-action:disabled { background-color: #a9c3ea; color: #ffffff; }
+.alp button.destructive-action { background-color: #d70015; color: #ffffff; }
+.alp button.destructive-action:disabled { background-color: #eba3a9; color: #ffffff; }
+.alp button.flat { color: @ACCENT@; }
+.alp .topbar button.flat { color: #ffffff; }
 
 /* Fields */
-.alp entry, .alp passwordentry { min-height: 44px; font-size: 13pt;
-  background-color: rgba(255,255,255,0.12); color: #ffffff; border-radius: 10px; }
-.field-label { font-weight: 700; }
+.alp entry, .alp passwordentry { min-height: 44px; font-size: 13pt; background-color: #ffffff;
+  color: #1d1d1f; border-radius: 8px; border: 1px solid #b9b9c0; }
+.field-label { font-weight: 600; }
 
-/* Keyboard focus: a thick yellow ring, visible on blue and on white */
-.alp *:focus-visible { outline: 3px solid #ffd76a; outline-offset: 2px; }
+/* Keyboard focus */
+.alp *:focus-visible { outline: 3px solid alpha(@ACCENT@, 0.75); outline-offset: 2px; }
 
 /* Progress */
-.alp progressbar trough { min-height: 12px; border-radius: 99px; background-color: rgba(255,255,255,0.18); }
-.alp progressbar progress { min-height: 12px; border-radius: 99px; background-color: #6fe3a0; }
+.alp progressbar trough { min-height: 8px; border-radius: 99px; background-color: #dcdce2; }
+.alp progressbar progress { min-height: 8px; border-radius: 99px; background-color: @ACCENT@; }
+.alp progressbar text { color: #5f5f66; }
 
 /* Steps of the first start */
-.step-dot { min-width: 10px; min-height: 10px; border-radius: 99px; background-color: rgba(255,255,255,0.28); }
-.step-dot.done { background-color: #6fe3a0; }
-.step-dot.now { background-color: #ffffff; min-width: 28px; }
+.step-dot { min-width: 8px; min-height: 8px; border-radius: 99px; background-color: #c9c9d0; }
+.step-dot.done { background-color: #7fa9e8; }
+.step-dot.now { background-color: @ACCENT@; min-width: 22px; }
 
-/* The recovery words: a sheet of paper, dark on white */
-.paper { background-color: #fffdf6; color: #172046; border-radius: 16px; padding: 22px 28px; }
-.paper .word-n { color: #5b6380; font-size: 12pt; font-weight: 700; }
-.paper .word { font-family: monospace; font-size: 17pt; font-weight: 800; color: #10183a; }
-.paper.qr { background-color: #ffffff; padding: 10px; }
-.paper .code-big { font-size: 34pt; letter-spacing: 4px; }
-.word-n-chip { background-color: rgba(255,255,255,0.14); border-radius: 10px; padding: 6px 12px; font-weight: 800; }
+/* The recovery words: a note sheet, dark on pale yellow */
+.paper { background-color: #fffbe8; color: #1d1d1f; border-radius: 10px; padding: 20px 26px;
+  border: 1px solid #ecdca0; }
+.paper .word-n { color: #6b6250; font-size: 12pt; font-weight: 600; }
+.paper .word { font-family: monospace; font-size: 17pt; font-weight: 700; color: #111111; }
+.paper.qr { background-color: #ffffff; border-color: #d6d6dc; padding: 10px; }
+.paper .code-big { font-size: 32pt; letter-spacing: 4px; }
+.word-n-chip { background-color: #e6e6eb; border-radius: 8px; padding: 6px 12px; font-weight: 700; }
 
-/* Lock screen clock */
-.clock-big { font-size: 64pt; font-weight: 300; }
-.date-line { font-size: 15pt; opacity: 0.9; }
+/* Sign-in page: on the wallpaper, like a login screen */
+.clock-big { font-size: 58pt; font-weight: 300; color: #ffffff; }
+.date-line { font-size: 15pt; color: #ffffff; }
+.avatar { border-radius: 999px; padding: 26px; background-color: rgba(255,255,255,0.28); color: #ffffff; }
+.login-name { font-size: 18pt; font-weight: 600; color: #ffffff; }
+.login-status { color: #ffffff; }
+.login-field { min-height: 40px; border-radius: 99px; background-color: rgba(255,255,255,0.88);
+  border: none; padding-left: 8px; }
+.login-go { min-width: 44px; min-height: 44px; border-radius: 99px; padding: 0; }
 
-/* Settings and install lists on the gradient */
+/* Lists inside light windows */
 .alp preferencespage, .alp preferencespage > scrolledwindow, .alp preferencespage viewport { background: transparent; }
-.alp .boxed-list { background-color: rgba(255,255,255,0.09); border-radius: 14px; }
-.alp row { min-height: 56px; }
-.alp row.danger-row { background-color: rgba(255,120,110,0.14); }
-.footer-bar { background-color: rgba(4,14,48,0.30); padding: 12px 24px; }
+.alp .boxed-list { background-color: #ffffff; border-radius: 10px; }
+.alp row { min-height: 52px; }
+.alp row.danger-row { background-color: #fff0ef; }
+.footer-bar { background-color: #ececf0; padding: 12px 20px; border-top: 1px solid rgba(0,0,0,0.08);
+  border-radius: 0 0 12px 12px; }
+.window-title { padding: 16px 20px 4px 20px; }
 "#;
 
 /// Loads the look for the whole screen (once, at start).
-pub fn install() {
-    adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
+pub fn install(theme: &Theme) {
+    adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceLight);
     let css = gtk4::CssProvider::new();
-    css.load_from_string(CSS);
+    css.load_from_string(
+        &CSS.replace("@ACCENT@", theme.accent)
+            .replace("@WALLPAPER@", theme.wallpaper),
+    );
     if let Some(d) = gtk4::gdk::Display::default() {
         gtk4::style_context_add_provider_for_display(
             &d,
@@ -157,6 +207,28 @@ pub fn install() {
             gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
     }
+}
+
+/// A light window over the wallpaper holding `child` (settings, install),
+/// at most `width` wide, filling the height.
+pub fn window(child: &impl IsA<gtk4::Widget>, width: i32) -> adw::Clamp {
+    let card = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .css_classes(["window-card"])
+        .overflow(gtk4::Overflow::Hidden)
+        .vexpand(true)
+        .build();
+    card.append(child);
+    adw::Clamp::builder()
+        .maximum_size(width)
+        .tightening_threshold(width)
+        .child(&card)
+        .vexpand(true)
+        .margin_top(20)
+        .margin_bottom(20)
+        .margin_start(24)
+        .margin_end(24)
+        .build()
 }
 
 /// The tone classes, in one place.

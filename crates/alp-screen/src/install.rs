@@ -100,17 +100,15 @@ fn page_with(
     let (icon, tone, title) = head;
     let top = gtk4::Box::builder()
         .spacing(14)
-        .halign(gtk4::Align::Center)
-        .margin_top(24)
+        .css_classes(["window-title"])
         .build();
-    top.append(&style::chip(icon, tone, 28));
+    top.append(&style::chip(icon, tone, 24));
     top.append(&style::text(title, &["title-2"], false));
     b.append(&top);
     page.set_vexpand(true);
     b.append(page);
     let bar = gtk4::Box::builder()
         .spacing(12)
-        .halign(gtk4::Align::Fill)
         .css_classes(["footer-bar"])
         .build();
     let fill = gtk4::Box::builder().hexpand(true).build();
@@ -119,7 +117,12 @@ fn page_with(
         bar.append(*w);
     }
     b.append(&bar);
-    b
+    // In a light window over the wallpaper, buttons along its bottom.
+    let outer = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .build();
+    outer.append(&style::window(&b, 820));
+    outer
 }
 
 /// The icon for a disk: a USB disk or stick, or a disk inside.

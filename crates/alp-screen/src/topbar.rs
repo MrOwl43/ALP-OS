@@ -42,7 +42,11 @@ fn stat() -> gtk4::Box {
 
 impl TopBar {
     pub fn new(texts: &Texts) -> Self {
-        let home = style::button("go-home-symbolic", &texts.t("tray.home"), &["home-btn"]);
+        let home = style::button(
+            "go-home-symbolic",
+            &texts.t("tray.home"),
+            &["home-btn", "flat"],
+        );
         home.set_visible(false);
         let title = gtk4::Label::builder()
             .label(texts.t("app.name"))
@@ -77,9 +81,11 @@ impl TopBar {
         status.add_css_class("stat");
         status.set_accessible_role(gtk4::AccessibleRole::Img);
         let settings = gtk4::Button::from_icon_name("emblem-system-symbolic");
+        settings.add_css_class("flat");
         style::name(&settings, &texts.t("home.settings"));
         settings.set_visible(false);
         let power = gtk4::Button::from_icon_name("system-shutdown-symbolic");
+        power.add_css_class("flat");
         style::name(&power, &texts.t("tray.power"));
         power.set_visible(false);
         let end = gtk4::Box::builder().spacing(4).build();

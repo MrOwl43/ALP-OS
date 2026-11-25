@@ -106,44 +106,62 @@ fn main() -> glib::ExitCode {
     app.run_with_args::<&str>(&[])
 }
 
-/// The sign-in page: the time large, as on a lock screen, and a card
-/// with the status and the password.
+/// The sign-in page, like a computer's login screen: the time large, a
+/// round picture, the name, the status, and the password field with its
+/// arrow, straight on the wallpaper.
 fn lock_page(texts: &Texts) -> (gtk4::ScrolledWindow, LockUi) {
     let clock = gtk4::Label::builder().css_classes(["clock-big"]).build();
     let date = gtk4::Label::builder().css_classes(["date-line"]).build();
-    let badge = style::hero("system-lock-screen-symbolic", Tone::Blue);
-    let status = style::text("", &["title-2"], true);
+    let badge = style::icon("system-lock-screen-symbolic", 48);
+    badge.add_css_class("avatar");
+    badge.set_halign(gtk4::Align::Center);
+    badge.set_margin_top(48);
+    let user = gtk4::Label::builder()
+        .label(texts.t("lock.user"))
+        .css_classes(["login-name"])
+        .build();
+    let status = style::text("", &["login-status"], true);
     let password = gtk4::PasswordEntry::builder()
         .show_peek_icon(true)
         .hexpand(true)
+        .placeholder_text(texts.t("pw.label"))
+        .css_classes(["login-field"])
         .build();
-    let sign_in = style::button(
-        "go-next-symbolic",
-        &texts.t("lock.signin"),
-        &["suggested-action", "pill"],
-    );
-    let error = style::Note::new("bad", "");
-    let user = style::text(&texts.t("lock.user"), &["caption-up"], true);
-    let card = style::panel(
-        &[
-            badge.upcast_ref(),
-            user.upcast_ref(),
-            status.upcast_ref(),
-            style::field(&texts.t("pw.label"), &password).upcast_ref(),
-            sign_in.upcast_ref(),
-            error.root.upcast_ref(),
-        ],
-        440,
-    );
-    let page = gtk4::Box::builder()
-        .orientation(gtk4::Orientation::Vertical)
-        .spacing(4)
+    password.update_property(&[gtk4::accessible::Property::Label(&texts.t("pw.label"))]);
+    let sign_in = gtk4::Button::builder()
+        .icon_name("go-next-symbolic")
+        .css_classes(["suggested-action", "login-go"])
         .valign(gtk4::Align::Center)
         .build();
-    page.append(&clock);
-    page.append(&date);
-    page.append(&card);
-    let page = style::scroll(&page);
+    style::name(&sign_in, &texts.t("lock.signin"));
+    let row = gtk4::Box::builder().spacing(8).margin_top(8).build();
+    row.append(&password);
+    row.append(&sign_in);
+    let error = style::Note::new("bad", "");
+    let col = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .spacing(10)
+        .build();
+    for w in [
+        clock.upcast_ref::<gtk4::Widget>(),
+        date.upcast_ref(),
+        badge.upcast_ref(),
+        user.upcast_ref(),
+        status.upcast_ref(),
+        row.upcast_ref(),
+        error.root.upcast_ref(),
+    ] {
+        col.append(w);
+    }
+    let clamp = adw::Clamp::builder()
+        .maximum_size(340)
+        .tightening_threshold(340)
+        .child(&col)
+        .valign(gtk4::Align::Center)
+        .margin_top(24)
+        .margin_bottom(24)
+        .build();
+    let page = style::scroll(&clamp);
     let ui = LockUi {
         clock,
         date,
@@ -166,7 +184,7 @@ fn build(app: &adw::Application) {
     {
         st.set_gtk_xft_dpi(96 * 1024);
     }
-    style::install();
+    style::install(&style::Theme::DEFAULT);
     let texts = Rc::new(Texts::load(Path::new(i18n::DIR), "en"));
     let client = Arc::new(Client::default());
     let (tx, rx) = mpsc::channel::<Msg>();
@@ -483,7 +501,8 @@ fn handle(ui: &Ui, m: Msg) {
                     ("system-lock-screen-symbolic", Tone::Blue)
                 };
                 ui.lock.badge.set_icon_name(Some(icon));
-                tone.apply(&ui.lock.badge);
+                // The picture stays white on the wallpaper; the words say it.
+                let _ = tone;
                 ui.gallery.close();
                 ui.pair.locked();
                 if ui.stack.visible_child_name().as_deref() != Some("lock") {
@@ -649,6 +668,18 @@ fn settings_page(
     b.append(&note.root);
     page.set_vexpand(true);
     b.append(&page);
+    // Settings in a light window over the wallpaper.
+    let title = style::text(
+        &texts.t("home.settings"),
+        &["title-2", "window-title"],
+        false,
+    );
+    b.prepend(&title);
+    let outer = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .build();
+    outer.append(&style::window(&b, 760));
+    let b = outer;
     let ui = SettingsUi {
         version,
         clock,
@@ -949,7 +980,14 @@ fn home_layout(
         .margin_start(48)
         .margin_end(48)
         .build();
-    page.append(&top);
+    // The headline sits in a light window like the tiles.
+    top.set_margin_top(20);
+    top.set_margin_bottom(20);
+    top.set_margin_start(22);
+    top.set_margin_end(22);
+    let header = gtk4::Box::builder().css_classes(["card"]).build();
+    header.append(&top);
+    page.append(&header);
     page.append(&tiles.grid);
     style::scroll(
         &adw::Clamp::builder()
