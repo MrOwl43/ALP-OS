@@ -76,9 +76,12 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   Open from the review: (4) a failed install leaves disks greyed (no retry path); (5) stick left in
   after install: root/state may come from the stick (same partition UUIDs) - needs LoaderDevicePartUUID
   or a "remove the stick" step; T-INST-01 does not check the dup pool.
-- Next: native setup screens in a VM test (T-SCREEN-01) (password, pool progress, recovery, phone) on alp-screen;
-  check gallery and phone approval on the native screen in a VM; code review of installer + pool
-  (encryption/storage: opus reviewer) before the PR; `/claude-security` scan before release.
+- CI green 2026-11-25 on 246294d: base (run 45665874922) and installed (run 45671094955): T-BOOT-01
+  (safe-graphics profile, initrd drivers), T-BUDGET-01 (UKI 56.7 MiB, was 241 MB), T-INST-01,
+  T-INST-02 (recovery slots, ALP-STO-001 alert). Fixed on the way: blkid -p on an empty partition
+  exits 0 with no TYPE (treated as empty, else the pool was never made).
+- Next: owner tries a test build on the two old laptops; T-SCREEN-01 VM test of the native setup
+  screens; review items 4 and 5; PR with the owner's OK; `/claude-security` scan before release.
 
 ## Alpha 0.2.7 (started 2026-11-15, same branch, on top of 0.2.61)
 
