@@ -120,7 +120,7 @@ then echo "ok:   target has the contract layout"; else echo "FAIL: target layout
 # systemd-boot by the fallback path EFI/BOOT/BOOTX64.EFI, as on a laptop
 # whose boot entries were never written. The root must come from the
 # installed slot 1, and the seed must be on the installed alp-state.
-probe2='-/usr/bin/sh -c "lsblk -rnso PARTLABEL /dev/mapper/root | tr -s [:space:] , | sed s/^/ROOT-FROM=/"
+probe2='-/usr/bin/sh -c "lsblk -rnso PARTLABEL /dev/mapper/root | tr -s [:space:] , | sed s/^/ROOT-FROM=/; echo"
 -/usr/bin/sh -c "test -s /var/lib/alp/firstboot-seed.toml && echo SEED=yes || echo SEED=no"'
 args2="-drive if=none,id=win,format=raw,file=$windows -device virtio-blk-pci,drive=win,serial=ALPWINDOWS01"
 status=0
