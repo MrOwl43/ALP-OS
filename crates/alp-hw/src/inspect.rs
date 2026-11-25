@@ -272,8 +272,10 @@ fn boot_partuuid(sys: &Path) -> Option<String> {
     let raw = fs::read(sys.join("firmware/efi/efivars").join(LOADER_DEVICE_VAR)).ok()?;
     let units: Vec<u16> = raw
         .get(4..)?
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_le_bytes(*c))
         .take_while(|u| *u != 0)
         .collect();
     let v = String::from_utf16(&units).ok()?.trim().to_ascii_lowercase();
