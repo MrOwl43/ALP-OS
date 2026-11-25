@@ -67,6 +67,7 @@ version = "0.0.0"
 dependencies = [
  "gtk4",
  "libadwaita",
+ "qrcodegen",
  "serde_json",
  "webkit6",
  "zeroize",

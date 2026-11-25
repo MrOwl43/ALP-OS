@@ -394,6 +394,62 @@ pub mod gallery {
     }
 }
 
+/// Phone pairing on this screen (ADR 0017): the QR the ALPArchive app scans
+/// and the approval of a phone that scanned it.
+pub mod pairing {
+    use serde_json::Value;
+
+    /// A phone waiting for approval (`state.pairing.pending`).
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct Pending {
+        pub id: String,
+        /// The phone's name, else its model, else empty.
+        pub name: String,
+        /// The code the phone shows too.
+        pub code: String,
+    }
+
+    pub fn pending(w: &Value) -> Vec<Pending> {
+        w["pairing"]["pending"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|p| {
+                        let s = |k: &str| p[k].as_str().unwrap_or_default().trim().to_string();
+                        let (id, code) = (s("id"), s("code"));
+                        if id.is_empty() || code.is_empty() {
+                            return None;
+                        }
+                        let name = Some(s("name"))
+                            .filter(|n| !n.is_empty())
+                            .unwrap_or_else(|| s("model"));
+                        Some(Pending { id, name, code })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The QR modules of `text` (row by row, `true` = dark) and the side
+    /// length, without the quiet zone. Same encoder and error correction
+    /// as alpd's SVG (`alp_live::qr`).
+    pub fn qr(text: &str) -> Option<(usize, Vec<bool>)> {
+        use qrcodegen::{QrCode, QrCodeEcc};
+        let q = QrCode::encode_text(text, QrCodeEcc::Medium).ok()?;
+        let n = q.size();
+        let cells = (0..n)
+            .flat_map(|y| (0..n).map(move |x| (x, y)))
+            .map(|(x, y)| q.get_module(x, y))
+            .collect();
+        Some((usize::try_from(n).ok()?, cells))
+    }
+
+    /// "m:ss" for the time left.
+    pub fn left(seconds: u64) -> (String, String) {
+        ((seconds / 60).to_string(), format!("{:02}", seconds % 60))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,5 +618,29 @@ mod tests {
             None
         );
         assert_eq!(url(&json!({})), None);
+    }
+
+    #[test]
+    fn pairing_reads_pending_phones_and_draws_the_qr() {
+        use super::pairing::{left, pending, qr};
+        let p = pending(&json!({"pairing": {"pending": [
+            {"id": "r1", "name": "", "model": "Pixel 8", "code": "123 456"},
+            {"id": "r2", "name": "Dana's phone", "code": "999 000"},
+            {"id": "", "code": "1"},
+            {"id": "r3"}
+        ]}}));
+        assert_eq!(p.len(), 2);
+        assert_eq!(
+            (p[0].name.as_str(), p[0].code.as_str()),
+            ("Pixel 8", "123 456")
+        );
+        assert_eq!(p[1].name, "Dana's phone");
+        assert!(pending(&json!({})).is_empty());
+        // Version 2 for a short address, as alpd's SVG (25 modules).
+        let (n, cells) = qr("https://192.168.1.23").unwrap();
+        assert_eq!((n, cells.len()), (25, 625));
+        // The three finder patterns: top-left corner dark.
+        assert!(cells[0] && cells[n - 1] && cells[n * (n - 1)]);
+        assert_eq!(left(125), ("2".to_string(), "05".to_string()));
     }
 }

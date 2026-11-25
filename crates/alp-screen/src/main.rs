@@ -8,6 +8,7 @@
 
 mod gallery;
 mod install;
+mod pairing;
 
 use alp_screen::api::{ApiError, Client};
 use alp_screen::i18n::{self, Texts};
@@ -34,6 +35,7 @@ enum Msg {
     /// The answer to a settings action (sync clock, update, power).
     Done(Result<Value, ApiError>),
     Install(install::InstallMsg),
+    Pair(pairing::PairMsg),
 }
 
 struct Ui {
@@ -51,6 +53,7 @@ struct Ui {
     gallery: Rc<gallery::GalleryUi>,
     tiles: HomeTiles,
     inst: Rc<install::InstallUi>,
+    pair: Rc<pairing::PairUi>,
     set: SettingsUi,
 }
 
@@ -61,6 +64,7 @@ struct SettingsUi {
     update: adw::ActionRow,
     update_btn: gtk4::Button,
     phones: adw::PreferencesGroup,
+    connect_phone: gtk4::Button,
     phone_rows: RefCell<Vec<adw::ActionRow>>,
     last: RefCell<Settings>,
     note: gtk4::Label,
@@ -153,6 +157,11 @@ fn build(app: &adw::Application) {
     let stack = gtk4::Stack::new();
     let (settings_page, set, back) = settings_page(&texts, &client, &tx);
     let inst = install::InstallUi::new(texts.clone(), client.clone(), tx.clone(), &stack);
+    let pair = pairing::PairUi::new(texts.clone(), client.clone(), tx.clone(), &stack);
+    {
+        let p = pair.clone();
+        set.connect_phone.connect_clicked(move |_| p.open());
+    }
 
     stack.add_named(&lock_page, Some("lock"));
     stack.add_named(&home_page, Some("home"));
@@ -192,6 +201,7 @@ fn build(app: &adw::Application) {
         gallery: gallery.clone(),
         tiles,
         inst: inst.clone(),
+        pair,
         set,
     });
     install_btn.connect_clicked(move |_| inst.open());
@@ -306,6 +316,7 @@ fn handle(ui: &Ui, m: Msg) {
                     ui.stack.set_visible_child_name("home");
                 }
                 *ui.gallery_url.borrow_mut() = url;
+                ui.pair.show_pending(&model::pairing::pending(&w));
                 show_settings(&ui.set, &ui.texts, &Settings::from_state(&w));
                 let (can_install, job) = model::install::state(&w);
                 ui.install_btn.set_visible(can_install);
@@ -321,6 +332,7 @@ fn handle(ui: &Ui, m: Msg) {
                 };
                 ui.status.set_label(&ui.texts.t(key));
                 ui.gallery.close();
+                ui.pair.locked();
                 ui.stack.set_visible_child_name("lock");
             }
         }
@@ -328,6 +340,7 @@ fn handle(ui: &Ui, m: Msg) {
             ui.status.set_label(&ui.texts.t(&e.key));
         }
         Msg::Install(m) => ui.inst.handle(m),
+        Msg::Pair(m) => ui.pair.handle(m),
         Msg::Done(r) => {
             ui.set.note.set_label(&match r {
                 Ok(_) => String::new(),
@@ -433,8 +446,14 @@ fn settings_page(
         act("live/power/off", json!({"restart": false})),
     );
 
+    let connect_phone = gtk4::Button::builder()
+        .label(texts.t("phone.title"))
+        .css_classes(["suggested-action"])
+        .valign(gtk4::Align::Center)
+        .build();
     let phones = adw::PreferencesGroup::builder()
         .title(texts.t("set.h.phones"))
+        .header_suffix(&connect_phone)
         .build();
     page.add(&phones);
 
@@ -460,6 +479,7 @@ fn settings_page(
         update,
         update_btn,
         phones,
+        connect_phone,
         phone_rows: RefCell::new(Vec::new()),
         last: RefCell::new(Settings::default()),
         note,
