@@ -33,17 +33,17 @@ RuntimeDirectoryMode=0700
 Environment=HOME=/run/alp-kiosk XDG_SESSION_TYPE=wayland WLR_RENDERER_ALLOW_SOFTWARE=1
 ExecStartPre=/bin/sh -c 'for i in $(seq 30); do for c in /dev/dri/card*; do [ -e "$c" ] && exit 0; done; sleep 1; done; echo "ALP-OS: no graphics device" >&2; exit 1'
 # -s: Ctrl+Alt+F<n> switches consoles (maintenance login on tty2).
-ExecStart=/usr/bin/cage -d -s -- /usr/lib/alp/alp-screen
+# XDG_RUNTIME_DIR: cage's Wayland socket goes into this unit's own runtime
+# directory (writable under ProtectSystem=strict, owned by User=). The PAM
+# session's /run/user/<uid> stayed read-only: "%U" in a system unit is the
+# service manager's uid (0), not User='s, so a ReadWritePaths= on it missed
+# ("Unable to open Wayland socket: Invalid argument", T-SCREEN-01).
+ExecStart=/usr/bin/env XDG_RUNTIME_DIR=/run/alp-kiosk /usr/bin/cage -d -s -- /usr/lib/alp/alp-screen
 Restart=always
 RestartSec=3
 TimeoutStopSec=10s
 NoNewPrivileges=yes
 ProtectSystem=strict
-# pam_systemd gives the session XDG_RUNTIME_DIR=/run/user/<uid> before the
-# sandbox is set up; ProtectSystem=strict made it read-only, so cage could
-# not create its Wayland socket and the screen stayed black ("Unable to open
-# Wayland socket", T-SCREEN-01, CI 2026-11-25). %U: the uid of User=.
-ReadWritePaths=-/run/user/%U
 ProtectHome=yes
 PrivateTmp=yes
 
