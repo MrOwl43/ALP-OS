@@ -88,7 +88,11 @@ if [[ -n $sum ]]; then echo "ok:   test file written"; else echo "FAIL: test fil
 (( fail == 0 )) || { echo "FAIL: T-INST-02" >&2; exit 1; }
 
 # Part 3: restart; the TPM opens the index, the pool opens by itself.
+diag='-/bin/bash -c "for u in alp-live-index alp-live-archive alp-immich; do echo DIAG-UNIT $u $(systemctl is-active $u.service); done"
+-/bin/bash -c "journalctl -b -u alp-live-index.service -u alp-live-archive.service -o cat --no-pager | tail -15 | sed s/^/DIAG-LOG=/"
+-/bin/bash -c "cat /run/alp/archive-open-error 2>/dev/null | sed s/^/DIAG-OPEN-ERROR=/; mountpoint -q /var/lib/alp-index && echo DIAG-INDEX=open || echo DIAG-INDEX=closed"'
 probe3="$wait_open
+$diag
 $show
 -/bin/bash -c \"sha256sum /var/lib/alp-pool/files/t.bin | sed s/^/SUM=/\""
 out=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe3" ALP_PROBE_DELAY=5 ALP_QEMU_ARGS="$with_data" \
