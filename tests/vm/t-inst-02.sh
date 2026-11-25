@@ -16,6 +16,9 @@
 #    file is intact.
 # 4. Restart without the second data disk: read-only (degraded),
 #    the file is still readable.
+# 5. The system disk is lost: install on a new blank disk with --reopen,
+#    a wrong code is refused, the recovery words from part 3 open the old
+#    archive and the file is intact.
 # Test data stays under 1 GB (owner rule until the beta).
 #
 # Usage: tests/vm/t-inst-02.sh <disk-image>
@@ -116,6 +119,7 @@ done; }
 r=$(req POST recovery/create "{\"password\":\"$1\"}")
 read -r -a w <<<"$(grep -o '"words":\[[^]]*\]' <<<"$r" | sed 's/^"words"://' | grep -o '"[a-z]*"' | tr -d '"' | tr '\n' ' ')"
 echo "REC-WORDS ${#w[@]}"
+echo "REC-WORDLIST ${w[*]}"
 body=""
 for i in $(grep -o '"check":\[[0-9,]*\]' <<<"$r" | grep -o '[0-9]\+'); do
     body+="${body:+,}\"$i\":\"${w[i-1]}\""
@@ -131,7 +135,10 @@ $(post SIGNIN /api/v1/live/console/signin "{\"password\":\"$pw\"}")
 $rec_probe"
 out=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe3b" ALP_PROBE_DELAY=5 ALP_QEMU_ARGS="$with_data" \
     "$here/run-vm.sh" "$target" 900) || status=$?
-echo "$out"
+# The words of this throw-away test pool are kept for part 5, not printed.
+words=$(sed -n 's/^REC-WORDLIST //p' <<<"$out" | tr -d '\r' | head -1)
+grep -v '^REC-WORDLIST' <<<"$out"
+[[ $words =~ ^[a-z]+( [a-z]+){14}$ ]] || { echo "FAIL: no 15 recovery words for part 5" >&2; fail=1; }
 (( status == 0 )) || { echo "FAIL: T-INST-02 (restart failed)" >&2; exit 1; }
 expect "recovery code made (15 words)" '^REC-WORDS 15' "$out"
 expect "pending code: pool key + new slot" '^REC-SLOTS-PENDING 2' "$out"
@@ -161,6 +168,87 @@ expect "file readable when a disk is missing" "^SUM=$sum" "$out"
 state=$(sed -n '/STATE-BEGIN/,/STATE-END/p' <<<"$out")
 expect "the state names the missing disk" '"missing_disks":\["[^"]*ALPDATA03' "$state"
 expect "the home screen alert is ALP-STO-001" '"code":"ALP-STO-001"' "$state"
+
+(( fail == 0 )) || { echo "FAIL: T-INST-02" >&2; exit 1; }
+
+# Part 5: the system disk is lost. A new blank system disk, the same two
+# data disks: install with --reopen (the data disks are never erased), then
+# the first start opens the old archive with the recovery words from part 3
+# (plan docs/plans/0.2.8-reopen-archive.md). A wrong code first is refused
+# and changes nothing.
+target2="$work/target2.raw"
+truncate -s 40G "$target2"
+args="-drive if=none,id=tgt,format=raw,file=$target2 -device virtio-blk-pci,drive=tgt,serial=ALPTARGET04 $with_data"
+probe='-/usr/bin/sh -c "n() { basename $(readlink -f /dev/disk/by-id/virtio-$1); }; t=$(n ALPTARGET04); a=$(n ALPDATA02); b=$(n ALPDATA03); /usr/bin/alp-installer plan --system $t --reopen $a --reopen $b | tee /run/plan.json | grep -o .reopen.:[^]]*] | sed s/^/PLAN-REOPEN=/; tok=$(grep -o confirm_token.:.[0-9a-f]* /run/plan.json | cut -c17-); /usr/bin/alp-installer install --system $t --reopen $a --reopen $b --confirm-erase $t --confirm-token $tok"'
+out=$(ALP_OVERLAY='' ALP_OVERLAY_SIZE='' ALP_TPM='' ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe" ALP_PROBE_DELAY=10 ALP_QEMU_ARGS="$args" \
+    "$here/run-vm.sh" "$image" 900) || status=$?
+echo "$out"
+(( status == 0 )) || { echo "FAIL: T-INST-02 (reopen install failed)" >&2; exit 1; }
+expect "the plan opens both data disks again" '^PLAN-REOPEN=.reopen.:\["vd[a-z]+","vd[a-z]+"' "$out"
+expect "reopen install finished" '^RESULT ok' "$out"
+(( fail == 0 )) || { echo "FAIL: T-INST-02" >&2; exit 1; }
+
+read -r -d '' reo_script <<'SH' || true
+req() { # method, path, body: prints the answer's body
+    exec 3<>/dev/tcp/127.0.0.1/8411
+    printf '%s /api/v1/live/%s HTTP/1.0\r\nHost: 127.0.0.1:8411\r\nOrigin: http://127.0.0.1:8411\r\nCookie: %s\r\nContent-Type: application/json\r\nContent-Length: %s\r\n\r\n%s' \
+        "$1" "$2" "$(cat /run/qa-cookie)" "${#3}" "$3" >&3
+    timeout 180 cat <&3 | tr -d '\r' | sed '1,/^$/d'
+    exec 3<&-
+}
+slots() { for d in $(blkid -t PARTLABEL=alp-data -o device | sort); do
+    echo -n "$(cryptsetup luksDump "$d" | sed -n '/^Keyslots:/,/^[A-Z]/p' | grep -cE '^  [0-9]+: luks2')/"
+done; echo; }
+wait_job() { # until archive.reopen is done or failed: prints the state
+    local s=""
+    for _ in $(seq 120); do
+        s=$(req GET state "")
+        grep -o '"id":"archive.reopen"[^{}]*' <<<"$s" | grep -qE '"state":"(done|failed)"' && break
+        sleep 2
+    done
+    printf '%s' "$s"
+}
+s=$(req GET state "")
+echo "REO-POOL $(grep -o '"pool":"[a-z]*"' <<<"$s" | head -1)"
+echo "REO-SLOTS-BEFORE $(slots)"
+wrong="abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon address"
+echo "REO-WRONG-POST $(req POST archive/reopen-pool "{\"words\":\"$wrong\"}" | head -c 300)"
+grep -q '"recovery.wrong"' <<<"$(wait_job)" && echo REO-WRONG=refused || echo REO-WRONG=other
+echo "REO-SLOTS-AFTER-WRONG $(slots)"
+test -e /var/lib/alp/firstboot-seed.toml && echo REO-SEED-KEPT=yes || echo REO-SEED-KEPT=no
+echo "REO-POST $(req POST archive/reopen-pool "{\"words\":\"$1\"}" | head -c 300)"
+s=$(wait_job)
+grep -q '"recovery.wrong"' <<<"$s" && echo REO-RESULT=wrong
+grep -o '"message":"[^"]*"' <<<"$s" | head -3 | sed 's/^/REO-MSG=/'
+echo "REO-SLOTS-AFTER $(slots)"
+SH
+export ALP_OVERLAY="$work/installed2.qcow2" ALP_TPM_STATE="$work/tpm2"
+probe5="$(QA_HTTP_TIMEOUT=90 post SETUP /api/v1/live/password/setup "{\"password\":\"$pw\"}")
+-/bin/bash -c \"echo $(base64 -w0 <<<"$reo_script") | base64 -d > /run/t-reo.sh; bash /run/t-reo.sh '$words'\"
+$wait_open
+-/bin/bash -c \"journalctl -b -o cat --no-pager | grep -iE 'reopen|pool|ALP-STO|luks' | tail -12 | sed s/^/DIAG-LOG=/\"
+$show
+-/bin/bash -c \"sha256sum /var/lib/alp-pool/files/t.bin | sed s/^/SUM=/\""
+out=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe5" ALP_PROBE_DELAY=5 ALP_QEMU_ARGS="$with_data" \
+    "$here/run-vm.sh" "$target2" 900) || status=$?
+echo "${out//$words/<words>}"
+(( status == 0 )) || { echo "FAIL: T-INST-02 (reopen first start failed)" >&2; exit 1; }
+expect "the first start asks for the recovery words" '^REO-POOL "pool":"reopen"' "$out"
+expect "a wrong code is refused" '^REO-WRONG=refused' "$out"
+before=$(sed -n 's/^REO-SLOTS-BEFORE //p' <<<"$out" | tr -d '\r')
+after=$(sed -n 's/^REO-SLOTS-AFTER-WRONG //p' <<<"$out" | tr -d '\r')
+if [[ -n $before && $before == "$after" ]]; then echo "ok:   a wrong code changes nothing ($before)"
+else echo "FAIL: key slots changed after a wrong code: '$before' -> '$after'" >&2; fail=1; fi
+expect "the seed stays after a wrong code" '^REO-SEED-KEPT=yes' "$out"
+expect "the words are accepted" '^REO-POST .*"job"' "$out"
+expect "both members keep the new key and the recovery slot" '^REO-SLOTS-AFTER 2/2/' "$out"
+expect "the old archive opened" '^POOL-OPEN=yes' "$out"
+expect "read-write with both disks" '^POOL-RO=no' "$out"
+expect "data is still RAID1" '^DF=Data, RAID1' "$out"
+expect "seed removed" '^SEED=no' "$out"
+expect "record written" '^RECORD-PROFILE = "raid1"' "$out"
+expect "photo service data is on the pool" '^IMMICH-ON-POOL=yes' "$out"
+expect "the test file from part 2 is intact" "^SUM=$sum" "$out"
 
 (( fail == 0 )) || { echo "FAIL: T-INST-02" >&2; exit 1; }
 echo "PASS: T-INST-02"
