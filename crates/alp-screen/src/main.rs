@@ -6,6 +6,7 @@
 //! GTK main loop through a channel polled with a timeout, so the screen never
 //! waits on alpd.
 
+mod gallery;
 mod install;
 
 use alp_screen::api::{ApiError, Client};
@@ -45,6 +46,9 @@ struct Ui {
     home_title: gtk4::Label,
     home_line: gtk4::Label,
     install_btn: gtk4::Button,
+    photos_btn: gtk4::Button,
+    gallery_url: RefCell<Option<String>>,
+    gallery: Rc<gallery::GalleryUi>,
     tiles: HomeTiles,
     inst: Rc<install::InstallUi>,
     set: SettingsUi,
@@ -133,11 +137,16 @@ fn build(app: &adw::Application) {
         .css_classes(["suggested-action", "pill"])
         .visible(false)
         .build();
+    let photos_btn = gtk4::Button::builder()
+        .label(texts.t("home.gallery"))
+        .css_classes(["suggested-action", "pill"])
+        .visible(false)
+        .build();
     let tiles = HomeTiles::new(&texts);
     let home_page = home_layout(
         &home_title,
         &home_line,
-        &[&install_btn, &settings_btn, &lock_btn],
+        &[&photos_btn, &install_btn, &settings_btn, &lock_btn],
         &tiles,
     );
 
@@ -148,6 +157,19 @@ fn build(app: &adw::Application) {
     stack.add_named(&lock_page, Some("lock"));
     stack.add_named(&home_page, Some("home"));
     stack.add_named(&settings_page, Some("settings"));
+    let gallery_back = gtk4::Button::builder()
+        .label(texts.t("common.back"))
+        .css_classes(["pill"])
+        .build();
+    let gallery = gallery::GalleryUi::new(&gallery_back);
+    stack.add_named(&gallery.page, Some("gallery"));
+    {
+        let (st, g) = (stack.clone(), gallery.clone());
+        gallery_back.connect_clicked(move |_| {
+            g.close();
+            st.set_visible_child_name("home");
+        });
+    }
     {
         let st = stack.clone();
         settings_btn.connect_clicked(move |_| st.set_visible_child_name("settings"));
@@ -165,11 +187,23 @@ fn build(app: &adw::Application) {
         home_title,
         home_line,
         install_btn: install_btn.clone(),
+        photos_btn: photos_btn.clone(),
+        gallery_url: RefCell::new(None),
+        gallery: gallery.clone(),
         tiles,
         inst: inst.clone(),
         set,
     });
     install_btn.connect_clicked(move |_| inst.open());
+    {
+        let (u, client) = (ui.clone(), client.clone());
+        photos_btn.connect_clicked(move |_| {
+            if let Some(url) = u.gallery_url.borrow().clone() {
+                u.gallery.open(&url, &client);
+                u.stack.set_visible_child_name("gallery");
+            }
+        });
+    }
 
     {
         // Look for an update, or install the one found (only on a press:
@@ -265,6 +299,13 @@ fn handle(ui: &Ui, m: Msg) {
                 });
                 ui.tiles
                     .show(&ui.texts, &model::home::Tiles::from_state(&w));
+                let url = model::gallery::url(&w);
+                ui.photos_btn.set_visible(url.is_some());
+                if url.is_none() && ui.stack.visible_child_name().as_deref() == Some("gallery") {
+                    ui.gallery.close();
+                    ui.stack.set_visible_child_name("home");
+                }
+                *ui.gallery_url.borrow_mut() = url;
                 show_settings(&ui.set, &ui.texts, &Settings::from_state(&w));
                 let (can_install, job) = model::install::state(&w);
                 ui.install_btn.set_visible(can_install);
@@ -279,6 +320,7 @@ fn handle(ui: &Ui, m: Msg) {
                     "lock.msg.ok"
                 };
                 ui.status.set_label(&ui.texts.t(key));
+                ui.gallery.close();
                 ui.stack.set_visible_child_name("lock");
             }
         }

@@ -366,6 +366,34 @@ pub mod home {
     }
 }
 
+/// The gallery view (ADR 0028: Immich in a locked embedded viewer).
+pub mod gallery {
+    use serde_json::Value;
+
+    /// The only origin the gallery view may show: the gallery proxy on
+    /// loopback (nginx 127.0.0.1:8412, its own origin, never the console's).
+    pub const ORIGIN: &str = "http://127.0.0.1:8412";
+
+    /// `immich.gallery_url` when alpd says the gallery is ready and it is
+    /// the gallery proxy; anything else is ignored.
+    pub fn url(w: &Value) -> Option<String> {
+        w["immich"]["gallery_url"]
+            .as_str()
+            .filter(|u| allowed(u))
+            .map(str::to_string)
+    }
+
+    /// May the view load `uri`? Only pages of [`ORIGIN`] (no other host,
+    /// port, scheme or user part); `about:blank` for an empty frame.
+    pub fn allowed(uri: &str) -> bool {
+        if uri == "about:blank" {
+            return true;
+        }
+        uri.strip_prefix(ORIGIN)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -503,5 +531,36 @@ mod tests {
         assert_eq!(none.health, "bad");
         let ok = Tiles::from_state(&json!({"archive": {"state": "open", "health": "ok"}}));
         assert_eq!(ok.health, "ok");
+    }
+
+    #[test]
+    fn the_gallery_view_stays_on_the_gallery_origin() {
+        use super::gallery::{allowed, url};
+        assert!(allowed("http://127.0.0.1:8412/"));
+        assert!(allowed("http://127.0.0.1:8412/photos/abc?x=1"));
+        assert!(allowed("http://127.0.0.1:8412"));
+        assert!(allowed("about:blank"));
+        for bad in [
+            "http://127.0.0.1:8411/api/v1/live/state",
+            "http://127.0.0.1:84120/",
+            "http://127.0.0.1:8412.evil.example/",
+            "http://127.0.0.1:8412@evil.example/",
+            "https://127.0.0.1:8412/",
+            "http://localhost:8412/",
+            "https://immich.app/",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+        ] {
+            assert!(!allowed(bad), "{bad}");
+        }
+        assert_eq!(
+            url(&json!({"immich": {"gallery_url": "http://127.0.0.1:8412/"}})).as_deref(),
+            Some("http://127.0.0.1:8412/")
+        );
+        assert_eq!(
+            url(&json!({"immich": {"gallery_url": "http://evil/"}})),
+            None
+        );
+        assert_eq!(url(&json!({})), None);
     }
 }

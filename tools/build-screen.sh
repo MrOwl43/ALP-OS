@@ -35,7 +35,7 @@ tests/lib/locks.sh cargo "$engine" run --rm \
         printf "Package: *\nPin: origin snapshot.debian.org\nPin-Priority: 1001\n" >/etc/apt/preferences.d/snapshot
         apt-get update -q
         apt-get -y -q --allow-downgrades dist-upgrade
-        apt-get install -y -q --no-install-recommends ca-certificates curl gcc libc6-dev pkg-config libgtk-4-dev libadwaita-1-dev
+        apt-get install -y -q --no-install-recommends ca-certificates curl gcc libc6-dev pkg-config libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev
         # The toolchain of rust-toolchain.toml, from rustup (same as CI).
         curl -fsSL https://sh.rustup.rs | sh -s -- -y -q --profile minimal --default-toolchain "$TOOLCHAIN"
         . "$HOME/.cargo/env"

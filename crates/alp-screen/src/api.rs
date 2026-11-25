@@ -73,6 +73,13 @@ impl Client {
         self.call("POST", path, Some(body))
     }
 
+    /// The session cookie's value, for the gallery view (alpd's gallery
+    /// gate checks the same cookie; nginx never passes it to the photo
+    /// service).
+    pub fn session(&self) -> Option<zeroize::Zeroizing<String>> {
+        self.session.lock().ok().and_then(|s| s.clone())
+    }
+
     /// Forgets the session (after locking, or when alpd says it is locked).
     pub fn forget(&self) {
         if let Ok(mut s) = self.session.lock() {
