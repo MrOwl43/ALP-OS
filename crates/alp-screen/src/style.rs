@@ -199,6 +199,22 @@ window.alp {
 .alp progressbar progress { min-height: 10px; border-radius: 99px; background-color: @ACCENT@; }
 .alp progressbar text { color: #5c5c66; }
 
+/* Slide to confirm */
+.alp scale trough { min-height: 10px; border-radius: 99px; background-color: #e2e4ea; }
+.alp scale highlight { border-radius: 99px; background-color: @ACCENT@; }
+.alp scale slider { min-width: 30px; min-height: 30px; margin: -10px; background-color: #ffffff;
+  border-radius: 99px; box-shadow: 0 1px 4px rgba(0,0,0,0.30); }
+
+/* Disk kinds: a badge before the name; hard disks are recommended */
+.kind-badge { font-size: 9.5pt; font-weight: 800; letter-spacing: 0.5px; border-radius: 7px;
+  padding: 3px 8px; min-width: 34px; }
+.kind-badge.kind-hdd { background-color: #e3f4e8; color: #17672e; }
+.kind-badge.kind-ssd { background-color: #e6f0fd; color: #0a4fb0; }
+.kind-badge.kind-usb, .kind-badge.kind-card { background-color: #f0e8fc; color: #6a2fb4; }
+.good-tag { font-size: 10pt; font-weight: 700; background-color: #e3f4e8; color: #17672e;
+  border-radius: 99px; padding: 3px 12px; }
+.alp row.advice-row .subtitle { color: #8a4300; opacity: 1; }
+
 /* Steps of the first start */
 .step-dot { min-width: 8px; min-height: 8px; border-radius: 99px; background-color: #d5d7de; }
 .step-dot.done { background-color: #8db6f2; }

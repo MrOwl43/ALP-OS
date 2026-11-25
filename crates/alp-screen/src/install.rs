@@ -68,6 +68,8 @@ pub struct InstallUi {
     system_group: adw::PreferencesGroup,
     data_group: adw::PreferencesGroup,
     reopen_group: adw::PreferencesGroup,
+    /// The archive would be kept on an SSD or USB system disk.
+    on_system: style::Note,
     rows: RefCell<Vec<adw::ActionRow>>,
     /// Archive disk rows by name: the system disk cannot also be one.
     data_checks: RefCell<Vec<(String, adw::ActionRow, gtk4::CheckButton)>>,
@@ -142,6 +144,42 @@ fn page_with(
     outer
 }
 
+/// The disk's kind as a small badge before its name (owner, 2026-11-25:
+/// each row first says what it is).
+fn kind_badge(t: &Texts, kind: &str) -> Option<gtk4::Label> {
+    let (key, en) = match kind {
+        "ssd" => ("disk.kind.ssd", "SSD"),
+        "hdd" => ("disk.kind.hdd", "HDD"),
+        "usb" => ("disk.kind.usb", "USB"),
+        "card" => ("disk.kind.card", "Card"),
+        _ => return None,
+    };
+    let l = gtk4::Label::builder()
+        .label(text(t, key, en))
+        .css_classes(["kind-badge", &format!("kind-{kind}")])
+        .valign(gtk4::Align::Center)
+        .build();
+    Some(l)
+}
+
+/// Why this kind of disk is not the best home for the archive (kept for
+/// many years); `None` for a hard disk or an unknown kind.
+fn kind_advice(t: &Texts, kind: &str) -> Option<String> {
+    match kind {
+        "ssd" => Some(text(
+            t,
+            "install.kind.ssd",
+            "Not recommended for the archive: SSDs are less suited to keeping files for many years. A hard disk (HDD) is better.",
+        )),
+        "usb" | "card" => Some(text(
+            t,
+            "install.kind.usb",
+            "Not recommended for the archive: USB disks, sticks and cards are easily unplugged and wear out. A hard disk (HDD) inside the computer is better.",
+        )),
+        _ => None,
+    }
+}
+
 /// The icon for a disk: a USB disk or stick, or a disk inside.
 fn disk_icon(usb: bool) -> gtk4::Image {
     style::chip(
@@ -180,7 +218,7 @@ impl InstallUi {
             .description(text(
                 t,
                 "install.data.sub",
-                "Optional. With two or more, every photo is kept on two disks.",
+                "Optional. With two or more, every photo is kept on two disks. A hard disk (HDD) is best for keeping photos for many years.",
             ))
             .build();
         let reopen_group = adw::PreferencesGroup::builder()
@@ -192,9 +230,13 @@ impl InstallUi {
             ))
             .visible(false)
             .build();
+        let on_system = style::Note::new("warn", "");
+        let note_group = adw::PreferencesGroup::new();
+        note_group.add(&on_system.root);
         choose.add(&system_group);
         choose.add(&reopen_group);
         choose.add(&data_group);
+        choose.add(&note_group);
         let choose_note = gtk4::Label::builder()
             .css_classes(["error"])
             .wrap(true)
@@ -333,6 +375,7 @@ impl InstallUi {
             system_group,
             data_group,
             reopen_group,
+            on_system,
             rows: RefCell::new(Vec::new()),
             data_checks: RefCell::new(Vec::new()),
             reopen_checks: RefCell::new(Vec::new()),
@@ -479,15 +522,18 @@ impl InstallUi {
             s
         };
         let title = |d: &Disk| {
-            let kind = if d.usb { " (USB)" } else { "" };
-            format!(
-                "{}{kind}",
-                if d.model.is_empty() {
-                    &d.name
-                } else {
-                    &d.model
-                }
-            )
+            if d.model.is_empty() {
+                d.name.clone()
+            } else {
+                d.model.clone()
+            }
+        };
+        // Badge first: prefixes are shown in the reverse order of adding,
+        // so the badge sits next to the name.
+        let badge = |row: &adw::ActionRow, d: &Disk| {
+            if let Some(b) = kind_badge(t, &d.kind) {
+                row.add_prefix(&b);
+            }
         };
 
         // Where the system lives: one choice among the disks that can hold
@@ -510,6 +556,7 @@ impl InstallUi {
                     None => subtitle(d),
                 })
                 .build();
+            badge(&row, d);
             row.add_prefix(&disk_icon(d.usb));
             if d.can_be_system {
                 let c = radio(&row, &first);
@@ -562,6 +609,7 @@ impl InstallUi {
                 ))
                 .build();
             let c = gtk4::CheckButton::new();
+            badge(&row, d);
             row.add_prefix(&style::chip("drive-harddisk-symbolic", Tone::Ok, 20));
             row.add_prefix(&c);
             row.set_activatable_widget(Some(&c));
@@ -585,9 +633,23 @@ impl InstallUi {
         for d in disks.iter().filter(|d| d.can_be_data) {
             let row = adw::ActionRow::builder()
                 .title(title(d))
-                .subtitle(subtitle(d))
+                .subtitle(match kind_advice(t, &d.kind) {
+                    Some(why) => format!("{}\n{why}", subtitle(d)),
+                    None => subtitle(d),
+                })
                 .build();
+            if d.kind == "hdd" {
+                let good = gtk4::Label::builder()
+                    .label(text(t, "install.kind.good", "Recommended"))
+                    .css_classes(["good-tag"])
+                    .valign(gtk4::Align::Center)
+                    .build();
+                row.add_suffix(&good);
+            } else if kind_advice(t, &d.kind).is_some() {
+                row.add_css_class("advice-row");
+            }
             let c = gtk4::CheckButton::new();
+            badge(&row, d);
             row.add_prefix(&disk_icon(d.usb));
             row.add_prefix(&c);
             row.set_activatable_widget(Some(&c));
@@ -643,6 +705,32 @@ impl InstallUi {
         }
         for (row, _) in self.reopen_checks.borrow().iter() {
             row.set_sensitive(!new_data && !self.keep_running.get());
+        }
+        // No archive disk ticked: the archive is kept on the system disk.
+        let system_kind = ch.system.as_deref().and_then(|n| {
+            self.disks
+                .borrow()
+                .iter()
+                .find(|d| d.name == n)
+                .map(|d| d.kind.clone())
+        });
+        let why = match system_kind.as_deref() {
+            Some(k) if !new_data && !reopening => kind_advice(&self.texts, k),
+            _ => None,
+        };
+        match why {
+            Some(why) => self.on_system.say(
+                "warn",
+                &format!(
+                    "{} {why}",
+                    text(
+                        &self.texts,
+                        "install.on_system",
+                        "No archive disk is ticked, so the archive is kept on the system disk."
+                    )
+                ),
+            ),
+            None => self.on_system.set(""),
         }
     }
 

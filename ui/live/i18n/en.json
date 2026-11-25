@@ -1059,5 +1059,13 @@
  "reopen.foot": "Lost the words? Without them nobody can open this archive, not even us. You can restart and install again without this disk.",
  "reopen.missing": "Please type all 15 words. Word {n} is empty.",
  "reopen.checking": "Checking your recovery words…",
- "reopen.wrong": "These words do not open this archive. Nothing was changed. Please check each word and try again."
+ "reopen.wrong": "These words do not open this archive. Nothing was changed. Please check each word and try again.",
+ "disk.kind.ssd": "SSD",
+ "disk.kind.hdd": "HDD",
+ "disk.kind.usb": "USB",
+ "disk.kind.card": "Card",
+ "install.kind.ssd": "Not recommended for the archive: SSDs are less suited to keeping files for many years. A hard disk (HDD) is better.",
+ "install.kind.usb": "Not recommended for the archive: USB disks, sticks and cards are easily unplugged and wear out. A hard disk (HDD) inside the computer is better.",
+ "install.kind.good": "Recommended",
+ "install.on_system": "No archive disk is ticked, so the archive is kept on the system disk."
 }

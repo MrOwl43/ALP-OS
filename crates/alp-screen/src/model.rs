@@ -184,6 +184,22 @@ pub mod install {
         /// Not usable, but an ALP-OS archive the recovery words can open
         /// again (plan 0.2.8-reopen-archive): never erased.
         pub reopenable: bool,
+        /// `ssd`, `hdd`, `usb` (any disk on USB) or `card`, empty when
+        /// unknown.
+        /// The archive is best kept on a hard disk (owner, 2026-11-25).
+        pub kind: String,
+    }
+
+    /// The disk's kind: alpd's `kind`, else a guess from the transport.
+    fn kind(d: &Value) -> String {
+        match d["kind"].as_str() {
+            Some(k @ ("ssd" | "hdd" | "usb" | "card")) => k.to_string(),
+            _ => match d["transport"].as_str() {
+                Some("usb") => "usb".into(),
+                Some("nvme") => "ssd".into(),
+                _ => String::new(),
+            },
+        }
     }
 
     /// `GET install/disks`: every disk, in alpd's order.
@@ -209,6 +225,7 @@ pub mod install {
                             reason: (!usable)
                                 .then(|| (s(&d["reason"]["key"]), s(&d["reason"]["text"]))),
                             reopenable: !usable && d["reopenable"].as_bool().unwrap_or(false),
+                            kind: kind(d),
                         }
                     })
                     .collect()
@@ -912,6 +929,14 @@ mod tests {
         assert!(!d[2].usable && !d[2].can_be_data);
         assert_eq!(d[2].reason.as_ref().unwrap().0, "holds_windows");
         assert!(!d[2].reopenable);
+        assert_eq!(d[0].kind, "", "sata without alpd's kind: unknown");
+        let k = install::disks(&json!({"disks": [
+            {"name": "a", "kind": "hdd", "transport": "sata"},
+            {"name": "b", "transport": "usb"},
+            {"name": "c", "transport": "nvme"},
+            {"name": "d", "kind": "floppy", "transport": "usb"}]}));
+        let kinds: Vec<&str> = k.iter().map(|d| d.kind.as_str()).collect();
+        assert_eq!(kinds, ["hdd", "usb", "ssd", "usb"]);
         // An old archive: not usable, but it can be opened again.
         let old = install::disks(&json!({"disks": [{"name": "sdc", "usable": false,
             "reopenable": true, "reason": {"key": "alp_archive", "text": "An archive."}}]}));
