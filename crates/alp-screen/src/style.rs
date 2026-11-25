@@ -173,7 +173,7 @@ window.alp {
 .word-n-chip { background-color: #e6e6eb; border-radius: 8px; padding: 6px 12px; font-weight: 700; }
 
 /* Sign-in page: on the wallpaper, like a login screen */
-.clock-big { font-size: 58pt; font-weight: 300; color: #ffffff; }
+.clock-big { font-size: 52pt; font-weight: 300; color: #ffffff; }
 .date-line { font-size: 15pt; color: #ffffff; }
 .avatar { border-radius: 999px; padding: 26px; background-color: rgba(255,255,255,0.28); color: #ffffff; }
 .login-name { font-size: 18pt; font-weight: 600; color: #ffffff; }

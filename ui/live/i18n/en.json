@@ -1037,5 +1037,10 @@
  "setup.pool.title": "Making your archive",
  "setup.pool.sub": "The disks you chose are locked with a new key. This takes a few minutes; please leave the computer on.",
  "setup.recovery.keep": "These words are shown only now and never again. Write them on paper, in this order, and keep it away from this computer.",
- "install.check": "Check before erasing"
+ "install.check": "Check before erasing",
+ "lock.temp": "Temperature",
+ "lock.temp.none": "Not measured yet",
+ "lock.disks": "Disks",
+ "set.install.d": "For testing. Normally chosen in the first setup.",
+ "set.install.go": "Choose disks"
 }

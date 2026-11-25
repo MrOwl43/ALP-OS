@@ -383,6 +383,12 @@ pub mod home {
         pub health: String,
         /// Where the archive is kept (disk label or name).
         pub place: Option<String>,
+        /// The computer's hottest sensor in °C, when alpd measures it
+        /// (`system.temperature_c`).
+        pub temperature_c: Option<i64>,
+        /// What the owner hid from the lock screen (`console.hidden`:
+        /// phones, network, space, backup).
+        pub hidden: Vec<String>,
     }
 
     impl Tiles {
@@ -418,6 +424,18 @@ pub mod home {
                     .filter(|s| !s.is_empty())
                     .or_else(|| place["name"].as_str())
                     .map(str::to_string),
+                temperature_c: w["system"]["temperature_c"]
+                    .as_f64()
+                    .filter(|t| (-40.0..=150.0).contains(t))
+                    .map(|t| t.round() as i64),
+                hidden: w["console"]["hidden"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             }
         }
     }
@@ -714,6 +732,19 @@ mod tests {
         assert_eq!(cable.net, bar::Net::Cable);
         assert_eq!(cable.ip.as_deref(), Some("10.1.1.1"));
         assert_eq!(cable.disk, Some(("tray.disk.bad", bar::Tone::Bad)));
+    }
+
+    #[test]
+    fn tiles_read_temperature_and_hidden_items() {
+        let t = home::Tiles::from_state(&json!({
+            "system": {"temperature_c": 54.6},
+            "console": {"hidden": ["phones", 3, "space"]}
+        }));
+        assert_eq!(t.temperature_c, Some(55));
+        assert_eq!(t.hidden, ["phones", "space"]);
+        let none = home::Tiles::from_state(&json!({"system": {"temperature_c": 999}}));
+        assert_eq!(none.temperature_c, None);
+        assert!(none.hidden.is_empty());
     }
 
     #[test]
