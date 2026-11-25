@@ -185,6 +185,19 @@ fn show_archive(chown: bool) -> Result<(), String> {
     run("mount", &["--bind", &src, FILES_MNT])
 }
 
+/// `@immich` at Immich's data folder in the index (database, thumbnails):
+/// on tens of TB the thumbnails alone outgrow the 1 GiB index. Immich
+/// starts only once the index and the archive are open, so the folder is
+/// bound before it is first used.
+fn show_immich() -> Result<(), String> {
+    let at = crate::immich::DATA;
+    if is_mounted(at) {
+        return Ok(());
+    }
+    fs::create_dir_all(at).map_err(|e| e.to_string())?;
+    run("mount", &["--bind", &format!("{TOP_MNT}/@immich"), at])
+}
+
 fn fail(detail: String) -> HwError {
     HwError {
         code: pool::CODE_CREATE,
@@ -217,6 +230,7 @@ pub fn create(say: &mut dyn FnMut(&str)) -> Result<(), HwError> {
     let id = pool::create(checked.plan.get(), &devs, &key, TOP_MNT, &mut System)?;
     say("Making your archive ready…");
     show_archive(true).map_err(fail)?;
+    show_immich().map_err(fail)?;
     let rec = Record {
         fs_uuid: id.0,
         members: seed
@@ -248,6 +262,7 @@ pub fn open() -> Result<Opened, String> {
     let opened = pool::open(&members, rec.can_lose(), &key, TOP_MNT, &mut System)
         .map_err(|e| e.to_string())?;
     show_archive(false)?;
+    show_immich()?;
     Ok(opened)
 }
 
@@ -256,8 +271,10 @@ pub fn close() -> Result<(), String> {
     let Some(rec) = record() else {
         return Ok(());
     };
-    if is_mounted(FILES_MNT) {
-        run("umount", &[FILES_MNT])?;
+    for at in [crate::immich::DATA, FILES_MNT] {
+        if is_mounted(at) {
+            run("umount", &[at])?;
+        }
     }
     pool::close(rec.members.len(), TOP_MNT, &mut System).map_err(|e| e.to_string())
 }

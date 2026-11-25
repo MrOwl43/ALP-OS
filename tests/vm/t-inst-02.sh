@@ -59,7 +59,8 @@ wait_open='-/bin/bash -c "for i in $(seq 150); do mountpoint -q /var/lib/alp-poo
 show='-/bin/bash -c "btrfs filesystem df /run/alp/pool | sed s/^/DF=/"
 -/bin/bash -c "findmnt -no OPTIONS /run/alp/pool | tr , \"\\n\" | grep -qx ro && echo POOL-RO=yes || echo POOL-RO=no"
 -/bin/bash -c "test -e /var/lib/alp/firstboot-seed.toml && echo SEED=yes || echo SEED=no"
--/bin/bash -c "sed -n s/^data_profile/RECORD-PROFILE/p /var/lib/alp/pool.toml"'
+-/bin/bash -c "sed -n s/^data_profile/RECORD-PROFILE/p /var/lib/alp/pool.toml"
+-/bin/bash -c "findmnt -no SOURCE /var/lib/alp-index/immich | grep -q @immich && echo IMMICH-ON-POOL=yes || echo IMMICH-ON-POOL=no"'
 
 # Part 2: first start.
 probe2="$(QA_HTTP_TIMEOUT=90 post SETUP /api/v1/live/password/setup "{\"password\":\"$pw\"}")
@@ -77,6 +78,7 @@ expect "data is RAID1" '^DF=Data, RAID1' "$out"
 expect "metadata is RAID1" '^DF=Metadata, RAID1' "$out"
 expect "seed removed" '^SEED=no' "$out"
 expect "record written" '^RECORD-PROFILE = "raid1"' "$out"
+expect "photo service data is on the pool" '^IMMICH-ON-POOL=yes' "$out"
 sum=$(sed -n 's/^SUM=\([0-9a-f]\{64\}\).*/\1/p' <<<"$out" | head -1)
 if [[ -n $sum ]]; then echo "ok:   test file written"; else echo "FAIL: test file written" >&2; fail=1; fi
 (( fail == 0 )) || { echo "FAIL: T-INST-02" >&2; exit 1; }
