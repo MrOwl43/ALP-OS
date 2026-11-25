@@ -129,6 +129,18 @@ else
 fi
 rm -f "$work/state.img"
 
+# The installed ESP gets the stick's loader.conf: menu editor off, a menu
+# timeout (the "safe graphics" entry can be picked).
+esp_start=$(sfdisk --json "$target" | python3 -Ic '
+import json, sys
+print(json.load(sys.stdin)["partitiontable"]["partitions"][0]["start"] * 512)')
+loader=$(mtype -i "$target@@$esp_start" ::/loader/loader.conf 2>&1 || true)
+if grep -qE '^editor[[:space:]]+no' <<<"$loader" && grep -qE '^timeout[[:space:]]+[1-9]' <<<"$loader"; then
+    echo "ok:   the installed ESP has the stick's loader.conf"
+else
+    echo "FAIL: the installed ESP's loader.conf: $loader" >&2; fail=1
+fi
+
 (( fail == 0 )) || { echo "FAIL: T-INST-01" >&2; exit 1; }
 
 # Part 2: start the installed disk on its own, the stick taken out (the

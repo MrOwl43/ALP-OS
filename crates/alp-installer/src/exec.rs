@@ -628,9 +628,9 @@ fn file_contains(path: &std::path::Path, needle: &[u8]) -> bool {
     }
 }
 
-/// systemd-boot and the running start file onto the new ESP. The stick's
-/// ESP is mounted read-only only to copy that file. Both are unmounted
-/// again, also after a failure (the first failure is reported).
+/// systemd-boot, the stick's loader.conf and the running start file onto
+/// the new ESP. The stick's ESP is mounted read-only only to copy those
+/// files. Both are unmounted again, also after a failure (the first failure is reported).
 fn install_start_files(x: &mut Exec<'_>, esp: &str, stick_esp: &str) -> Result<(), ExecError> {
     let (dir, src) = (x.cfg.esp_dir.clone(), x.cfg.stick_esp_dir.clone());
     let version = x.cfg.image_version.clone();
@@ -671,6 +671,22 @@ fn install_start_files(x: &mut Exec<'_>, esp: &str, stick_esp: &str) -> Result<(
                         "--entry-token=machine-id",
                         "--make-entry-directory=no",
                         &format!("--esp-path={dir}"),
+                    ]),
+                    None,
+                )?;
+                // The stick's loader.conf: 'editor no' (the root hash in
+                // the start file cannot be dropped at the menu) and a short
+                // menu, so the "safe graphics" entry for older computers can
+                // be picked. bootctl only writes a commented default.
+                x.run(
+                    CODE_COPY,
+                    "install",
+                    &owned(&[
+                        "-D",
+                        "-m",
+                        "0644",
+                        &format!("{src}/loader/loader.conf"),
+                        &format!("{dir}/loader/loader.conf"),
                     ]),
                     None,
                 )?;
@@ -979,6 +995,7 @@ mod tests {
                 "mount", // stick ESP, read-only
                 "mount", // new ESP
                 "bootctl",
+                "install", // loader.conf
                 "install", // start file
                 "sync",
                 "umount",
@@ -1020,9 +1037,12 @@ mod tests {
         assert_eq!(args[..4], ["-t", "vfat", "-o", "ro,nodev,nosuid,noexec"]);
         assert_eq!(args[4], "/dev/sdc1");
         let (_, args, _) = &m.calls[15];
+        assert!(args[3].ends_with("/loader/loader.conf"), "{args:?}");
+        assert_eq!(args[4], "/run/alp-installer/esp/loader/loader.conf");
+        let (_, args, _) = &m.calls[16];
         assert!(args[3].ends_with("EFI/Linux/alp-os-6.12-1.efi"), "{args:?}");
         assert_eq!(args[4], "/run/alp-installer/esp/EFI/Linux/alp-os_0.2.8.efi");
-        let (_, args, stdin) = &m.calls[21];
+        let (_, args, stdin) = &m.calls[22];
         assert_eq!(args[..3], ["-m", "0600", "/dev/stdin"]);
         assert_eq!(args[3], "/run/alp-installer/state/firstboot-seed.toml");
         let seed: toml::Table = stdin.as_deref().unwrap().parse().unwrap();
