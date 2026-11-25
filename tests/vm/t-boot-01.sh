@@ -3,7 +3,8 @@
 # T-BOOT-01: the image boots headless (QEMU, OVMF) to alp-healthy.target, and
 # the running root is the read-only EROFS filesystem on the dm-verity device
 # with the roothash on the kernel command line. Before booting, it checks that
-# the boot menu editor is disabled in the ESP's loader.conf.
+# the boot menu editor is disabled in the ESP's loader.conf, the menu shows,
+# and the start file has the "safe graphics" entry.
 #
 # Usage: tests/vm/t-boot-01.sh <disk-image> [timeout-seconds | --print-probe]
 # Env:   ALP_SHARED_OUT=<file>  use this probe output instead of booting
@@ -28,6 +29,21 @@ if mtype -i "$image@@$esp_offset" ::/loader/loader.conf | grep -qE '^editor[[:sp
     echo "  ok: boot menu editor disabled (loader.conf)"
 else
     echo "FAIL: loader.conf on the ESP does not say 'editor no'" >&2; exit 1
+fi
+# Field bug 0.2.7 (old laptops, blinking cursor): the menu shows, and the
+# start file has the "safe graphics" entry (UKI profile with nomodeset).
+if mtype -i "$image@@$esp_offset" ::/loader/loader.conf | grep -qE '^timeout[[:space:]]+[1-9]'; then
+    echo "  ok: boot menu shows (loader.conf timeout)"
+else
+    echo "FAIL: loader.conf on the ESP has no menu timeout" >&2; exit 1
+fi
+uki_name=$(mdir -b -i "$image@@$esp_offset" ::/EFI/Linux | grep -i '\.efi$' | head -1)
+if [[ -n $uki_name ]] && mtype -i "$image@@$esp_offset" "$uki_name" \
+        | grep -aq 'ID=.\?safe-graphics' \
+    && mtype -i "$image@@$esp_offset" "$uki_name" | grep -aq 'nomodeset'; then
+    echo "  ok: start file has the safe graphics entry"
+else
+    echo "FAIL: start file ${uki_name:-(none)} has no safe graphics entry" >&2; exit 1
 fi
 
 if [[ -n ${ALP_SHARED_OUT:-} ]]; then

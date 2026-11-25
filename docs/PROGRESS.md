@@ -50,8 +50,12 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   boot menu by holding Option; NVIDIA 9400M/320M or Intel HD 3000/4000); an ASUS laptop starts by EFI
   and stays on a blinking cursor (30+ min). No kernel text seen, so the kernel may never get control:
   suspects are the 241 MB start file (UKI) on old firmware, or the hand-over to the graphics driver.
-  Step 1 done: `earlycon=efifb` shows the first kernel messages. Next: shrink the UKI; a "safe
-  graphics" (nomodeset) boot entry.
+  Step 1 done: `earlycon=efifb` shows the first kernel messages. Step 2 (2026-11-25): the initrd
+  had every kernel module and all their firmware (mkosi's default without `KernelInitrdModules=`);
+  now only disks, USB, SD/eMMC, keyboards, TPM (T-BUDGET-01: start file within 128 MiB); a "safe
+  graphics" (nomodeset) entry in the same start file (UKI profile); the boot menu shows 3 s; the
+  installer copies loader.conf to the installed ESP (before: no `editor no` there). Next: the owner
+  tries the next build on both laptops and sends a photo of the screen.
 - Next: home screen names a missing pool disk (ALP-STO-001); native setup screens (password, pool progress, recovery, phone) on alp-screen;
   check gallery and phone approval on the native screen in a VM; code review of installer + pool
   (encryption/storage: opus reviewer) before the PR; `/claude-security` scan before release.

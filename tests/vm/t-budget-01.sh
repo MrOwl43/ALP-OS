@@ -4,17 +4,21 @@
 # their budgets: idle memory within 2 GB on a 4 GB machine (spec Section 3);
 # system image (root + verity + UKI, what one update ships) within 4 GB
 # (owner decision 2026-10-18 for Live, ADR 0009; was 2 GB in ADR 0005).
+# The start file (UKI) stays within 128 MiB: old firmware stops loading a
+# large one (field bug 0.2.7, 241 MB; image/mkosi.conf KernelInitrdModules).
 # "4 GB" means 4,000,000,000 bytes = 3814 MiB.
 # Results go to <image dir>/budget.json.
 #
 # Usage: tests/vm/t-budget-01.sh <disk-image> [--print-probe]
 # Env:   ALP_SHARED_OUT=<file>  use this probe output instead of booting
-# Env:   ALP_BUDGET_IDLE_MIB (default 1907), ALP_BUDGET_SYSTEM_MIB (default 3814)
+# Env:   ALP_BUDGET_IDLE_MIB (default 1907), ALP_BUDGET_SYSTEM_MIB (default 3814),
+#        ALP_BUDGET_UKI_MIB (default 128)
 set -euo pipefail
 here=$(dirname "$(realpath "$0")")
 image=${1:?usage: t-budget-01.sh <disk-image>}
 idle_budget=${ALP_BUDGET_IDLE_MIB:-1907}
 system_budget=${ALP_BUDGET_SYSTEM_MIB:-3814}
+uki_budget=${ALP_BUDGET_UKI_MIB:-128}
 dir=$(dirname "$(realpath "$image")")
 uki="$dir/$(basename "$image" .raw).efi"
 
@@ -34,10 +38,11 @@ fi
 echo "$out"
 (( status == 0 )) || { echo "FAIL: T-BUDGET-01 (VM run failed)" >&2; exit 1; }
 
-ALP_PROBE_OUT=$out python3 -I - "$image" "$uki" "$idle_budget" "$system_budget" "$dir/budget.json" <<'PY' || status=1
+ALP_PROBE_OUT=$out python3 -I - "$image" "$uki" "$idle_budget" "$system_budget" "$dir/budget.json" "$uki_budget" <<'PY' || status=1
 import json, os, re, subprocess, sys
-image, uki, idle_budget, system_budget, dest = (
-    sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), sys.argv[5])
+image, uki, idle_budget, system_budget, dest, uki_budget = (
+    sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), sys.argv[5],
+    int(sys.argv[6]))
 out = os.environ["ALP_PROBE_OUT"]
 
 def kib(key):
@@ -64,6 +69,7 @@ result = {
 result["system_image_mib"] = round(result["uki_mib"] + result["root_partition_mib"]
                                    + result["root_verity_partition_mib"], 1)
 result["system_image_budget_mib"] = system_budget
+result["uki_budget_mib"] = uki_budget
 with open(dest, "w") as f:
     json.dump(result, f, indent=2); f.write("\n")
 for k, v in result.items():
@@ -72,6 +78,8 @@ print(f"  written to {dest}")
 failed = []
 if used_mib > idle_budget:
     failed.append("idle memory over budget")
+if result["uki_mib"] > uki_budget:
+    failed.append("start file (UKI) over budget")
 if result["system_image_mib"] > system_budget:
     failed.append("system image over budget")
 if failed:
