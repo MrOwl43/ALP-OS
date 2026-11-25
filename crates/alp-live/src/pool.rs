@@ -350,6 +350,136 @@ pub fn create(say: &mut dyn FnMut(&str)) -> Result<(), HwError> {
     Ok(())
 }
 
+/// The installer left a seed to open an old archive with the recovery words
+/// (docs/plans/0.2.8-reopen-archive.md).
+pub fn seed_reopen() -> bool {
+    seed_waiting()
+        && fs::read_to_string(SEED)
+            .ok()
+            .and_then(|t| FirstbootSeed::from_toml(&t).ok())
+            .is_some_and(|s| s.reopen)
+}
+
+fn output(cmd: &str, args: &[&str]) -> Result<String, String> {
+    let out = std::process::Command::new(cmd)
+        .args(args)
+        .output()
+        .map_err(|e| format!("{cmd}: {e}"))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(format!(
+            "{cmd}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
+    }
+}
+
+/// `btrfs filesystem df`: the data profile as the record names it.
+fn data_profile_of(df: &str) -> Option<String> {
+    let line = df.lines().find(|l| l.trim_start().starts_with("Data,"))?;
+    let p = line
+        .split(',')
+        .nth(1)?
+        .split(':')
+        .next()?
+        .trim()
+        .to_ascii_lowercase();
+    ["single", "dup", "raid1", "raid1c3", "raid10"]
+        .contains(&p.as_str())
+        .then_some(p)
+}
+
+/// `btrfs filesystem show`: "Total devices N".
+fn total_devices(show: &str) -> Option<usize> {
+    let rest = show.split("Total devices").nth(1)?;
+    rest.split_whitespace().next()?.parse().ok()
+}
+
+/// First start after losing the system disk: open the old archive on the
+/// seed's members with `secret` (the recovery words' unlock secret). A
+/// wrong code answers [`crate::archive::RECOVERY_WRONG`] and changes
+/// nothing. Each member gets the new index's pool key in slot 0
+/// (`pool::rekey_with_recovery`); the recovery slots stay, so the same
+/// words keep working. Safe to run again after a power cut.
+pub fn reopen(secret: &str, say: &mut dyn FnMut(&str)) -> Result<(), String> {
+    if record().is_some() {
+        return open().map(drop);
+    }
+    let text = fs::read_to_string(SEED).map_err(|e| format!("no first-boot seed: {e}"))?;
+    let seed = FirstbootSeed::from_toml(&text)?;
+    if !seed.reopen {
+        return Err("the installation did not choose an archive to open".into());
+    }
+    say("Checking your disks…");
+    let _ = run("udevadm", &["settle", "--timeout=30"]);
+    let disks = inspect::inspect(&inspect::Roots::system()).disks;
+    let checked = seed_check::check(&seed, &disks, &by_id_disk, 0).map_err(|e| e.to_string())?;
+    let devs: Vec<String> = checked
+        .found
+        .iter()
+        .map(|f| format!("/dev/{}", f.partition))
+        .collect();
+    say("Checking your recovery code…");
+    // Every member first: a wrong code never changes any disk.
+    for d in &devs {
+        if !pool::opens_with_recovery(&mut System, d, secret).map_err(|e| e.to_string())? {
+            return Err(crate::archive::RECOVERY_WRONG.into());
+        }
+    }
+    let key = pool_key(true)?;
+    say("Giving your disks this computer's key…");
+    let tmp = Path::new("/run/alp");
+    fs::create_dir_all(tmp).map_err(|e| e.to_string())?;
+    for d in &devs {
+        pool::rekey_with_recovery(&mut System, d, secret, &key, tmp).map_err(|e| e.to_string())?;
+    }
+    say("Opening your archive…");
+    let members: Vec<(String, bool)> = devs.iter().map(|d| (d.clone(), true)).collect();
+    pool::open(&members, 0, &key, TOP_MNT, &mut System).map_err(|e| e.to_string())?;
+    let show = output("btrfs", &["filesystem", "show", TOP_MNT])?;
+    if total_devices(&show) != Some(devs.len()) {
+        return Err(format!(
+            "the chosen disks are not one whole archive ({} chosen)",
+            devs.len()
+        ));
+    }
+    let fs_uuid = output("findmnt", &["-no", "UUID", TOP_MNT])?
+        .trim()
+        .to_string();
+    let data_profile = data_profile_of(&output("btrfs", &["filesystem", "df", TOP_MNT])?)
+        .ok_or("the archive's protection could not be read")?;
+    // The gallery's database password was in the lost index: the old
+    // database is set aside (kept), so the photo service starts a new one
+    // and puts the newest backup from the archive back (ADR 0025,
+    // crate::immich_restore).
+    let pg = Path::new(TOP_MNT).join("@immich/postgres");
+    let kept = Path::new(TOP_MNT).join("@immich/postgres.before-reopen");
+    if pg.exists() && !kept.exists() {
+        fs::rename(&pg, &kept).map_err(|e| e.to_string())?;
+    }
+    show_archive(false)?;
+    show_immich()?;
+    let rec = Record {
+        fs_uuid,
+        members: seed
+            .members
+            .iter()
+            .map(|m| m.partition_uuid.to_ascii_lowercase())
+            .collect(),
+        data_profile,
+        names: seed
+            .members
+            .iter()
+            .map(|m| disk_name(&m.by_id, m.size_bytes))
+            .collect(),
+    };
+    fs::create_dir_all(STATE_DIR).map_err(|e| e.to_string())?;
+    write_atomic(Path::new(RECORD), rec.to_toml().as_bytes(), 0o644)?;
+    fs::remove_file(SEED).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Every start: open the pool (read-only if a mirrored disk is missing).
 pub fn open() -> Result<Opened, String> {
     let rec = record().ok_or("no pool set up yet")?;
@@ -664,6 +794,20 @@ mod tests {
         assert_eq!(other_slot(1), 2);
         assert_eq!(other_slot(2), 1);
     }
+    #[test]
+    fn reads_what_btrfs_says_about_a_reopened_archive() {
+        let df = "Data, RAID1: total=1.00GiB, used=200.00MiB\nSystem, RAID1: total=8.00MiB, used=16.00KiB\nMetadata, RAID1: total=256.00MiB, used=1.00MiB\n";
+        assert_eq!(data_profile_of(df).as_deref(), Some("raid1"));
+        assert_eq!(
+            data_profile_of("Data, DUP: total=1GiB\n").as_deref(),
+            Some("dup")
+        );
+        assert_eq!(data_profile_of("Data, RAID5: total=1GiB\n"), None);
+        let show = "Label: 'alp-pool'  uuid: 1234\n\tTotal devices 2 FS bytes used 200MiB\n\tdevid 1 size 40GiB used 2GiB path /dev/mapper/alp-pool-0\n";
+        assert_eq!(total_devices(show), Some(2));
+        assert_eq!(total_devices("nothing"), None);
+    }
+
     #[test]
     fn degraded_from_the_mount() {
         let ro = "40 30 0:52 / /run/alp/pool ro,relatime shared:1 - btrfs /dev/mapper/alp-pool-0 ro,degraded,space_cache=v2\n";
