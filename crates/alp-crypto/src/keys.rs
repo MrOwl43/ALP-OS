@@ -68,9 +68,18 @@ impl fmt::Debug for Passphrase {
 pub struct PoolKey(Zeroizing<[u8; 64]>);
 
 impl PoolKey {
-    /// Generate a new random pool key (block 5).
+    /// Generate a new random pool key: 64 bytes from the kernel's random
+    /// source (`/dev/urandom`, the same source Live's archive key uses).
     pub fn generate() -> Result<Self> {
-        todo!("block 5")
+        let mut f = std::fs::File::open("/dev/urandom").map_err(key_error)?;
+        Self::read_from(&mut f)
+    }
+
+    /// Read a 64-byte key, e.g. the pool key file in the unlocked index.
+    pub fn read_from(r: &mut dyn std::io::Read) -> Result<Self> {
+        let mut bytes = Zeroizing::new([0u8; 64]);
+        r.read_exact(&mut bytes[..]).map_err(key_error)?;
+        Ok(Self(bytes))
     }
 
     /// Write the raw key to `out`, e.g. the stdin pipe of
@@ -78,6 +87,13 @@ impl PoolKey {
     /// is not wiped (spec Section 2 rule 4).
     pub fn write_key_file(&self, out: &mut dyn Write) -> std::io::Result<()> {
         out.write_all(self.0.as_slice())
+    }
+}
+
+fn key_error(e: std::io::Error) -> crate::CryptoError {
+    crate::CryptoError {
+        code: "ALP-KEY-004",
+        detail: format!("pool key: {e}"),
     }
 }
 
@@ -129,6 +145,23 @@ mod tests {
         assert_eq!(format!("{p:?}"), "Passphrase(<redacted>)");
         let k = PoolKey(Zeroizing::new([7u8; 64]));
         assert_eq!(format!("{k:?}"), "PoolKey(<redacted>)");
+    }
+
+    #[test]
+    fn generated_keys_differ_and_short_input_is_refused() {
+        let a = PoolKey::generate().unwrap();
+        let b = PoolKey::generate().unwrap();
+        assert_ne!(a.0.as_slice(), b.0.as_slice());
+        let mut short: &[u8] = &[1u8; 63];
+        assert_eq!(
+            PoolKey::read_from(&mut short).unwrap_err().code,
+            "ALP-KEY-004"
+        );
+        let mut exact: &[u8] = &[9u8; 64];
+        assert_eq!(
+            PoolKey::read_from(&mut exact).unwrap().0.as_slice(),
+            &[9u8; 64]
+        );
     }
 
     #[test]

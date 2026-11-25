@@ -11,6 +11,8 @@ publish.workspace = true
 [dependencies]
 alp-crypto.workspace = true
 alp-hw.workspace = true
+# Wipes the pool key buffer after it went to cryptsetup (pinned in the workspace).
+zeroize.workspace = true
 
 [lints]
 workspace = true

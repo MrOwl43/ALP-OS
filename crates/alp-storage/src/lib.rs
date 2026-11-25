@@ -7,6 +7,7 @@
 //! key is handed to `cryptsetup` only through `PoolKey::write_key_file`.
 //! Implementation arrives with block 4.
 
+pub mod pool;
 pub mod seed_check;
 
 use alp_hw::{

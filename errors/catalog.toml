@@ -174,6 +174,12 @@ title = "A storage change was stopped for safety"
 action = "Nothing was changed. Try again; if it happens again, write down this code and ask for help."
 technician = "Confirmed::by_user refused: the plan's digest differs from the confirmed digest (internal error; plan recomputed differently or changed after confirmation). Logs: journalctl -t alpd; ledger OperationConfirmed entry."
 
+[ALP-STO-008]
+severity = "action"
+title = "Your photo storage could not be set up"
+action = "Nothing on your disks was lost. Restart the server to try again; if it happens again, write down this code and ask for help."
+technician = "First-start pool creation failed (luksFormat, cryptsetup open, mkfs.btrfs, mount or subvolume create); every step resumes on the next try and nothing that exists is formatted again. Logs: journalctl -t alpd; the failing command's stderr in the detail."
+
 # Stream A (ALP-OS Live), backup disk for the archive: 100-199.
 
 [ALP-STO-100]
