@@ -799,6 +799,8 @@ mod tests {
     fn fixture(name: &str) -> &'static str {
         match name {
             "blank" => include_str!("../../tests/fixtures/lsblk/blank.json"),
+            // util-linux 2.41 (trixie): an unmounted disk has `mountpoints: []`.
+            "blank-trixie" => include_str!("../../tests/fixtures/lsblk/blank-trixie.json"),
             "windows" => include_str!("../../tests/fixtures/lsblk/windows.json"),
             "linux" => include_str!("../../tests/fixtures/lsblk/linux.json"),
             "boot-stick" => include_str!("../../tests/fixtures/lsblk/boot-stick.json"),
@@ -835,6 +837,13 @@ mod tests {
             Verdict::Usable { roles, contents } => (roles.clone(), contents.clone()),
             v => panic!("{disk} should be usable: {v:?}"),
         }
+    }
+
+    #[test]
+    fn trixie_empty_mountpoints_is_unmounted() {
+        let l = run("blank-trixie", Some("sdz"));
+        let (roles, _) = usable(&l, "sda");
+        assert_eq!(roles, vec![Role::SystemAndData, Role::System, Role::Data]);
     }
 
     #[test]
