@@ -35,8 +35,11 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   backup job itself comes with the backup role. Image profiles `live` / `installed` build in CI;
   T-INST-01 passes in CI (2026-11-25): Windows disk greyed and unchanged, the target gets the contract
   layout, slot 1 filled by repart CopyBlocks=auto, systemd-boot + the running UKI on the new ESP.
-- Next: a test that boots the installed disk without the stick (first boot, seed, pool); gallery view and phone-pairing approval on the native screen; install-time
-  sysupdate definitions; code review of digest + installer before the PR.
+  T-INST-01 part 2 passes (2026-11-25): the installed disk starts alone (stick out), root from slot 1,
+  seed on its alp-state (alp-live-state now settles udev itself; alp-live-protect is masked there).
+- Next: first-boot pool creation from the seed; check gallery view and phone approval on the native
+  screen in a VM; install-time sysupdate definitions; code review of digest + installer before the PR;
+  `/claude-security` scan before release (plan "Before the 0.2.8 release").
 
 ## Alpha 0.2.7 (started 2026-11-15, same branch, on top of 0.2.61)
 
