@@ -10,6 +10,9 @@ publish.workspace = true
 
 [dependencies]
 alp-hw.workspace = true
+# The installed system's encrypted pool (pool.rs) and its key type.
+alp-storage.workspace = true
+alp-crypto.workspace = true
 # Reads the hardware profile (profiles/*.toml) and the archive record.
 toml.workspace = true
 # Immich API bodies (phone pairing).

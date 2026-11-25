@@ -280,6 +280,34 @@ pub fn open(
     })
 }
 
+/// Close the pool mounted at `mnt` with `members` containers: unmount,
+/// then close every mapping that exists. Stops at the first failure, so
+/// a container is never closed under a mounted filesystem.
+pub fn close(members: usize, mnt: &str, r: &mut dyn Run) -> Result<()> {
+    if r.run("mountpoint", &owned(&["-q", mnt]), None).ok {
+        let out = r.run("umount", &owned(&[mnt]), None);
+        if !out.ok {
+            return Err(err(CODE_OPEN, "umount", &out));
+        }
+    }
+    for i in 0..members {
+        let name = mapper(i);
+        if r.run(
+            "test",
+            &owned(&["-e", &format!("/dev/mapper/{name}")]),
+            None,
+        )
+        .ok
+        {
+            let out = r.run("cryptsetup", &owned(&["close", &name]), None);
+            if !out.ok {
+                return Err(err(CODE_OPEN, &format!("close {name}"), &out));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The real runner: the program with these arguments, stdin piped when
 /// given (and then closed), output captured.
 #[derive(Debug, Default)]
@@ -586,6 +614,36 @@ mod tests {
         );
         assert!(m3.ran("mount")[0].contains(&"noatime,degraded,ro".to_string()));
         assert!(m3.ran("cryptsetup").iter().all(|a| a[0] == "open"));
+    }
+
+    #[test]
+    fn close_unmounts_before_closing() {
+        let mut m = Mock::default();
+        create(&plan(2), &devs(2), &key(), MNT, &mut m).unwrap();
+        m.calls.clear();
+        close(2, MNT, &mut m).unwrap();
+        let order: Vec<_> = m
+            .calls
+            .iter()
+            .filter(|c| c.0 == "umount" || c.0 == "cryptsetup")
+            .map(|c| format!("{} {}", c.0, c.1.join(" ")))
+            .collect();
+        assert_eq!(
+            order,
+            [
+                format!("umount {MNT}"),
+                "cryptsetup close alp-pool-0".into(),
+                "cryptsetup close alp-pool-1".into()
+            ]
+        );
+        let mut m = Mock {
+            fail: Some("umount"),
+            ..Mock::default()
+        };
+        m.mounted.insert(MNT.into());
+        m.exists.insert("/dev/mapper/alp-pool-0".into());
+        assert!(close(1, MNT, &mut m).is_err());
+        assert!(m.ran("cryptsetup").is_empty());
     }
 
     #[test]

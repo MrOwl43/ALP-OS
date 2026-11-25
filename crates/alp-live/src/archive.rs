@@ -2529,6 +2529,10 @@ pub const RECOVERY_NONE: &str =
 /// index is open: the archive's key is inside it (ADR 0011). A disk that
 /// was not removed safely is repaired first (ADR 0014).
 pub fn open() -> Result<(), String> {
+    // The installed system's pool (its own record; ADR 0028).
+    if crate::pool::record().is_some() {
+        return crate::pool::open().map(drop);
+    }
     let rec = record().ok_or("no archive set up yet")?;
     if is_open() {
         return Ok(());
@@ -2657,6 +2661,9 @@ fn open_on(p: &Part, rec: &Record) -> Result<(), String> {
 /// Stops at the first step that fails and reports it (review S10): a disk
 /// is never made read-only under a filesystem that is still mounted.
 pub fn close() -> Result<(), String> {
+    if crate::pool::record().is_some() {
+        return crate::pool::close();
+    }
     release()?;
     if is_mounted(HOST_MNT) {
         run("umount", &[HOST_MNT])?;
@@ -2767,6 +2774,9 @@ pub fn record() -> Option<Record> {
 }
 
 pub fn status() -> Status {
+    if crate::pool::record().is_some() {
+        return pool_status();
+    }
     let Some(rec) = record() else {
         return Status::None;
     };
@@ -2784,6 +2794,32 @@ pub fn status() -> Status {
             place: partitions()
                 .into_iter()
                 .find(|p| p.partuuid == rec.partuuid),
+            size_bytes: size,
+            free_bytes: free,
+        };
+    }
+    let why = read(Path::new(OPEN_ERROR));
+    Status::Missing(if why.is_empty() {
+        "The archive is not open yet.".into()
+    } else {
+        format!("The archive could not be opened: {why}.")
+    })
+}
+
+/// [`status`] of the installed system's pool: no place to name (its
+/// disks are the installed ones).
+fn pool_status() -> Status {
+    if is_open() {
+        let (size, free) = run("df", &["-B1", "--output=size,avail", FILES_MNT])
+            .ok()
+            .and_then(|s| {
+                let l = s.lines().last()?.to_string();
+                let mut it = l.split_whitespace().map(|v| v.parse::<u64>().unwrap_or(0));
+                Some((it.next()?, it.next()?))
+            })
+            .unwrap_or((0, 0));
+        return Status::Open {
+            place: None,
             size_bytes: size,
             free_bytes: free,
         };
@@ -3367,7 +3403,9 @@ pub fn cli(args: &[&str]) -> i32 {
         }
         ["close"] => close(),
         ["state-mount"] => state_mount(),
-        _ => Err("usage: alpctl live archive candidates | create <PARTUUID> | open | close | state-mount".into()),
+        // Installed system: make the pool from the first-boot seed.
+        ["create-pool"] => crate::pool::create(&mut |m| println!("{m}")).map_err(|e| e.to_string()),
+        _ => Err("usage: alpctl live archive candidates | create <PARTUUID> | create-pool | open | close | state-mount".into()),
     };
     match res {
         Ok(()) => 0,

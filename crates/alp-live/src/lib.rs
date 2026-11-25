@@ -19,6 +19,7 @@ pub mod job;
 pub mod live;
 pub mod media;
 pub mod pairing;
+pub mod pool;
 pub mod prefs;
 pub mod qr;
 pub mod recovery;

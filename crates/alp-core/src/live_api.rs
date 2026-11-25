@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use alp_live::fail::Fail;
 use alp_live::{
     admin, archive, chain, clock, disks, display, events, format, immich, immich_restore, index,
-    job, live, pairing, prefs, qr, recovery, update, wifi,
+    job, live, pairing, pool, prefs, qr, recovery, update, wifi,
 };
 use serde_json::{Value, json};
 
@@ -1712,6 +1712,7 @@ impl Live {
                 Ok(Response::json(200, &candidates()))
             }),
             "archive/create" if post => self.need_open().and_then(|()| self.archive_create(req)),
+            "archive/create-pool" if post => self.need_open().and_then(|()| self.archive_create_pool()),
             "disks" if get => Ok(Response::json(200, &disks::list_json())),
             "events" if get => Ok(Response::json(200, &events::recent_json())),
             "disks/eject" if post => self.disks_eject(req),
@@ -1901,6 +1902,7 @@ impl Live {
             | "wifi/connect"
             | "archive/candidates"
             | "archive/create"
+            | "archive/create-pool"
             | "disks"
             | "events"
             | "disks/eject"
@@ -2456,6 +2458,9 @@ impl Live {
             "terminal": live_terminal::state_json(),
             "index": self.space_json(index::MNT, index::is_open()),
             "archive": self.archive_state(),
+            // Installed system (ADR 0028): "waiting" until the first start
+            // made the pool from the installer's choices, then "made".
+            "pool": if pool::record().is_some() { "made" } else if pool::seed_waiting() { "waiting" } else { "none" },
             "immich": if *lock(&self.paused) {
                 json!({"state": "paused", "error": fail_json(&Fail::new("space.full",
                     "There is no room left, so new photos are not saved for now. Make room or use a bigger disk."))})
@@ -2490,7 +2495,7 @@ impl Live {
         }
         if !index::is_open() {
             return none_json(
-                if archive::record().is_some() {
+                if archive::record().is_some() || pool::record().is_some() {
                     "locked"
                 } else {
                     "none"
@@ -2740,6 +2745,53 @@ impl Live {
                 j.message = e.message.clone();
                 j.error = Some(e.clone());
             });
+        });
+        Ok(Response::json(202, &json!({"job": job.json()})))
+    }
+
+    /// `POST archive/create-pool` (installed system, ADR 0028): make the
+    /// encrypted pool on the disks the user confirmed in the installer.
+    /// No body: the installer's seed says which disks; nothing else is
+    /// ever touched. Runs as the `archive.create` job.
+    fn archive_create_pool(self: &Arc<Self>) -> Result<Response, Fail> {
+        if self.require_index && !pool::seed_waiting() {
+            return Err(Fail::new(
+                "archive.no_pool_plan",
+                "There is no disk plan from the installation to set up.",
+            ));
+        }
+        let job = Job::start(
+            "archive.create",
+            "preparing",
+            "Preparing your disks…",
+            Some(0),
+        );
+        {
+            let mut j = lock(&self.archive_job);
+            if Job::running(&j) {
+                return Err(Fail::new(
+                    "archive.busy",
+                    "The archive is being created already.",
+                ));
+            }
+            *j = Some(job.clone());
+        }
+        let me = Arc::clone(self);
+        std::thread::spawn(move || {
+            let res = me.drive("archive.create", |say| {
+                pool::create(&mut |m| say(&job::Update::step("creating", m, 50))).map_err(|e| {
+                    job::End::Failed {
+                        code: e.code,
+                        step: "creating",
+                        message: e.detail,
+                    }
+                })
+            });
+            if res.is_ok() {
+                systemctl(&["start", "alp-live-archive.service"]);
+                systemctl(&["start", "--no-block", immich::UNIT]);
+            }
+            me.finish(&res);
         });
         Ok(Response::json(202, &json!({"job": job.json()})))
     }

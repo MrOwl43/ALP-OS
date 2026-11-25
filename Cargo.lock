@@ -45,7 +45,9 @@ dependencies = [
 name = "alp-live"
 version = "0.0.0"
 dependencies = [
+ "alp-crypto",
  "alp-hw",
+ "alp-storage",
  "bip39",
  "bitcoin_hashes",
  "qrcodegen",

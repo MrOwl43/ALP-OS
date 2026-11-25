@@ -965,6 +965,19 @@ Errors: `400 media.path`, `404 media.not_found` (unplugged, or ejected), `409
 media.not_open`, `409 media.busy`, `413 media.too_large`, `422 media.refused`
 (message says why), `422 media.type`, `500 media.failed`, `500 media.unreadable`.
 
+### `POST /api/v1/live/archive/create-pool` → 202 `{ "job": Job }`
+
+Installed system only (ADR 0028, `docs/plans/0.2.8-first-start.md`). No
+body: the installer's first-boot seed names the disks. Needs the index open
+(the password was chosen). Runs the `archive.create` job: checks the disks
+against the seed, makes the encrypted pool, opens it. `409 archive.busy`
+while a job runs; `400 archive.no_pool_plan` when there is no seed (state
+`pool` is not `"waiting"`). A failed job carries `ALP-INST-005` (the disks
+changed since installation) or `ALP-STO-008`; a retry resumes.
+
+State gains `"pool": "none" | "waiting" | "made"`: `waiting` means setup
+skips the "where" step and calls this instead.
+
 ### `POST /api/v1/live/archive/cancel` → 202 `{ "job": Job }`
 
 Body `{}`. Stops a running `archive.create` job (or the `erasing` step of a
