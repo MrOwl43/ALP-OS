@@ -204,6 +204,7 @@ fn lock_page(texts: &Texts) -> (gtk4::ScrolledWindow, LockUi) {
     let col = gtk4::Box::builder()
         .orientation(gtk4::Orientation::Vertical)
         .spacing(10)
+        .css_classes(["login"])
         .build();
     for w in [
         clock.upcast_ref::<gtk4::Widget>(),
@@ -310,19 +311,24 @@ fn build(app: &adw::Application) {
         photos_btn: style::button(
             "image-x-generic-symbolic",
             &texts.t("home.gallery"),
-            &["suggested-action", "pill"],
+            &["suggested-action", "pill", "light-btn"],
         ),
     };
+    home.badge.add_css_class("ring");
+    home.title.set_xalign(0.5);
+    home.title.set_justify(gtk4::Justification::Center);
+    home.line.set_xalign(0.5);
+    home.line.set_justify(gtk4::Justification::Center);
     home.photos_btn.set_visible(false);
     let lock_btn = style::button(
         "system-lock-screen-symbolic",
         &texts.t("home.lock"),
-        &["pill"],
+        &["pill", "glass-btn"],
     );
     let settings_btn = style::button(
         "emblem-system-symbolic",
         &texts.t("home.settings"),
-        &["pill"],
+        &["pill", "glass-btn"],
     );
     let tiles = HomeTiles::new(&texts);
     let home_page = home_layout(&home, &[&home.photos_btn, &settings_btn, &lock_btn], &tiles);
@@ -893,7 +899,7 @@ impl Tile {
     fn new(key: &str, icon: &str, tone: Tone, big: bool) -> Self {
         let frame = gtk4::Box::builder()
             .orientation(gtk4::Orientation::Vertical)
-            .css_classes(["card"])
+            .css_classes(["glass"])
             .build();
         if big {
             frame.add_css_class("tile-photos");
@@ -1065,54 +1071,44 @@ impl HomeTiles {
     }
 }
 
-/// The home page: the status badge, headline and buttons on top, the
-/// tiles below, using the whole screen instead of a narrow middle column.
+/// The home page, right on the wallpaper as in the 0.2.6 console: the
+/// status disc, headline and buttons centred on top, the glass tiles below,
+/// using the whole screen.
 fn home_layout(
     home: &HomeUi,
     buttons: &[&gtk4::Button],
     tiles: &HomeTiles,
 ) -> gtk4::ScrolledWindow {
-    let words = gtk4::Box::builder()
+    let head = gtk4::Box::builder()
         .orientation(gtk4::Orientation::Vertical)
-        .spacing(4)
-        .hexpand(true)
-        .valign(gtk4::Align::Center)
+        .spacing(6)
+        .halign(gtk4::Align::Center)
+        .css_classes(["on-wallpaper"])
         .build();
-    words.append(&home.title);
-    words.append(&home.line);
-    // The buttons under the headline, so a long message has the full width.
+    home.badge.set_halign(gtk4::Align::Center);
+    home.badge.set_margin_bottom(8);
+    head.append(&home.badge);
+    head.append(&home.title);
+    head.append(&home.line);
     let actions = gtk4::Box::builder()
         .orientation(gtk4::Orientation::Horizontal)
         .spacing(12)
         .margin_top(14)
+        .halign(gtk4::Align::Center)
         .build();
     for b in buttons {
         actions.append(*b);
     }
-    words.append(&actions);
-    home.badge.set_valign(gtk4::Align::Start);
-    let top = gtk4::Box::builder()
-        .orientation(gtk4::Orientation::Horizontal)
-        .spacing(20)
-        .build();
-    top.append(&home.badge);
-    top.append(&words);
+    head.append(&actions);
     let page = gtk4::Box::builder()
         .orientation(gtk4::Orientation::Vertical)
-        .spacing(24)
-        .margin_top(28)
+        .spacing(26)
+        .margin_top(24)
         .margin_bottom(32)
         .margin_start(48)
         .margin_end(48)
         .build();
-    // The headline sits in a light window like the tiles.
-    top.set_margin_top(20);
-    top.set_margin_bottom(20);
-    top.set_margin_start(22);
-    top.set_margin_end(22);
-    let header = gtk4::Box::builder().css_classes(["card"]).build();
-    header.append(&top);
-    page.append(&header);
+    page.append(&head);
     page.append(&tiles.grid);
     style::scroll(
         &adw::Clamp::builder()

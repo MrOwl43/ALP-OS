@@ -1,20 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! The screen's look (0.2.8 design pass 2): calm and plain, inspired by
-//! the desktop computers of 2016-2020: a wallpaper behind everything,
-//! light windows with dark text, filled rounded colour icons, a thin top
-//! bar, rounded-rectangle buttons with one blue for the main action.
-//! Inspiration only: no other system's images, icons or names are used.
+//! The screen's look (0.2.8 design pass 3): calm, plain and modern, in
+//! the spirit of the 0.2.6 console (owner, 2026-11-25): a deep blue
+//! wallpaper; the home and sign-in pages sit right on it with frosted
+//! glass tiles and white words; settings, install and setup open in white
+//! windows with large round corners and a soft shadow; soft tinted icons
+//! at the top of a page, filled colour icons in lists; one blue for the
+//! main action. Inspiration only: no other system's images, icons or
+//! names are used.
 //!
 //! Colours and the wallpaper are a [`Theme`], so a later version can offer
 //! other colour sets and a picture of the user's own as the background
 //! (owner, 2026-11-25). Everything else reads the theme's colours.
 //!
 //! Accessibility rules kept here:
-//! - Dark text on light windows (contrast at least 4.5:1; grey text is
-//!   #5f5f66 or darker); white text only on the darkened top bar and on
-//!   the sign-in page, which has its own shade over the wallpaper.
+//! - Dark text on white windows (contrast at least 4.5:1; grey text is
+//!   #5c5c66 or darker); white text only on the deep blue wallpaper and
+//!   its glass tiles (top bar, home, sign-in).
 //! - A colour never stands alone: every status has an icon and words.
-//! - Buttons and fields are at least 44 px high; base text 12 pt.
+//! - Buttons and fields are at least 44 px high (main buttons 48); base
+//!   text 12 pt.
 //! - A clear 3 px focus ring for the keyboard.
 //! - Icon-only controls carry a spoken name ([`name`]).
 //!
@@ -35,9 +39,9 @@ pub struct Theme {
 
 impl Theme {
     pub const DEFAULT: Theme = Theme {
-        wallpaper: "radial-gradient(circle at 18% 12%, rgba(255,255,255,0.28), rgba(255,255,255,0) 42%), \
-                    radial-gradient(circle at 85% 90%, rgba(120,90,220,0.45), rgba(120,90,220,0) 50%), \
-                    linear-gradient(160deg, #4a8ee6 0%, #2f5bbf 45%, #1d2d6b 100%)",
+        wallpaper: "radial-gradient(circle at 15% 8%, rgba(120,170,255,0.45), rgba(120,170,255,0) 45%), \
+                    radial-gradient(circle at 90% 95%, rgba(90,70,200,0.40), rgba(90,70,200,0) 50%), \
+                    linear-gradient(165deg, #2457e0 0%, #1a3fae 50%, #0f1f5c 100%)",
         accent: "#0a62d9",
     };
 }
@@ -64,39 +68,40 @@ const CSS: &str = r#"
 @define-color success_color #1a7f37;
 
 window.alp {
-  background-color: #2f5bbf;
+  background-color: #1a3fae;
   background-image: @WALLPAPER@;
   color: #1d1d1f;
   font-size: 12pt;
 }
 
 /* Text */
-.dim-label { opacity: 1; color: #5f5f66; }
-.alp .title-1 { font-size: 22pt; font-weight: 700; }
+.dim-label { opacity: 1; color: #5c5c66; }
+.alp .title-1 { font-size: 23pt; font-weight: 700; letter-spacing: -0.2px; }
 .alp .title-2 { font-size: 17pt; font-weight: 700; }
 .alp .title-3 { font-size: 14pt; font-weight: 600; }
-.lead { font-size: 12.5pt; color: #3a3a40; }
-.caption-up { font-size: 10pt; font-weight: 600; color: #5f5f66; }
-.big-number { font-size: 46pt; font-weight: 700; }
+.lead { font-size: 12.5pt; color: #3a3a42; }
+.caption-up { font-size: 10pt; font-weight: 600; color: #5c5c66; }
+.big-number { font-size: 46pt; font-weight: 700; letter-spacing: -1px; }
 .error { color: #c4000f; }
 .warning { color: #9a4a00; }
 .on-wallpaper, .on-wallpaper label { color: #ffffff; }
+.on-wallpaper .lead { color: rgba(255,255,255,0.88); }
 
-/* Top bar: thin, darkened, monochrome icons */
-.topbar { background-color: rgba(10,16,40,0.45); min-height: 36px; padding: 0 10px; color: #ffffff; }
+/* Top bar: thin and see-through over the wallpaper, white icons */
+.topbar { background-color: rgba(6,12,40,0.28); min-height: 40px; padding: 0 12px; color: #ffffff; }
 .topbar label { color: #ffffff; }
 .topbar .brand { font-weight: 700; }
-.topbar .tag { background-color: rgba(255,255,255,0.22); color: #ffffff; border-radius: 6px;
-  padding: 1px 8px; font-size: 9.5pt; font-weight: 700; }
+.topbar .tag { background-color: #fff1d6; color: #8a4b00; border-radius: 99px;
+  padding: 1px 10px; font-size: 9.5pt; font-weight: 700; }
 .topbar .ip { font-family: monospace; font-size: 11pt; }
 .topbar .stat { padding: 0 6px; color: #ffffff; }
 .topbar .stat.tone-warn { color: #ffd479; }
 .topbar .stat.tone-bad { color: #ff9b94; }
-.topbar button { min-height: 30px; min-width: 30px; padding: 0 8px; border-radius: 6px;
-  background: transparent; color: #ffffff; box-shadow: none; }
+.topbar button { min-height: 32px; min-width: 32px; padding: 0 10px; border-radius: 10px;
+  background: transparent; color: #ffffff; box-shadow: none; border: none; }
 .topbar button:hover { background-color: rgba(255,255,255,0.18); }
-.topbar .home-btn { background-color: rgba(255,255,255,0.16); }
-.topbar *:focus-visible { outline-color: #ffffff; }
+.topbar .home-btn { background-color: rgba(255,255,255,0.18); }
+.topbar *:focus:focus-visible { outline-color: #ffffff; }
 .topbar .tone-ok { color: #ffffff; }
 .topbar .tone-warn { color: #ffd479; }
 .topbar .tone-bad { color: #ff9b94; }
@@ -109,91 +114,129 @@ window.alp {
 .tone-violet { color: #7b3fc4; }
 .tone-teal { color: #0b7a75; }
 
-/* Filled rounded icons, white glyph on colour */
-.chip { border-radius: 9px; padding: 8px; color: #ffffff; }
-.hero-badge { border-radius: 18px; padding: 16px; color: #ffffff; }
-.chip.tone-ok, .hero-badge.tone-ok { background-color: #2a9d4b; color: #ffffff; }
-.chip.tone-warn, .hero-badge.tone-warn { background-color: #e08600; color: #ffffff; }
-.chip.tone-bad, .hero-badge.tone-bad { background-color: #e0262f; color: #ffffff; }
-.chip.tone-blue, .hero-badge.tone-blue { background-color: #1f7aeb; color: #ffffff; }
-.chip.tone-violet, .hero-badge.tone-violet { background-color: #8a4fd8; color: #ffffff; }
-.chip.tone-teal, .hero-badge.tone-teal { background-color: #109c96; color: #ffffff; }
+/* Filled rounded icons in lists and tiles, white glyph on colour */
+.chip { border-radius: 11px; padding: 8px; color: #ffffff; }
+.chip.tone-ok { background-color: #2a9d4b; color: #ffffff; }
+.chip.tone-warn { background-color: #e08600; color: #ffffff; }
+.chip.tone-bad { background-color: #e0262f; color: #ffffff; }
+.chip.tone-blue { background-color: #1f7aeb; color: #ffffff; }
+.chip.tone-violet { background-color: #8a4fd8; color: #ffffff; }
+.chip.tone-teal { background-color: #109c96; color: #ffffff; }
 
-/* Windows: light, rounded, a soft shadow over the wallpaper */
-.alp .card, .panel, .window-card { background-color: #f6f6f8; color: #1d1d1f; border-radius: 12px;
-  border: 1px solid rgba(0,0,0,0.10); box-shadow: 0 12px 36px rgba(0,0,0,0.28); }
-.panel { padding: 28px 36px; }
-.window-card { padding: 0; }
-.tile-photos { background-color: #ffffff; }
+/* The icon at the top of a page: soft tint, coloured glyph */
+.hero-badge { border-radius: 24px; padding: 20px; }
+.hero-badge.tone-ok { background-color: #e3f4e8; color: #1a7f37; }
+.hero-badge.tone-warn { background-color: #fdf0d9; color: #9a4a00; }
+.hero-badge.tone-bad { background-color: #fde6e4; color: #c4000f; }
+.hero-badge.tone-blue { background-color: #e6f0fd; color: @ACCENT@; }
+.hero-badge.tone-violet { background-color: #f0e8fc; color: #7b3fc4; }
+.hero-badge.tone-teal { background-color: #e0f4f2; color: #0b7a75; }
+/* On the wallpaper: a white disc with the coloured glyph */
+.hero-badge.ring { border-radius: 999px; padding: 16px; background-color: #ffffff;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25); }
+.hero-badge.ring.tone-ok { background-color: #ffffff; color: #1a7f37; }
+.hero-badge.ring.tone-warn { background-color: #ffffff; color: #b35c00; }
+.hero-badge.ring.tone-bad { background-color: #ffffff; color: #c4000f; }
 
-/* Notes with an icon in front (info, warning, danger) */
-.note { border-radius: 8px; padding: 10px 12px; background-color: #e9f1fe; color: #1d1d1f; }
-.note.warn { background-color: #fff4dc; border: 1px solid #f1c76b; }
-.note.bad { background-color: #ffeceb; border: 1px solid #f2a29d; }
+/* White windows: large round corners, a soft deep shadow, no frame */
+.alp .card, .panel, .window-card { background-color: #ffffff; color: #1d1d1f; border-radius: 22px;
+  border: none; box-shadow: 0 1px 2px rgba(0,0,0,0.06), 0 22px 56px rgba(8,16,60,0.35); }
+.panel { padding: 32px 40px; }
+.window-card { padding: 0; background-color: #f7f7fa; }
 
-/* Buttons: rounded rectangles; one blue main button */
-.alp button { min-height: 44px; border-radius: 8px; font-weight: 600; }
-.alp button.pill { border-radius: 8px; padding-left: 20px; padding-right: 20px; }
-.alp button:not(.flat):not(.suggested-action):not(.destructive-action) {
-  background-color: #ffffff; color: #1d1d1f; border: 1px solid rgba(0,0,0,0.16);
-  box-shadow: 0 1px 1px rgba(0,0,0,0.06); }
-.alp button:not(.flat):not(.suggested-action):not(.destructive-action):hover { background-color: #f0f0f3; }
-.alp button.suggested-action { background-color: @ACCENT@; color: #ffffff; }
-.alp button.suggested-action:disabled { background-color: #a9c3ea; color: #ffffff; }
+/* Frosted glass tiles on the wallpaper (home, sign-in) */
+.glass { background-color: rgba(255,255,255,0.14); border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.20); color: #ffffff; }
+.glass label { color: #ffffff; }
+.glass .caption-up, .glass .dim-label { color: rgba(255,255,255,0.82); }
+.glass .warning { color: #ffd479; }
+.glass.tile-photos { background-color: rgba(255,255,255,0.20); }
+
+/* Notes: soft colour with a stripe in front */
+.note { border-radius: 14px; padding: 12px 14px; background-color: #eef4fe; color: #1d1d1f;
+  border-left: 4px solid #8db6f2; }
+.note.warn { background-color: #fdf1dc; border-left: 4px solid #e08600; }
+.note.bad { background-color: #fce8e6; border-left: 4px solid #e0262f; }
+.on-wallpaper .note.bad, .login .note.bad { background-color: #ffffff; }
+
+/* Buttons: round corners; one blue main button; soft grey others */
+.alp button { min-height: 34px; padding-top: 5px; padding-bottom: 5px; border-radius: 12px; font-weight: 600; }
+.alp button.pill { border-radius: 14px; padding: 8px 26px; min-height: 32px; }
+.alp button:not(.flat):not(.suggested-action):not(.destructive-action):not(.glass-btn) {
+  background-color: #eceef3; color: #1d1d1f; border: none; box-shadow: none; }
+.alp button:not(.flat):not(.suggested-action):not(.destructive-action):not(.glass-btn):hover { background-color: #e1e4eb; }
+.alp row button:not(.flat):not(.suggested-action):not(.destructive-action) { background-color: #e6f0fd; color: @ACCENT@; }
+.alp row button:not(.flat):not(.suggested-action):not(.destructive-action):hover { background-color: #d6e6fb; }
+.alp row button.destructive-action { background-color: #fde6e4; color: #c4000f; }
+.alp row button.suggested-action { background-color: #e6f0fd; color: @ACCENT@; }
+.alp button.suggested-action { background-color: @ACCENT@; color: #ffffff; box-shadow: none; }
+.alp button.suggested-action:disabled { background-color: #b5cdf0; color: #ffffff; box-shadow: none; }
 .alp button.destructive-action { background-color: #d70015; color: #ffffff; }
 .alp button.destructive-action:disabled { background-color: #eba3a9; color: #ffffff; }
 .alp button.flat { color: @ACCENT@; }
 .alp .topbar button.flat { color: #ffffff; }
+/* On the wallpaper: the main button is white, the others are glass */
+.alp button.suggested-action.light-btn { background-color: #ffffff; color: @ACCENT@;
+  box-shadow: none; }
+.on-wallpaper button.light-btn label, .on-wallpaper button.light-btn image { color: @ACCENT@; }
+.alp button.glass-btn { background-color: rgba(255,255,255,0.16); color: #ffffff;
+  border: 1px solid rgba(255,255,255,0.28); box-shadow: none; }
+.alp button.glass-btn:hover { background-color: rgba(255,255,255,0.26); }
 
 /* Fields */
-.alp entry, .alp passwordentry { min-height: 44px; font-size: 13pt; background-color: #ffffff;
-  color: #1d1d1f; border-radius: 8px; border: 1px solid #b9b9c0; }
+.alp entry, .alp passwordentry { min-height: 46px; font-size: 13pt; background-color: #ffffff;
+  color: #1d1d1f; border-radius: 12px; border: 2px solid #d9dce3; box-shadow: none; }
+.alp entry:focus-within, .alp passwordentry:focus-within { border-color: @ACCENT@; }
 .field-label { font-weight: 600; }
 
 /* Keyboard focus */
 .alp *:focus:focus-visible { outline: 3px solid alpha(@ACCENT@, 0.75); outline-offset: 2px; }
 .alp text:focus:focus-visible { outline: none; }
-.alp entry:focus-within, .alp passwordentry:focus-within { outline: 3px solid alpha(@ACCENT@, 0.75); outline-offset: 1px; }
+.alp entry:focus-within, .alp passwordentry:focus-within { outline: 3px solid alpha(@ACCENT@, 0.45); outline-offset: 1px; }
 
 /* Progress */
-.alp progressbar trough { min-height: 8px; border-radius: 99px; background-color: #dcdce2; }
-.alp progressbar progress { min-height: 8px; border-radius: 99px; background-color: @ACCENT@; }
-.alp progressbar text { color: #5f5f66; }
+.alp progressbar trough { min-height: 10px; border-radius: 99px; background-color: #e2e4ea; }
+.alp progressbar progress { min-height: 10px; border-radius: 99px; background-color: @ACCENT@; }
+.alp progressbar text { color: #5c5c66; }
 
 /* Steps of the first start */
-.step-dot { min-width: 8px; min-height: 8px; border-radius: 99px; background-color: #c9c9d0; }
-.step-dot.done { background-color: #7fa9e8; }
-.step-dot.now { background-color: @ACCENT@; min-width: 22px; }
+.step-dot { min-width: 8px; min-height: 8px; border-radius: 99px; background-color: #d5d7de; }
+.step-dot.done { background-color: #8db6f2; }
+.step-dot.now { background-color: @ACCENT@; min-width: 24px; }
 
 /* The recovery words: a note sheet, dark on pale yellow */
-.paper { background-color: #fffbe8; color: #1d1d1f; border-radius: 10px; padding: 20px 26px;
-  border: 1px solid #ecdca0; }
+.paper { background-color: #fffbe8; color: #1d1d1f; border-radius: 18px; padding: 22px 28px;
+  border: 1px solid #f0e2a8; }
 .paper .word-n { color: #6b6250; font-size: 12pt; font-weight: 600; }
 .paper .word { font-family: monospace; font-size: 17pt; font-weight: 700; color: #111111; }
-.paper entry.word-entry { font-family: monospace; font-size: 14pt; font-weight: 600; min-height: 36px; background-color: #ffffff; color: #111111; }
-.paper entry.word-entry.error { color: #c0141c; box-shadow: inset 0 0 0 2px #e0262f; }
-.paper.qr { background-color: #ffffff; border-color: #d6d6dc; padding: 10px; }
+.paper entry.word-entry { font-family: monospace; font-size: 14pt; font-weight: 600; min-height: 38px;
+  background-color: #ffffff; color: #111111; border-radius: 10px; border: 2px solid #eadfb4; }
+.paper entry.word-entry:focus-within { border-color: @ACCENT@; }
+.paper entry.word-entry.error { color: #c0141c; border-color: #e0262f; }
+.paper.qr { background-color: #ffffff; border-color: #e2e4ea; padding: 12px; }
 .paper .code-big { font-size: 32pt; letter-spacing: 4px; }
-.word-n-chip { background-color: #e6e6eb; border-radius: 8px; padding: 6px 12px; font-weight: 700; }
+.word-n-chip { background-color: #eceef3; border-radius: 10px; padding: 6px 12px; font-weight: 700; }
 
 /* Sign-in page: on the wallpaper, like a login screen */
-.clock-big { font-size: 52pt; font-weight: 300; color: #ffffff; }
-.date-line { font-size: 15pt; color: #ffffff; }
-.avatar { border-radius: 999px; padding: 26px; background-color: rgba(255,255,255,0.28); color: #ffffff; }
+.clock-big { font-size: 64pt; font-weight: 300; color: #ffffff; letter-spacing: -1px; }
+.date-line { font-size: 15pt; color: rgba(255,255,255,0.92); }
+.avatar { border-radius: 999px; padding: 24px; background-color: rgba(255,255,255,0.22);
+  color: #ffffff; border: 1px solid rgba(255,255,255,0.30); }
 .login-name { font-size: 18pt; font-weight: 600; color: #ffffff; }
-.login-status { color: #ffffff; }
-.login-field { min-height: 40px; border-radius: 99px; background-color: rgba(255,255,255,0.88);
-  border: none; padding-left: 8px; }
-.login-go { min-width: 44px; min-height: 44px; border-radius: 99px; padding: 0; }
+.login-status { color: rgba(255,255,255,0.92); }
+.alp passwordentry.login-field { min-height: 44px; border-radius: 99px; background-color: rgba(255,255,255,0.92);
+  border: 2px solid transparent; padding-left: 10px; }
+.login-go { min-width: 46px; min-height: 46px; border-radius: 99px; padding: 0; }
 
-/* Lists inside light windows */
+/* Lists inside windows */
 .alp preferencespage, .alp preferencespage > scrolledwindow, .alp preferencespage viewport { background: transparent; }
-.alp .boxed-list { background-color: #ffffff; border-radius: 10px; }
-.alp row { min-height: 52px; }
+.alp .boxed-list { background-color: #ffffff; border-radius: 16px; border: none;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.06), 0 2px 8px rgba(0,0,0,0.04); }
+.alp row { min-height: 56px; }
 .alp row.danger-row { background-color: #fff0ef; }
-.footer-bar { background-color: #ececf0; padding: 12px 20px; border-top: 1px solid rgba(0,0,0,0.08);
-  border-radius: 0 0 12px 12px; }
-.window-title { padding: 16px 20px 4px 20px; }
+.footer-bar { background-color: #ffffff; padding: 14px 22px; border-top: 1px solid rgba(0,0,0,0.06);
+  border-radius: 0 0 22px 22px; }
+.window-title { padding: 20px 24px 6px 24px; }
 "#;
 
 /// Loads the look for the whole screen (once, at start).
