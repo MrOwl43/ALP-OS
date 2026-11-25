@@ -113,6 +113,22 @@ sys.exit(0 if ok else 1)
 PY
 then echo "ok:   target has the contract layout"; else echo "FAIL: target layout" >&2; fail=1; fi
 
+# The seed must be on the target's alp-state (6th partition), read
+# without mounting (debugfs reads the image at an offset).
+read -r st_start st_size < <(sfdisk --json "$target" | python3 -Ic '
+import json, sys
+p = json.load(sys.stdin)["partitiontable"]["partitions"][5]
+print(p["start"], p["size"])')
+dd if="$target" of="$work/state.img" bs=512 skip="$st_start" count="$st_size" status=none
+if debugfs -R "stat /firstboot-seed.toml" "$work/state.img" 2>/dev/null | grep -q '^Inode:'; then
+    echo "ok:   the seed was written to the target's alp-state"
+else
+    echo "FAIL: no seed on the target's alp-state" >&2
+    debugfs -R "ls -l /" "$work/state.img" 2>&1 | head -20 >&2
+    fail=1
+fi
+rm -f "$work/state.img"
+
 (( fail == 0 )) || { echo "FAIL: T-INST-01" >&2; exit 1; }
 
 # Part 2: start the installed disk on its own, the stick taken out (the
@@ -121,7 +137,11 @@ then echo "ok:   target has the contract layout"; else echo "FAIL: target layout
 # whose boot entries were never written. The root must come from the
 # installed slot 1, and the seed must be on the installed alp-state.
 probe2='-/usr/bin/sh -c "lsblk -rnso PARTLABEL /dev/mapper/root | tr -s [:space:] , | sed s/^/ROOT-FROM=/; echo"
--/usr/bin/sh -c "test -s /var/lib/alp/firstboot-seed.toml && echo SEED=yes || echo SEED=no"'
+-/usr/bin/sh -c "test -s /var/lib/alp/firstboot-seed.toml && echo SEED=yes || echo SEED=no"
+-/usr/bin/sh -c "findmnt -no SOURCE,TARGET /var/lib/alp | sed s/^/STATE-MNT=/; echo"
+-/usr/bin/sh -c "systemctl is-active alp-live-state.service | sed s/^/STATE-UNIT=/"
+-/usr/bin/sh -c "journalctl -b -u alp-live-state.service -o cat --no-pager | tail -5 | sed s/^/STATE-LOG=/"
+-/usr/bin/sh -c "ls -la /var/lib/alp | sed s/^/STATE-LS=/"'
 args2="-drive if=none,id=win,format=raw,file=$windows -device virtio-blk-pci,drive=win,serial=ALPWINDOWS01"
 status=0
 out=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe2" ALP_PROBE_DELAY=5 ALP_QEMU_ARGS="$args2" ALP_OVERLAY_SIZE=64G \
