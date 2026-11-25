@@ -157,6 +157,8 @@ struct SettingsUi {
     note: style::Note,
     /// Advanced: install on this computer (only while running from a stick).
     advanced: adw::PreferencesGroup,
+    /// The Advanced category in the list (shown with [`SettingsUi::advanced`]).
+    advanced_row: gtk4::ListBoxRow,
     install_btn: gtk4::Button,
 }
 
@@ -169,63 +171,25 @@ fn main() -> glib::ExitCode {
     app.run_with_args::<&str>(&[])
 }
 
-/// The sign-in page, like a computer's login screen: the time large, a
-/// round picture, the name, the status, and the password field with its
-/// arrow, straight on the wallpaper.
+/// The lock screen, where the computer spends most of its time (owner,
+/// 2026-11-25): the time on top, the status and the facts large in the
+/// middle, the sign-in along the bottom, all on the wallpaper.
 fn lock_page(texts: &Texts) -> (gtk4::ScrolledWindow, LockUi) {
     let clock = gtk4::Label::builder().css_classes(["clock-big"]).build();
     let date = gtk4::Label::builder().css_classes(["date-line"]).build();
-    let badge = style::icon("system-lock-screen-symbolic", 48);
-    badge.add_css_class("avatar");
-    badge.set_halign(gtk4::Align::Center);
-    badge.set_margin_top(20);
-    let user = gtk4::Label::builder()
-        .label(texts.t("lock.user"))
-        .css_classes(["login-name"])
-        .build();
-    let status = style::text("", &["login-status"], true);
-    let password = gtk4::PasswordEntry::builder()
-        .show_peek_icon(true)
-        .hexpand(true)
-        .placeholder_text(texts.t("pw.label"))
-        .css_classes(["login-field"])
-        .build();
-    password.update_property(&[gtk4::accessible::Property::Label(&texts.t("pw.label"))]);
-    let sign_in = gtk4::Button::builder()
-        .icon_name("go-next-symbolic")
-        .css_classes(["suggested-action", "login-go"])
-        .valign(gtk4::Align::Center)
-        .build();
-    style::name(&sign_in, &texts.t("lock.signin"));
-    let row = gtk4::Box::builder().spacing(8).margin_top(8).build();
-    row.append(&password);
-    row.append(&sign_in);
-    let error = style::Note::new("bad", "");
-    let col = gtk4::Box::builder()
+    let top = gtk4::Box::builder()
         .orientation(gtk4::Orientation::Vertical)
-        .spacing(10)
-        .css_classes(["login"])
+        .spacing(2)
+        .halign(gtk4::Align::Center)
+        .margin_top(18)
         .build();
-    for w in [
-        clock.upcast_ref::<gtk4::Widget>(),
-        date.upcast_ref(),
-        badge.upcast_ref(),
-        user.upcast_ref(),
-        status.upcast_ref(),
-        row.upcast_ref(),
-        error.root.upcast_ref(),
-    ] {
-        col.append(w);
-    }
-    let clamp = adw::Clamp::builder()
-        .maximum_size(340)
-        .tightening_threshold(340)
-        .child(&col)
-        .valign(gtk4::Align::Center)
-        .margin_top(24)
-        .margin_bottom(24)
-        .build();
-    // The facts row under the sign-in.
+    top.append(&clock);
+    top.append(&date);
+
+    // The middle: the status disc and words, then the facts.
+    let badge = style::hero("emblem-ok-symbolic", Tone::Ok);
+    badge.add_css_class("ring");
+    let status = style::text("", &["title-1", "lock-status"], true);
     let tiles = LockTiles {
         temp: Tile::new(
             &texts.t("lock.temp"),
@@ -252,26 +216,86 @@ fn lock_page(texts: &Texts) -> (gtk4::ScrolledWindow, LockUi) {
             false,
         ),
     };
-    let facts = gtk4::Box::builder().spacing(14).homogeneous(true).build();
-    for t in [&tiles.temp, &tiles.disks, &tiles.phones, &tiles.backup] {
-        facts.append(&t.frame);
+    let facts = gtk4::Grid::builder()
+        .column_spacing(16)
+        .row_spacing(16)
+        .column_homogeneous(true)
+        .css_classes(["lock-facts"])
+        .margin_top(18)
+        .build();
+    for (i, t) in [&tiles.temp, &tiles.disks, &tiles.phones, &tiles.backup]
+        .into_iter()
+        .enumerate()
+    {
+        facts.attach(&t.frame, (i % 2) as i32, (i / 2) as i32, 1, 1);
     }
-    let facts = adw::Clamp::builder()
-        .vexpand(false)
-        .valign(gtk4::Align::End)
-        .maximum_size(1000)
-        .tightening_threshold(1000)
-        .child(&facts)
+    let middle = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .spacing(10)
+        .valign(gtk4::Align::Center)
+        .vexpand(true)
+        .css_classes(["on-wallpaper"])
+        .build();
+    middle.append(&badge);
+    middle.append(&status);
+    middle.append(&facts);
+    let middle = adw::Clamp::builder()
+        .maximum_size(820)
+        .tightening_threshold(820)
+        .child(&middle)
+        .vexpand(true)
         .margin_start(32)
         .margin_end(32)
-        .margin_bottom(28)
         .build();
+
+    // The bottom: sign in.
+    let avatar = style::icon("system-lock-screen-symbolic", 22);
+    avatar.add_css_class("avatar");
+    let user = gtk4::Label::builder()
+        .label(texts.t("lock.user"))
+        .css_classes(["login-name"])
+        .build();
+    let password = gtk4::PasswordEntry::builder()
+        .show_peek_icon(true)
+        .width_request(300)
+        .placeholder_text(texts.t("pw.label"))
+        .css_classes(["login-field"])
+        .valign(gtk4::Align::Center)
+        .build();
+    password.update_property(&[gtk4::accessible::Property::Label(&texts.t("pw.label"))]);
+    let sign_in = gtk4::Button::builder()
+        .icon_name("go-next-symbolic")
+        .css_classes(["suggested-action", "login-go"])
+        .valign(gtk4::Align::Center)
+        .build();
+    style::name(&sign_in, &texts.t("lock.signin"));
+    let bar = gtk4::Box::builder()
+        .spacing(12)
+        .halign(gtk4::Align::Center)
+        .css_classes(["login-bar"])
+        .build();
+    bar.append(&avatar);
+    bar.append(&user);
+    bar.append(&password);
+    bar.append(&sign_in);
+    let error = style::Note::new("bad", "");
+    error.root.set_halign(gtk4::Align::Center);
+    let bottom = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .spacing(10)
+        .margin_bottom(28)
+        .margin_top(12)
+        .css_classes(["login"])
+        .build();
+    bottom.append(&error.root);
+    bottom.append(&bar);
+
     let whole = gtk4::Box::builder()
         .orientation(gtk4::Orientation::Vertical)
         .build();
-    clamp.set_vexpand(true);
-    whole.append(&clamp);
-    whole.append(&facts);
+    whole.append(&top);
+    whole.append(&middle);
+    whole.append(&bottom);
     let page = style::scroll(&whole);
     let ui = LockUi {
         clock,
@@ -594,6 +618,7 @@ fn handle(ui: &Ui, m: Msg) {
                 show_settings(&ui.set, &ui.texts, &Settings::from_state(&w));
                 let (can_install, job) = model::install::state(&w);
                 ui.set.advanced.set_visible(can_install);
+                ui.set.advanced_row.set_visible(can_install);
                 ui.inst.show_job(&job);
                 if ui.stack.visible_child_name().as_deref() == Some("lock") {
                     ui.stack.set_visible_child_name("home");
@@ -611,11 +636,10 @@ fn handle(ui: &Ui, m: Msg) {
                 let (icon, tone) = if s.level.needs_user() {
                     level_look(s.level)
                 } else {
-                    ("system-lock-screen-symbolic", Tone::Blue)
+                    ("emblem-ok-symbolic", Tone::Ok)
                 };
                 ui.lock.badge.set_icon_name(Some(icon));
-                // The picture stays white on the wallpaper; the words say it.
-                let _ = tone;
+                tone.apply(&ui.lock.badge);
                 ui.gallery.close();
                 ui.pair.locked();
                 if ui.stack.visible_child_name().as_deref() != Some("lock") {
@@ -693,10 +717,16 @@ fn settings_page(
         }
     };
 
-    // libadwaita's own settings page: a centred, width-limited column
-    // that scrolls when it gets long.
-    let page = adw::PreferencesPage::new();
+    // Categories as in the 0.2.6 console: a list on the left, one page on
+    // the right (each a libadwaita settings page that scrolls).
+    let page = |_: ()| {
+        let p = adw::PreferencesPage::new();
+        p.set_vexpand(true);
+        p
+    };
 
+    // Phones.
+    let phones_page = page(());
     let connect_phone = style::button(
         "list-add-symbolic",
         &texts.t("phone.title"),
@@ -704,14 +734,13 @@ fn settings_page(
     );
     connect_phone.set_valign(gtk4::Align::Center);
     let phones = adw::PreferencesGroup::builder()
-        .title(texts.t("set.h.phones"))
         .header_suffix(&connect_phone)
         .build();
-    page.add(&phones);
+    phones_page.add(&phones);
 
-    let computer = adw::PreferencesGroup::builder()
-        .title(texts.t("set.h.computer"))
-        .build();
+    // Time & Language.
+    let time_page = page(());
+    let time = adw::PreferencesGroup::new();
     let clock = icon_row(
         &texts.t("set.clock"),
         "preferences-system-time-symbolic",
@@ -722,33 +751,35 @@ fn settings_page(
     let f = act("live/clock/sync", json!({}));
     sync.connect_clicked(move |_| f());
     clock.add_suffix(&sync);
-    computer.add(&clock);
-    let update = icon_row(
-        &texts.t("upd.title"),
-        "software-update-available-symbolic",
-        Tone::Ok,
+    time.add(&clock);
+    time_page.add(&time);
+
+    // Power.
+    let power_page = page(());
+    let power = adw::PreferencesGroup::new();
+    let restart_row = icon_row(
+        &texts.t("power.restart.yes"),
+        "system-reboot-symbolic",
+        Tone::Blue,
     );
-    let update_btn = style::button("emblem-synchronizing-symbolic", "", &[]);
-    update_btn.set_valign(gtk4::Align::Center);
-    update.add_suffix(&update_btn);
-    computer.add(&update);
-    let power_row = icon_row(
-        &texts.t("tray.power"),
+    let restart = style::button("system-reboot-symbolic", &texts.t("power.restart.yes"), &[]);
+    restart.set_valign(gtk4::Align::Center);
+    restart_row.add_suffix(&restart);
+    let off_row = icon_row(
+        &texts.t("power.yes"),
         "system-shutdown-symbolic",
         Tone::Warn,
     );
-    let restart = style::button("system-reboot-symbolic", &texts.t("power.restart.yes"), &[]);
     let off = style::button(
         "system-shutdown-symbolic",
         &texts.t("power.yes"),
         &["destructive-action"],
     );
-    for b in [&restart, &off] {
-        b.set_valign(gtk4::Align::Center);
-        power_row.add_suffix(b);
-    }
-    computer.add(&power_row);
-    page.add(&computer);
+    off.set_valign(gtk4::Align::Center);
+    off_row.add_suffix(&off);
+    power.add(&restart_row);
+    power.add(&off_row);
+    power_page.add(&power);
     confirm(
         &restart,
         &texts.t("power.restart.title"),
@@ -764,6 +795,24 @@ fn settings_page(
         act("live/power/off", json!({"restart": false})),
     );
 
+    // About: the version and updates.
+    let about_page = page(());
+    let about = adw::PreferencesGroup::new();
+    let version = icon_row(&texts.t("about.version"), "help-about-symbolic", Tone::Blue);
+    about.add(&version);
+    let update = icon_row(
+        &texts.t("upd.title"),
+        "software-update-available-symbolic",
+        Tone::Ok,
+    );
+    let update_btn = style::button("emblem-synchronizing-symbolic", "", &[]);
+    update_btn.set_valign(gtk4::Align::Center);
+    update.add_suffix(&update_btn);
+    about.add(&update);
+    about_page.add(&about);
+
+    // Advanced: install on this computer (only while running from a stick).
+    let advanced_page = page(());
     let install_btn = style::button("go-next-symbolic", &texts.t("set.install.go"), &[]);
     install_btn.set_valign(gtk4::Align::Center);
     let install_row = icon_row(
@@ -773,42 +822,98 @@ fn settings_page(
     );
     install_row.set_subtitle(&texts.t("set.install.d"));
     install_row.add_suffix(&install_btn);
-    let advanced = adw::PreferencesGroup::builder()
-        .title(texts.t("cat.advanced"))
-        .visible(false)
-        .build();
+    let advanced = adw::PreferencesGroup::builder().visible(false).build();
     advanced.add(&install_row);
+    advanced_page.add(&advanced);
 
-    let about = adw::PreferencesGroup::builder()
-        .title(texts.t("set.h.about"))
+    // The category list and the pages.
+    let pages = gtk4::Stack::builder()
+        .transition_type(gtk4::StackTransitionType::Crossfade)
+        .hexpand(true)
         .build();
-    let version = icon_row(&texts.t("about.version"), "help-about-symbolic", Tone::Blue);
-    about.add(&version);
-    page.add(&about);
-    page.add(&advanced);
+    let list = gtk4::ListBox::builder()
+        .css_classes(["cat-list"])
+        .selection_mode(gtk4::SelectionMode::Single)
+        .build();
+    list.update_property(&[gtk4::accessible::Property::Label(&texts.t("home.settings"))]);
+    let heading = style::text("", &["title-2"], false);
+    heading.set_margin_start(32);
+    heading.set_margin_top(24);
+    heading.set_margin_bottom(4);
+    let mut advanced_row = None;
+    for (key, icon, tone, p) in [
+        ("phones", "phone-symbolic", Tone::Violet, &phones_page),
+        (
+            "time",
+            "preferences-system-time-symbolic",
+            Tone::Teal,
+            &time_page,
+        ),
+        ("power", "system-shutdown-symbolic", Tone::Warn, &power_page),
+        ("about", "help-about-symbolic", Tone::Blue, &about_page),
+        (
+            "advanced",
+            "applications-engineering-symbolic",
+            Tone::Grey,
+            &advanced_page,
+        ),
+    ] {
+        let name = texts.t(&format!("cat.{key}"));
+        pages.add_named(p, Some(key));
+        let line = gtk4::Box::builder().spacing(12).build();
+        line.append(&style::chip(icon, tone, 16));
+        line.append(&gtk4::Label::builder().label(&name).xalign(0.0).build());
+        let row = gtk4::ListBoxRow::builder().child(&line).name(key).build();
+        row.update_property(&[gtk4::accessible::Property::Label(&name)]);
+        list.append(&row);
+        if key == "advanced" {
+            row.set_visible(false);
+            advanced_row = Some(row);
+        }
+    }
+    {
+        let (pages, heading) = (pages.clone(), heading.clone());
+        let names: Vec<(String, String)> = ["phones", "time", "power", "about", "advanced"]
+            .iter()
+            .map(|k| (k.to_string(), texts.t(&format!("cat.{k}"))))
+            .collect();
+        list.connect_row_selected(move |_, row| {
+            let Some(row) = row else { return };
+            let key = row.widget_name();
+            pages.set_visible_child_name(&key);
+            if let Some((_, n)) = names.iter().find(|(k, _)| *k == key.as_str()) {
+                heading.set_label(n);
+            }
+        });
+    }
+    list.select_row(list.row_at_index(0).as_ref());
+    let side = gtk4::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk4::PolicyType::Never)
+        .child(&list)
+        .css_classes(["cat-side"])
+        .width_request(250)
+        .build();
 
     let note = style::Note::new("bad", "");
-    note.root.set_margin_start(24);
-    note.root.set_margin_end(24);
+    note.root.set_margin_start(32);
+    note.root.set_margin_end(32);
     note.root.set_margin_top(12);
+    let main = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .hexpand(true)
+        .build();
+    main.append(&heading);
+    main.append(&note.root);
+    main.append(&pages);
+    let both = gtk4::Box::builder().vexpand(true).build();
+    both.append(&side);
+    both.append(&main);
+    // Settings in a white window over the wallpaper.
     let b = gtk4::Box::builder()
         .orientation(gtk4::Orientation::Vertical)
         .build();
-    b.append(&note.root);
-    page.set_vexpand(true);
-    b.append(&page);
-    // Settings in a light window over the wallpaper.
-    let title = style::text(
-        &texts.t("home.settings"),
-        &["title-2", "window-title"],
-        false,
-    );
-    b.prepend(&title);
-    let outer = gtk4::Box::builder()
-        .orientation(gtk4::Orientation::Vertical)
-        .build();
-    outer.append(&style::window(&b, 760));
-    let b = outer;
+    b.append(&style::window(&both, 1000));
+    let advanced_row = advanced_row.expect("advanced category");
     let ui = SettingsUi {
         version,
         clock,
@@ -820,6 +925,7 @@ fn settings_page(
         last: RefCell::new(Settings::default()),
         note,
         advanced,
+        advanced_row,
         install_btn,
     };
     (b, ui)

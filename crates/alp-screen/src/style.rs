@@ -122,6 +122,9 @@ window.alp {
 .chip.tone-blue { background-color: #1f7aeb; color: #ffffff; }
 .chip.tone-violet { background-color: #8a4fd8; color: #ffffff; }
 .chip.tone-teal { background-color: #109c96; color: #ffffff; }
+.chip.tone-grey { background-color: #6e7380; color: #ffffff; }
+.tone-grey { color: #55595f; }
+.hero-badge.tone-grey { background-color: #eceef3; color: #55595f; }
 
 /* The icon at the top of a page: soft tint, coloured glyph */
 .hero-badge { border-radius: 24px; padding: 20px; }
@@ -199,6 +202,17 @@ window.alp {
 .alp progressbar progress { min-height: 10px; border-radius: 99px; background-color: @ACCENT@; }
 .alp progressbar text { color: #5c5c66; }
 
+/* Settings categories: a list on the left, as in the 0.2.6 console */
+.cat-side { background-color: #eef0f4; border-right: 1px solid rgba(0,0,0,0.06); }
+.cat-side viewport, .cat-list { background: transparent; }
+.cat-list { padding: 14px 10px; }
+.cat-list row { min-height: 40px; border-radius: 12px; padding: 0 10px; margin-bottom: 4px; }
+.cat-list row label { font-size: 12.5pt; }
+.cat-list row:hover { background-color: rgba(0,0,0,0.05); }
+.cat-list row:selected { background-color: @ACCENT@; }
+.cat-list row:selected label { color: #ffffff; font-weight: 600; }
+.cat-list .chip { border-radius: 8px; padding: 6px; }
+
 /* Slide to confirm */
 .alp scale trough { min-height: 10px; border-radius: 99px; background-color: #e2e4ea; }
 .alp scale highlight { border-radius: 99px; background-color: @ACCENT@; }
@@ -234,8 +248,15 @@ window.alp {
 .word-n-chip { background-color: #eceef3; border-radius: 10px; padding: 6px 12px; font-weight: 700; }
 
 /* Sign-in page: on the wallpaper, like a login screen */
-.clock-big { font-size: 64pt; font-weight: 300; color: #ffffff; letter-spacing: -1px; }
-.date-line { font-size: 15pt; color: rgba(255,255,255,0.92); }
+.clock-big { font-size: 40pt; font-weight: 300; color: #ffffff; letter-spacing: -0.5px; }
+.lock-status { font-size: 26pt; }
+.lock-facts .title-3 { font-size: 18pt; }
+.lock-facts .glass { min-height: 92px; }
+.login-bar { background-color: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.22);
+  border-radius: 99px; padding: 8px 8px 8px 10px; }
+.login-bar .avatar { padding: 10px; }
+.login-bar .login-name { font-size: 13pt; margin-right: 6px; }
+.date-line { font-size: 13pt; color: rgba(255,255,255,0.92); }
 .avatar { border-radius: 999px; padding: 24px; background-color: rgba(255,255,255,0.22);
   color: #ffffff; border: 1px solid rgba(255,255,255,0.30); }
 .login-name { font-size: 18pt; font-weight: 600; color: #ffffff; }
@@ -303,6 +324,7 @@ pub enum Tone {
     Blue,
     Violet,
     Teal,
+    Grey,
 }
 
 impl Tone {
@@ -314,16 +336,18 @@ impl Tone {
             Tone::Blue => "tone-blue",
             Tone::Violet => "tone-violet",
             Tone::Teal => "tone-teal",
+            Tone::Grey => "tone-grey",
         }
     }
 
-    pub const ALL: [Tone; 6] = [
+    pub const ALL: [Tone; 7] = [
         Tone::Ok,
         Tone::Warn,
         Tone::Bad,
         Tone::Blue,
         Tone::Violet,
         Tone::Teal,
+        Tone::Grey,
     ];
 
     /// Sets this tone on `w`, removing any other.
