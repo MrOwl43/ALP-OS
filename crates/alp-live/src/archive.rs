@@ -337,6 +337,27 @@ fn os_disk() -> Refusal {
     Refusal::new(CODE_OS, OS_DISK)
 }
 
+/// What the installed system does with a USB disk offered for backup
+/// (owner's 0.2.7 note 2, 2026-11-24; the installed system only, Live
+/// keeps accepting exFAT, NTFS and ext4 as [`refusal`] says).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstalledBackupDisk {
+    /// Use it as it is: exFAT, or an ext4 volume that holds no files.
+    UseAsIs,
+    /// The only choice offered: format it as exFAT (with the slide, when it
+    /// holds files). NTFS is never offered or used.
+    FormatExfat,
+}
+
+/// [`InstalledBackupDisk`] for a volume of `fs_type`; `empty` = it holds
+/// no files (an ext4 volume's `lost+found` does not count).
+pub fn installed_backup_disk(fs_type: &str, empty: bool) -> InstalledBackupDisk {
+    match (fs_type, empty) {
+        ("exfat", _) | ("ext4", true) => InstalledBackupDisk::UseAsIs,
+        _ => InstalledBackupDisk::FormatExfat,
+    }
+}
+
 /// Why a partition (or a whole disk without partitions) cannot hold the
 /// archive; `None` = usable. Without a probe only what udev shows is
 /// checked.
@@ -4186,5 +4207,17 @@ mod tests {
             Record::from_toml("partuuid = 'p'\nfs_uuid = 'f'\nformat = 'other'\narchive_id = 'x'"),
             None
         );
+    }
+
+    #[test]
+    fn installed_backup_disks_are_exfat_or_empty_ext4() {
+        use InstalledBackupDisk::{FormatExfat, UseAsIs};
+        assert_eq!(installed_backup_disk("exfat", false), UseAsIs);
+        assert_eq!(installed_backup_disk("ext4", true), UseAsIs);
+        assert_eq!(installed_backup_disk("ext4", false), FormatExfat);
+        assert_eq!(installed_backup_disk("ntfs", true), FormatExfat);
+        assert_eq!(installed_backup_disk("ntfs", false), FormatExfat);
+        assert_eq!(installed_backup_disk("", true), FormatExfat);
+        assert_eq!(installed_backup_disk("vfat", true), FormatExfat);
     }
 }

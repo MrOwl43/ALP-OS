@@ -30,8 +30,13 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   was cut during the stop, so what hung later is still unknown. Postgres/valkey health checks time out
   (slow stick I/O). Fixed too: Wi-Fi wrong password fast fail; recovery check window 30 min + clear
   "expired" answer (cause not in the log).
-- Next: install pages checked by screenshot; image profile for the installed system (alp-screen in,
-  Chromium out, alp-installer shipped); recovery code bug (3); Wi-Fi fast fail (1).
+- Done since: notes (1), (3), (4), (5) fixed; (6) native home is an uneven grid of tiles (screenshot
+  checked); (2) rule written (`installed_backup_disk`) and the backup-disk plan changed to exFAT, the
+  backup job itself comes with the backup role. Image profiles `live` / `installed` build in CI;
+  T-INST-01 in CI (first run picked the wrong disk: kernel names follow PCI order; test now uses the
+  disk serial).
+- Next: T-INST-01 green; gallery view and phone-pairing approval on the native screen; install-time
+  sysupdate definitions; code review of digest + installer before the PR.
 
 ## Alpha 0.2.7 (started 2026-11-15, same branch, on top of 0.2.61)
 
