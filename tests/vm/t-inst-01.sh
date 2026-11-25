@@ -64,6 +64,7 @@ windows_before=$(sha256sum "$windows" | cut -d' ' -f1)
 args="-drive if=none,id=tgt,format=raw,file=$target -device virtio-blk-pci,drive=tgt,serial=ALPTARGET01"
 args+=" -drive if=none,id=win,format=raw,file=$windows -device virtio-blk-pci,drive=win,serial=ALPWINDOWS01"
 
+# shellcheck disable=SC2016  # the $(...) must reach the guest literally
 probe='-/usr/bin/sh -c "test -x /usr/bin/alp-installer && echo INSTALLER=yes || echo INSTALLER=no"
 -/usr/bin/alp-installer list
 -/usr/bin/sh -c "t=$(basename $(readlink -f /dev/disk/by-id/virtio-ALPTARGET01)); /usr/bin/alp-installer install --system $t --confirm-erase $t --confirm-token 0000000000000000000000000000000000000000000000000000000000000000 | sed s/^RESULT/STALE-RESULT/"

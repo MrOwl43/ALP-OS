@@ -9,7 +9,8 @@
   check-uki.py modules <uki> <module> [<module> ...]
       The initrd carries each kernel module (basename, '-' and '_' alike).
       The initrd is mkosi's concatenation of cpio archives, some zstd
-      compressed (microcode raw, base initrd and modules initrd zstd).
+      compressed (microcode raw, base initrd and modules initrd zstd),
+      with zero padding between them.
 
 Exit 0 when every check passes, 1 otherwise; prints one line per check.
 Field bug 0.2.7 (old laptops, blinking cursor): image/mkosi.conf
@@ -53,12 +54,16 @@ def profiles(secs):
 
 
 def cpio_names(blob):
-    """File names of the newc cpio archives concatenated in blob."""
+    """(names, end): file names of the newc cpio archives at the start of
+    blob, and where they end (zero padding between archives skipped)."""
     names, pos = [], 0
-    while pos + 110 <= len(blob):
-        if blob[pos:pos + 6] not in (b"070701", b"070702"):
-            pos += 1  # padding between archives
-            continue
+    while True:
+        nxt = pos
+        while nxt < len(blob) and blob[nxt] == 0:
+            nxt += 1
+        if blob[nxt:nxt + 6] not in (b"070701", b"070702") or nxt + 110 > len(blob):
+            return names, pos
+        pos = nxt
         h = blob[pos:pos + 110]
         size = int(h[54:62], 16)
         nsize = int(h[94:102], 16)
@@ -67,25 +72,42 @@ def cpio_names(blob):
         pos = (pos + size + 3) & ~3
         if name != "TRAILER!!!":
             names.append(name)
-    return names
+
+
+def unzstd(blob):
+    """Decompress blob, or None. Retries without trailing zero padding."""
+    for cut in (blob, blob.rstrip(b"\0")):
+        out = subprocess.run(["zstd", "-dcq"], input=cut, capture_output=True)
+        if out.returncode == 0:
+            return out.stdout
+    return None
 
 
 def initrd_names(initrd):
-    names, pos = [], 0
+    """Names in mkosi's initrd: uncompressed cpio archives first (microcode),
+    then zstd compressed ones, possibly with padding between them."""
+    names, pos = cpio_names(initrd)
     zstd = b"\x28\xb5\x2f\xfd"
-    while pos < len(initrd):
-        z = initrd.find(zstd, pos)
-        raw = initrd[pos:] if z < 0 else initrd[pos:z]
-        names += cpio_names(raw)
-        if z < 0:
-            break
-        # Every remaining zstd frame (a raw cpio after them would break this;
-        # mkosi puts the uncompressed microcode first).
-        out = subprocess.run(["zstd", "-dcq"], input=initrd[z:], capture_output=True)
-        if out.returncode != 0:
-            sys.exit("FAIL: initrd: zstd could not unpack it: " + out.stderr.decode()[:200])
-        names += cpio_names(out.stdout)
-        break
+    rest = initrd[pos:]
+    # Split at every zstd magic; a piece that does not unpack alone had a
+    # magic inside its compressed data, so join it with the next piece.
+    starts, at = [], rest.find(zstd)
+    while at >= 0:
+        starts.append(at)
+        at = rest.find(zstd, at + 1)
+    if rest.strip(b"\0") and (not starts or rest[:starts[0]].strip(b"\0")):
+        sys.exit("FAIL: initrd: unknown data after the uncompressed part")
+    i = 0
+    while i < len(starts):
+        for j in range(i + 1, len(starts) + 1):
+            end = starts[j] if j < len(starts) else len(rest)
+            out = unzstd(rest[starts[i]:end])
+            if out is not None:
+                names += cpio_names(out)[0]
+                i = j
+                break
+        else:
+            sys.exit("FAIL: initrd: zstd could not unpack it")
     return names
 
 
