@@ -37,9 +37,14 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   layout, slot 1 filled by repart CopyBlocks=auto, systemd-boot + the running UKI on the new ESP.
   T-INST-01 part 2 passes (2026-11-25): the installed disk starts alone (stick out), root from slot 1,
   seed on its alp-state (alp-live-state now settles udev itself; alp-live-protect is masked there).
-- Next: first-boot pool creation from the seed; check gallery view and phone approval on the native
-  screen in a VM; install-time sysupdate definitions; code review of digest + installer before the PR;
-  `/claude-security` scan before release (plan "Before the 0.2.8 release").
+- First start of the installed system (plan `docs/plans/0.2.8-first-start.md`, 2026-11-25): layout gains
+  `alp-index` (contract); the seed carries the whole pool plan (contract, reader in `alp_hw::firstboot`);
+  `alp_storage::seed_check` + `alp_storage::pool` (LUKS2 per member, Btrfs dup/raid1, resumable, degraded
+  = read-only); `alp_live::pool` (key in the index, @archive at the archive place, @immich at Immich's
+  data folder); API `POST live/archive/create-pool`, state `pool`. T-INST-02 written (CI pending).
+- Next: T-INST-02 green; native setup screens (password, pool progress, recovery, phone) on alp-screen;
+  check gallery and phone approval on the native screen in a VM; code review of installer + pool
+  (encryption/storage: opus reviewer) before the PR; `/claude-security` scan before release.
 
 ## Alpha 0.2.7 (started 2026-11-15, same branch, on top of 0.2.61)
 
