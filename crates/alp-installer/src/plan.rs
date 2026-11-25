@@ -55,6 +55,10 @@ pub struct Choice {
     /// a single-disk install (system and archive on the system disk).
     pub data_disks: Vec<String>,
     pub profile: ProfileChoice,
+    /// Kernel names of old archive disks to open again with the recovery
+    /// words at first start (docs/plans/0.2.8-reopen-archive.md). Never
+    /// erased; excludes `data_disks`.
+    pub reopen_disks: Vec<String>,
 }
 
 /// A systemd-repart definition set (contract `disk-layout.md`).
@@ -117,7 +121,12 @@ pub enum Step {
         members: Vec<String>,
         data_profile: RaidProfile,
         metadata_profile: RaidProfile,
+        /// The members are an old archive to open with the recovery words.
+        reopen: bool,
     },
+    /// Reopen path: read the existing `alp-data` partition of an old
+    /// archive disk (its partition UUID for the seed). Nothing is written.
+    FindArchive { disk: String },
 }
 
 /// A disk the plan erases, for the confirm screen.
@@ -260,7 +269,15 @@ fn protection(data: RaidProfile) -> Protection {
 /// a profile that does not fit the number of disks.
 pub fn plan(discovery: &[Assessed], choice: &Choice) -> Result<InstallPlan> {
     let mut seen = std::collections::BTreeSet::new();
-    for d in &choice.data_disks {
+    if !choice.reopen_disks.is_empty() && !choice.data_disks.is_empty() {
+        return Err(refuse(
+            "an old archive cannot be mixed with new data disks".into(),
+        ));
+    }
+    if !choice.reopen_disks.is_empty() && choice.profile != ProfileChoice::Auto {
+        return Err(refuse("an old archive keeps its own protection".into()));
+    }
+    for d in choice.data_disks.iter().chain(&choice.reopen_disks) {
         if !seen.insert(d.as_str()) {
             return Err(refuse(format!("disk {d} chosen twice")));
         }
@@ -282,7 +299,7 @@ pub fn plan(discovery: &[Assessed], choice: &Choice) -> Result<InstallPlan> {
                     "disk {system_disk} is the system disk and a data disk"
                 )));
             }
-            let single = choice.data_disks.is_empty();
+            let single = choice.data_disks.is_empty() && choice.reopen_disks.is_empty();
             let role = if single {
                 Role::SystemAndData
             } else {
@@ -318,7 +335,7 @@ pub fn plan(discovery: &[Assessed], choice: &Choice) -> Result<InstallPlan> {
                 .iter()
                 .find(|p| p.label == "alp-state")
                 .ok_or_else(|| refuse("the start stick has no alp-state partition".into()))?;
-            if choice.data_disks.is_empty() {
+            if choice.data_disks.is_empty() && choice.reopen_disks.is_empty() {
                 return Err(refuse("keep running needs at least one data disk".into()));
             }
             steps.push(Step::UseExistingState {
@@ -342,6 +359,23 @@ pub fn plan(discovery: &[Assessed], choice: &Choice) -> Result<InstallPlan> {
         ));
     }
 
+    for name in &choice.reopen_disks {
+        let a = find(discovery, name)?;
+        let archive = a.verdict
+            == Verdict::NotUsable(alp_hw::inspect::blockdev::Reason::AlpArchive)
+            && alp_hw::inspect::blockdev::reopenable(&a.disk);
+        if !archive {
+            return Err(refuse(format!(
+                "disk {name} is not an archive that can be opened again"
+            )));
+        }
+        steps.push(Step::FindArchive {
+            disk: a.disk.name.clone(),
+        });
+        let part: u64 = a.disk.partitions.iter().map(|p| p.size_bytes).sum();
+        members.push((a.disk.name.clone(), part));
+    }
+
     let (data_profile, metadata_profile) = profiles(members.len(), choice.profile)?;
     let sizes: Vec<u64> = members.iter().map(|(_, s)| *s).collect();
     let pool = PoolSketch {
@@ -361,6 +395,7 @@ pub fn plan(discovery: &[Assessed], choice: &Choice) -> Result<InstallPlan> {
         members: pool.members.clone(),
         data_profile,
         metadata_profile,
+        reopen: !choice.reopen_disks.is_empty(),
     });
     Ok(InstallPlan {
         choice: choice.clone(),
@@ -413,6 +448,7 @@ mod tests {
             },
             data_disks: data.iter().map(|s| s.to_string()).collect(),
             profile,
+            reopen_disks: Vec::new(),
         }
     }
 
@@ -421,7 +457,63 @@ mod tests {
             path: StartPath::KeepRunning,
             data_disks: data.iter().map(|s| s.to_string()).collect(),
             profile: ProfileChoice::Auto,
+            reopen_disks: Vec::new(),
         }
+    }
+
+    /// `home()` with `sde` turned into a disk of an old archive.
+    fn with_archive() -> Vec<Assessed> {
+        use alp_hw::inspect::blockdev::{PartType, Partition, Reason};
+        let mut l = home();
+        let a = l.iter_mut().find(|a| a.disk.name == "sde").unwrap();
+        a.disk.table = "gpt".into();
+        a.disk.partitions = vec![Partition {
+            name: "sde1".into(),
+            size_bytes: 19_000 * GB,
+            part_type: PartType::Gpt("0FC63DAF-8483-4772-8E79-3D69D8477DE4".into()),
+            label: "alp-data".into(),
+            fstype: "crypto_LUKS".into(),
+            fs_label: "alp-pool".into(),
+            boot_flag: false,
+            mounted: false,
+        }];
+        a.verdict = Verdict::NotUsable(Reason::AlpArchive);
+        l
+    }
+
+    #[test]
+    fn an_old_archive_is_opened_again_never_erased() {
+        let l = with_archive();
+        let mut c = install("sda", &[], ProfileChoice::Auto);
+        c.reopen_disks = vec!["sde".into()];
+        let p = plan(&l, &c).unwrap();
+        assert_eq!(
+            p.steps,
+            vec![
+                Step::Partition {
+                    disk: "sda".into(),
+                    layouts: vec![Layout::System]
+                },
+                Step::FindArchive { disk: "sde".into() },
+                Step::CopySystem { disk: "sda".into() },
+                Step::WriteSeed {
+                    state_disk: "sda".into(),
+                    members: vec!["sde".into()],
+                    data_profile: RaidProfile::Dup,
+                    metadata_profile: RaidProfile::Dup,
+                    reopen: true,
+                },
+            ]
+        );
+        let erased: Vec<_> = p.erases.iter().map(|e| e.disk.as_str()).collect();
+        assert_eq!(erased, ["sda"]);
+        // A disk with other contents is never an archive to open.
+        c.reopen_disks = vec!["sdb".into()];
+        assert_eq!(code(plan(&l, &c)), CODE_REFUSED);
+        // Not mixed with new data disks.
+        let mut c = install("sda", &["sdd"], ProfileChoice::Auto);
+        c.reopen_disks = vec!["sde".into()];
+        assert_eq!(code(plan(&l, &c)), CODE_REFUSED);
     }
 
     fn code(r: Result<InstallPlan>) -> &'static str {
@@ -444,6 +536,7 @@ mod tests {
                     members: vec!["sda".into()],
                     data_profile: RaidProfile::Dup,
                     metadata_profile: RaidProfile::Dup,
+                    reopen: false,
                 },
             ]
         );
@@ -483,6 +576,7 @@ mod tests {
                     members: vec!["sde".into(), "sdd".into()],
                     data_profile: RaidProfile::Raid1,
                     metadata_profile: RaidProfile::Raid1,
+                    reopen: false,
                 },
             ]
         );
@@ -538,6 +632,7 @@ mod tests {
                     members: vec!["sdd".into()],
                     data_profile: RaidProfile::Dup,
                     metadata_profile: RaidProfile::Dup,
+                    reopen: false,
                 },
             ]
         );

@@ -128,6 +128,12 @@ fn choice_args(cmd: &str, b: &Value) -> Result<Vec<String>, Fail> {
         args.push("--data".into());
         args.push(d);
     }
+    // Old archive disks to open again with the recovery words (never
+    // erased; the installer checks they are archive disks).
+    for d in names(&b["reopen"])? {
+        args.push("--reopen".into());
+        args.push(d);
+    }
     Ok(args)
 }
 
@@ -345,6 +351,18 @@ mod tests {
         assert_eq!(a, ["install", "--system", "sda"]);
         let a = choice_args("plan", &json!({"keep_running": true, "data": ["sdb"]})).unwrap();
         assert_eq!(a, ["plan", "--keep-running", "--data", "sdb"]);
+        let a = choice_args(
+            "install",
+            &json!({"system": "sda", "reopen": ["sdb", "sdc"]}),
+        )
+        .unwrap();
+        assert_eq!(
+            a,
+            [
+                "install", "--system", "sda", "--reopen", "sdb", "--reopen", "sdc"
+            ]
+        );
+        assert!(choice_args("install", &json!({"system": "sda", "reopen": ["../x"]})).is_err());
         let a = choice_args("install", &json!({"keep_running": true, "data": ["sdb"]})).unwrap();
         assert_eq!(a, ["keep-running", "--data", "sdb"]);
         assert!(choice_args("plan", &json!({})).is_err());

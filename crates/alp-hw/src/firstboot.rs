@@ -44,6 +44,10 @@ pub struct FirstbootSeed {
     pub confirmed_at: String,
     /// `alp_hw::PlanDigest` of the confirmed pool plan.
     pub plan_digest: [u8; 32],
+    /// Open the existing archive on the members with the recovery words
+    /// instead of making a new one (docs/plans/0.2.8-reopen-archive.md).
+    /// Optional in the file (absent: false), so `format_version` stays 1.
+    pub reopen: bool,
 }
 
 /// Current seed schema version.
@@ -80,6 +84,9 @@ impl FirstbootSeed {
         t.insert("protection".into(), s(self.protection.name()));
         t.insert("confirmed_at".into(), s(&self.confirmed_at));
         t.insert("plan_digest".into(), s(&hex(&self.plan_digest)));
+        if self.reopen {
+            t.insert("reopen".into(), Value::Boolean(true));
+        }
         let members = self
             .members
             .iter()
@@ -153,6 +160,10 @@ impl FirstbootSeed {
                 .ok_or(format!("bad protection {protection:?}"))?,
             confirmed_at: str_of(&t, "confirmed_at")?,
             plan_digest: unhex32(&str_of(&t, "plan_digest")?).ok_or("bad plan_digest")?,
+            reopen: match t.get("reopen") {
+                None => false,
+                Some(v) => v.as_bool().ok_or("bad reopen")?,
+            },
         })
     }
 }
@@ -187,7 +198,19 @@ mod tests {
             protection: Protection::DiskFailure,
             confirmed_at: "2026-11-24T09:30:00Z".into(),
             plan_digest: [0xab; 32],
+            reopen: false,
         }
+    }
+
+    #[test]
+    fn reopen_is_optional_and_round_trips() {
+        let mut s = sample();
+        assert!(!FirstbootSeed::from_toml(&s.to_toml()).unwrap().reopen);
+        assert!(!s.to_toml().contains("reopen"), "old seeds read the same");
+        s.reopen = true;
+        assert!(FirstbootSeed::from_toml(&s.to_toml()).unwrap().reopen);
+        let bad = s.to_toml().replace("reopen = true", "reopen = \"yes\"");
+        assert!(FirstbootSeed::from_toml(&bad).is_err());
     }
 
     #[test]

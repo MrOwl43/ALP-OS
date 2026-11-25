@@ -495,6 +495,23 @@ pub fn unfinished_install(d: &Disk) -> bool {
             .all(|p| ours(p) && p.fstype != "crypto_LUKS" && !is_group_member(p) && !p.mounted)
 }
 
+/// A disk of an ALP-OS archive that a new install may open again with the
+/// recovery words (docs/plans/0.2.8-reopen-archive.md): every partition is
+/// an `alp-data` partition holding the pool's LUKS container (label
+/// `alp-pool`). It stays "not usable" (never erased); the plan may only name
+/// it to reopen.
+pub fn reopenable(d: &Disk) -> bool {
+    d.table == "gpt"
+        && !d.mounted
+        && !d.partitions.is_empty()
+        && d.partitions.iter().all(|p| {
+            p.label == "alp-data"
+                && p.fstype == "crypto_LUKS"
+                && p.fs_label == "alp-pool"
+                && !p.mounted
+        })
+}
+
 /// The most specific operating system on the disk, if any (plan (b)).
 pub fn find_system(d: &Disk) -> Option<System> {
     let windows_disk = d
@@ -990,6 +1007,28 @@ mod tests {
         assert_eq!(reason_of(&l, "sda"), Reason::HoldsSystem(System::AlpOs));
         // alp-data holds LUKS: the archive reason wins over "encrypted".
         assert_eq!(reason_of(&l, "sdb"), Reason::AlpArchive);
+    }
+
+    #[test]
+    fn an_archive_disk_can_be_reopened_never_erased() {
+        let with_label = fixture("alp").replacen(
+            "\"partlabel\": \"alp-data\", \"partflags\": null, \"fstype\": \"crypto_LUKS\", \"label\": null",
+            "\"partlabel\": \"alp-data\", \"partflags\": null, \"fstype\": \"crypto_LUKS\", \"label\": \"alp-pool\"",
+            1,
+        );
+        let l = discover(&with_label, &ctx(Some("sdc"))).unwrap();
+        let sdb = l.iter().find(|a| a.disk.name == "sdb").unwrap();
+        assert_eq!(sdb.verdict, Verdict::NotUsable(Reason::AlpArchive));
+        assert!(reopenable(&sdb.disk));
+        // Without the pool's LUKS label: some other encrypted data.
+        let l = run("alp", Some("sdc"));
+        assert!(!reopenable(
+            &l.iter().find(|a| a.disk.name == "sdb").unwrap().disk
+        ));
+        // The system disk is never an archive to reopen.
+        assert!(!reopenable(
+            &l.iter().find(|a| a.disk.name == "sda").unwrap().disk
+        ));
     }
 
     #[test]

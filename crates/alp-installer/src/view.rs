@@ -71,6 +71,9 @@ pub fn disks(list: &[Assessed]) -> Value {
                 Verdict::NotUsable(r) => {
                     v["usable"] = json!(false);
                     v["reason"] = json!({"key": r.key(), "text": r.text()});
+                    // An old archive disk: the screen offers "open it
+                    // again" (never erase) when this is true.
+                    v["reopenable"] = json!(alp_hw::inspect::blockdev::reopenable(d));
                 }
             }
             v
@@ -92,6 +95,9 @@ pub fn plan(p: &InstallPlan) -> Value {
             "contents": contents(&e.contents),
         })).collect::<Vec<_>>(),
         "strong_warning": p.needs_strong_warning(),
+        // Old archive disks opened again with the recovery words at the
+        // first start; never erased.
+        "reopen": p.choice.reopen_disks,
         "pool": {
             "members": p.pool.members,
             "data_profile": profile(p.pool.data_profile),
@@ -195,6 +201,7 @@ mod tests {
                 },
                 data_disks: vec!["sdb".into(), "sde".into()],
                 profile: ProfileChoice::Auto,
+                reopen_disks: Vec::new(),
             },
         )
         .unwrap();
@@ -220,6 +227,7 @@ mod tests {
             },
             data_disks: vec!["sdb".into(), "sde".into()],
             profile: ProfileChoice::Auto,
+            reopen_disks: Vec::new(),
         };
         let p = crate::plan::plan(&home(), &choice).unwrap();
         let ids: Vec<Identity> = ["sda", "sdb", "sde"]

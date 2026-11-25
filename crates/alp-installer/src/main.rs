@@ -111,6 +111,7 @@ fn main() -> ExitCode {
     let mut system = None;
     let mut keep = false;
     let mut data = Vec::new();
+    let mut reopen = Vec::new();
     let mut confirm = Vec::new();
     let mut token = String::new();
     let mut it = args.iter().skip(1);
@@ -125,6 +126,7 @@ fn main() -> ExitCode {
         match flag.as_str() {
             "--system" => system = Some(value.clone()),
             "--data" => data.push(value.clone()),
+            "--reopen" => reopen.push(value.clone()),
             "--confirm-token" => token = value.clone(),
             "--confirm-erase" => {
                 confirm = value
@@ -150,6 +152,7 @@ fn main() -> ExitCode {
         path,
         data_disks: data,
         profile: ProfileChoice::Auto,
+        reopen_disks: reopen,
     };
     let p = match plan(&disks, &choice) {
         Ok(p) => p,

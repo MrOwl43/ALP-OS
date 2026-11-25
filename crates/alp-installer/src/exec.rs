@@ -502,11 +502,32 @@ pub fn execute(
                     ));
                 }
             }
+            Step::FindArchive { disk } => {
+                // Nothing is written: the old archive's alp-data partition
+                // UUID goes into the seed (docs/plans/0.2.8-reopen-archive.md).
+                let dev = format!("/dev/{disk}");
+                let out = x.run(
+                    CODE_SEED,
+                    "lsblk",
+                    &owned(&["--json", "--output", "NAME,PARTUUID,PARTLABEL", &dev]),
+                    None,
+                )?;
+                let got = parse_partitions(&out).map_err(|e| x.fail(CODE_SEED, e))?;
+                if got.is_empty()
+                    || got
+                        .iter()
+                        .any(|p| p.label != "alp-data" || p.partuuid.is_empty())
+                {
+                    return Err(x.fail(CODE_SEED, format!("{dev} is not an archive disk")));
+                }
+                parts.push((disk.clone(), got));
+            }
             Step::WriteSeed {
                 state_disk,
                 members,
                 data_profile,
                 metadata_profile,
+                reopen,
             } => {
                 x.say(
                     "install.seed",
@@ -556,6 +577,7 @@ pub fn execute(
                     protection: pool.protection,
                     confirmed_at: cfg.confirmed_at.clone(),
                     plan_digest: digester.digest(&pool),
+                    reopen: *reopen,
                 });
                 if plan.erases.iter().any(|e| e.disk == *state_disk) {
                     let Some(uuid) = part_of(state_disk, "alp-state") else {
@@ -982,6 +1004,7 @@ mod tests {
                 },
                 data_disks: data.iter().map(|s| s.to_string()).collect(),
                 profile: ProfileChoice::Auto,
+                reopen_disks: Vec::new(),
             },
         )
         .unwrap()
@@ -1138,6 +1161,7 @@ mod tests {
                 path: StartPath::KeepRunning,
                 data_disks: vec!["sdd".into()],
                 profile: ProfileChoice::Auto,
+                reopen_disks: Vec::new(),
             },
         )
         .unwrap();

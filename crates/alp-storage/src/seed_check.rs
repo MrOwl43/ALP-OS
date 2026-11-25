@@ -198,6 +198,7 @@ mod tests {
             protection: Protection::DiskFailure,
             confirmed_at: "2026-11-25T09:30:00Z".into(),
             plan_digest: [0; 32],
+            reopen: false,
         };
         // The digest the installer computed over the same plan.
         let plan = PoolPlan {

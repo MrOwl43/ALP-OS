@@ -472,6 +472,132 @@ pub fn test_recovery(r: &mut dyn Run, dev: &str, secret: &str, slot: u8) -> Resu
     }
 }
 
+/// Does `secret` (the recovery code's unlock secret) open any key slot of
+/// `dev`? Nothing is opened (`--test-passphrase`); the secret comes on
+/// stdin as one line, as when it was added.
+pub fn opens_with_recovery(r: &mut dyn Run, dev: &str, secret: &str) -> Result<bool> {
+    let mut input = Zeroizing::new(secret.as_bytes().to_vec());
+    input.push(b'\n');
+    let out = r.run(
+        "cryptsetup",
+        &owned(&["open", "--test-passphrase", dev]),
+        Some(&input),
+    );
+    if out.ok {
+        Ok(true)
+    } else if out.stderr.contains("No key available") {
+        Ok(false)
+    } else {
+        Err(err(CODE_OPEN, &format!("test {dev}"), &out))
+    }
+}
+
+/// Does the pool key open slot 0 of `dev`?
+fn opens_with_key(r: &mut dyn Run, dev: &str, key: &[u8]) -> Result<bool> {
+    let out = r.run(
+        "cryptsetup",
+        &owned(&[
+            "open",
+            "--test-passphrase",
+            "--key-slot=0",
+            "--key-file=-",
+            "--keyfile-size=64",
+            dev,
+        ]),
+        Some(key),
+    );
+    if out.ok {
+        Ok(true)
+    } else if out.stderr.contains("No key available") {
+        Ok(false)
+    } else {
+        Err(err(CODE_OPEN, &format!("test {dev}"), &out))
+    }
+}
+
+/// Reopen after losing the system disk (docs/plans/0.2.8-reopen-archive.md):
+/// give member `dev` the new pool `key` in slot 0, authorised by `secret`
+/// (the caller has checked that `secret` opens every member first). The
+/// old slot 0 key went with the lost index, so slot 0 is cleared first;
+/// the recovery slots stay, so after a power cut between the two steps the
+/// words still open the member and a new try finishes it. Already done
+/// (slot 0 opens with `key`): nothing to do.
+///
+/// The new key is binary (a newline byte would end it on stdin after the
+/// secret), so it goes in a 0600 file under `tmp_dir` (tmpfs `/run/alp`,
+/// never a disk), removed right after (`--new-keyfile`, cryptsetup 2.7).
+pub fn rekey_with_recovery(
+    r: &mut dyn Run,
+    dev: &str,
+    secret: &str,
+    key: &PoolKey,
+    tmp_dir: &std::path::Path,
+) -> Result<()> {
+    if secret.is_empty() || secret.contains('\n') {
+        return Err(HwError {
+            code: CODE_OPEN,
+            detail: "the recovery secret must be one non-empty line".into(),
+        });
+    }
+    let key = key_bytes(key);
+    if key.len() != 64 {
+        return Err(HwError {
+            code: CODE_OPEN,
+            detail: "the pool key file is not 64 bytes".into(),
+        });
+    }
+    if opens_with_key(r, dev, &key)? {
+        return Ok(());
+    }
+    if keyslots(r, dev)?.contains(&0) {
+        let out = r.run(
+            "cryptsetup",
+            &owned(&["luksKillSlot", "--batch-mode", dev, "0"]),
+            None,
+        );
+        if !out.ok {
+            return Err(err(CODE_OPEN, &format!("luksKillSlot {dev} 0"), &out));
+        }
+    }
+    let file = tmp_dir.join(format!(".new-key-{}", std::process::id()));
+    let written = {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let _ = std::fs::remove_file(&file);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&file)
+            .and_then(|mut f| f.write_all(&key).and_then(|_| f.sync_all()))
+    };
+    let out = written.map(|_| {
+        let mut input = Zeroizing::new(secret.as_bytes().to_vec());
+        input.push(b'\n');
+        r.run(
+            "cryptsetup",
+            &owned(&[
+                "luksAddKey",
+                "--batch-mode",
+                "--new-key-slot=0",
+                &format!("--new-keyfile={}", file.display()),
+                "--new-keyfile-size=64",
+                dev,
+            ]),
+            Some(&input),
+        )
+    });
+    let _ = std::fs::remove_file(&file);
+    match out {
+        Err(e) => Err(HwError {
+            code: CODE_OPEN,
+            detail: format!("the new key file: {e}"),
+        }),
+        Ok(out) if !out.ok => Err(err(CODE_OPEN, &format!("luksAddKey {dev}"), &out)),
+        Ok(_) => Ok(()),
+    }
+}
+
 /// The real runner: the program with these arguments, stdin piped when
 /// given (and then closed), output captured.
 #[derive(Debug, Default)]
@@ -537,6 +663,10 @@ mod tests {
         key_seen: Vec<Vec<u8>>,
         /// LUKS headers without a key slot (power cut during luksFormat).
         no_slots: HashSet<String>,
+        /// `--test-passphrase` with the pool key fails on these.
+        key_wrong: HashSet<String>,
+        /// `--test-passphrase` with the recovery words fails on these.
+        words_wrong: HashSet<String>,
     }
 
     impl Mock {
@@ -615,6 +745,24 @@ mod tests {
                     self.set(&dev, "TYPE", "crypto_LUKS");
                     self.set(&dev, "LABEL", LABEL);
                     ok("")
+                }
+                "cryptsetup" if a(0) == "open" && a(1) == "--test-passphrase" => {
+                    let dev = args.last().unwrap().clone();
+                    let by_key = args.iter().any(|x| x == "--key-file=-");
+                    let wrong = if by_key {
+                        self.key_wrong.contains(&dev)
+                    } else {
+                        self.words_wrong.contains(&dev)
+                    };
+                    if wrong {
+                        Out {
+                            ok: false,
+                            stdout: String::new(),
+                            stderr: "No key available with this passphrase.".into(),
+                        }
+                    } else {
+                        ok("")
+                    }
                 }
                 "cryptsetup" if a(0) == "open" => {
                     let name = args.last().unwrap();
@@ -921,6 +1069,53 @@ mod tests {
     }
 
     const DUMP: &str = "LUKS header information\nVersion:       \t2\n\nData segments:\n  0: crypt\n\toffset: 16777216 [bytes]\nKeyslots:\n  0: luks2\n\tKey:        512 bits\n  2: luks2\n\tKey:        512 bits\nTokens:\n  0: systemd-tpm2\n\tKeyslot:    3\nDigests:\n  0: pbkdf2\n";
+
+    #[test]
+    fn reopen_moves_slot_0_to_the_new_key_with_the_words() {
+        let tmp = std::env::temp_dir().join(format!("alp-rekey-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let key = PoolKey::generate().unwrap();
+        let mut m = Mock::default();
+        m.words_wrong.insert("/dev/vdc1".into());
+        assert!(opens_with_recovery(&mut m, "/dev/vdb1", "s3cret").unwrap());
+        assert!(!opens_with_recovery(&mut m, "/dev/vdc1", "s3cret").unwrap());
+        // Slot 0 holds the lost index's key: cleared, then the new key added.
+        m.key_wrong.insert("/dev/vdb1".into());
+        m.calls.clear();
+        m.key_seen.clear();
+        rekey_with_recovery(&mut m, "/dev/vdb1", "s3cret", &key, &tmp).unwrap();
+        let cs: Vec<_> = m
+            .ran("cryptsetup")
+            .into_iter()
+            .map(|a| a[0].clone())
+            .collect();
+        assert_eq!(cs, ["open", "luksDump", "luksKillSlot", "luksAddKey"]);
+        let add = m.ran("cryptsetup")[3].clone();
+        assert!(add.contains(&"--new-key-slot=0".to_string()), "{add:?}");
+        assert!(add.iter().any(|a| a.starts_with("--new-keyfile=")));
+        // The secret only on stdin; the key file is gone afterwards.
+        assert!(!add.iter().any(|a| a.contains("s3cret")));
+        assert_eq!(m.key_seen.last().unwrap(), b"s3cret\n");
+        assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0);
+        // Done before (a resumed start): nothing changes.
+        m.key_wrong.clear();
+        m.calls.clear();
+        rekey_with_recovery(&mut m, "/dev/vdb1", "s3cret", &key, &tmp).unwrap();
+        assert_eq!(m.ran("cryptsetup").len(), 1, "only the check");
+        // Cut after the kill: slot 0 empty, the add still happens.
+        let mut m = Mock::default();
+        m.key_wrong.insert("/dev/vdb1".into());
+        m.no_slots.insert("/dev/vdb1".into());
+        rekey_with_recovery(&mut m, "/dev/vdb1", "s3cret", &key, &tmp).unwrap();
+        let cs: Vec<_> = m
+            .ran("cryptsetup")
+            .into_iter()
+            .map(|a| a[0].clone())
+            .collect();
+        assert_eq!(cs, ["open", "luksDump", "luksAddKey"]);
+        assert!(rekey_with_recovery(&mut m, "/dev/vdb1", "a\nb", &key, &tmp).is_err());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 
     #[test]
     fn keyslots_only_from_their_section() {
