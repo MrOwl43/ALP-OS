@@ -44,6 +44,9 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   data folder); API `POST live/archive/create-pool`, state `pool`. T-INST-02 passes in CI (2026-11-25,
   run 45641929679): two data disks become RAID1, file written, reopens after restart with the TPM,
   read-only and readable with one data disk missing.
+- 0.2.8 item: old laptops (2013/2016) do not start the stick. Cause unknown, not reproduced; likely
+  candidates: firmware with legacy BIOS only or 32-bit UEFI (we ship 64-bit UEFI only), or the
+  graphics driver hanging at start. Waiting on the owner: models, and what the screen shows.
 - Next: home screen names a missing pool disk (ALP-STO-001); native setup screens (password, pool progress, recovery, phone) on alp-screen;
   check gallery and phone approval on the native screen in a VM; code review of installer + pool
   (encryption/storage: opus reviewer) before the PR; `/claude-security` scan before release.
