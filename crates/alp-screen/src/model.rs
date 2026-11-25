@@ -277,6 +277,95 @@ pub mod install {
     }
 }
 
+/// The home screen's tiles (owner's 0.2.7 note 6: spread out, an uneven
+/// grid). Same facts and wire fields as the web console's home tiles.
+pub mod home {
+    use serde_json::Value;
+
+    #[derive(Debug, Clone, PartialEq, Default)]
+    pub struct Tiles {
+        /// The archive is open and holds something (else no tiles).
+        pub show: bool,
+        pub photos: u64,
+        pub free_bytes: u64,
+        /// `ok`, `low` or `full`.
+        pub space: String,
+        pub phones: u64,
+        /// The last upload, as alpd sent it (RFC 3339).
+        pub last_upload: Option<String>,
+        /// `ok`, `warn` or `bad`.
+        pub health: String,
+        /// Where the archive is kept (disk label or name).
+        pub place: Option<String>,
+    }
+
+    impl Tiles {
+        pub fn from_state(w: &Value) -> Self {
+            let ar = &w["archive"];
+            let ph = &w["phone"];
+            let state = ar["state"].as_str().unwrap_or("none");
+            let space = ar["space"].as_str().unwrap_or("ok").to_string();
+            let index_space = w["index"]["space"].as_str().unwrap_or("ok");
+            let health = match ar["health"].as_str() {
+                Some(h) => h.to_string(),
+                None if state != "open"
+                    || space == "full"
+                    || index_space == "full"
+                    || w["immich"]["state"].as_str() == Some("failed") =>
+                {
+                    "bad".into()
+                }
+                None if space == "low" || index_space == "low" => "warn".into(),
+                None => "ok".into(),
+            };
+            let place = &ar["place"];
+            Tiles {
+                show: !matches!(state, "none" | "failed" | "creating" | "missing"),
+                photos: ph["photos"].as_u64().unwrap_or(0),
+                free_bytes: ar["free_bytes"].as_u64().unwrap_or(0),
+                space,
+                phones: ph["phones"].as_u64().unwrap_or(0),
+                last_upload: ph["last_upload"].as_str().map(str::to_string),
+                health,
+                place: place["label"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| place["name"].as_str())
+                    .map(str::to_string),
+            }
+        }
+    }
+
+    /// `12,345` (English digit groups; translation comes after beta).
+    pub fn number(n: u64) -> String {
+        let s = n.to_string();
+        let mut out = String::new();
+        for (i, c) in s.chars().enumerate() {
+            if i > 0 && (s.len() - i).is_multiple_of(3) {
+                out.push(',');
+            }
+            out.push(c);
+        }
+        out
+    }
+
+    /// `850 GB`, `12.5 TB` (decimal units, as the web console).
+    pub fn size(b: u64) -> String {
+        if b >= 1_000_000_000_000 {
+            let tb = format!("{:.1}", b as f64 / 1e12);
+            format!("{} TB", tb.strip_suffix(".0").unwrap_or(&tb))
+        } else {
+            format!("{} GB", (b as f64 / 1e9).round() as u64)
+        }
+    }
+
+    /// About how many photos fit in `b` bytes (4.3 MB a photo, rounded to
+    /// thousands), as the web console says it.
+    pub fn room_photos(b: u64) -> String {
+        number(((b as f64 / 4.3e6 / 1000.0).round() as u64) * 1000)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,5 +476,32 @@ mod tests {
         assert!(avail);
         assert_eq!(job.unwrap().percent, 40);
         assert_eq!(install::state(&json!({})), (false, None));
+    }
+
+    #[test]
+    fn home_tiles_read_the_wire() {
+        use super::home::{Tiles, number, room_photos, size};
+        let t = Tiles::from_state(&json!({
+            "archive": {"state": "open", "space": "low", "free_bytes": 2_500_000_000_000u64,
+                        "place": {"label": "", "name": "sdb"}},
+            "phone": {"photos": 1234567, "phones": 2, "last_upload": "2026-11-24T10:00:00Z"}
+        }));
+        assert!(t.show);
+        assert_eq!(
+            (t.photos, t.phones, t.health.as_str()),
+            (1234567, 2, "warn")
+        );
+        assert_eq!(t.place.as_deref(), Some("sdb"));
+        assert_eq!(number(1234567), "1,234,567");
+        assert_eq!(number(999), "999");
+        assert_eq!(size(2_500_000_000_000), "2.5 TB");
+        assert_eq!(size(3_000_000_000_000), "3 TB");
+        assert_eq!(size(850_400_000_000), "850 GB");
+        assert_eq!(room_photos(43_000_000_000), "10,000");
+        let none = Tiles::from_state(&json!({}));
+        assert!(!none.show);
+        assert_eq!(none.health, "bad");
+        let ok = Tiles::from_state(&json!({"archive": {"state": "open", "health": "ok"}}));
+        assert_eq!(ok.health, "ok");
     }
 }

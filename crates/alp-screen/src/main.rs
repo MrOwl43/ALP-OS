@@ -45,6 +45,7 @@ struct Ui {
     home_title: gtk4::Label,
     home_line: gtk4::Label,
     install_btn: gtk4::Button,
+    tiles: HomeTiles,
     inst: Rc<install::InstallUi>,
     set: SettingsUi,
 }
@@ -132,13 +133,13 @@ fn build(app: &adw::Application) {
         .css_classes(["suggested-action", "pill"])
         .visible(false)
         .build();
-    let home_page = column(&[
-        home_title.clone().upcast(),
-        home_line.clone().upcast(),
-        install_btn.clone().upcast(),
-        settings_btn.clone().upcast(),
-        lock_btn.clone().upcast(),
-    ]);
+    let tiles = HomeTiles::new(&texts);
+    let home_page = home_layout(
+        &home_title,
+        &home_line,
+        &[&install_btn, &settings_btn, &lock_btn],
+        &tiles,
+    );
 
     let stack = gtk4::Stack::new();
     let (settings_page, set, back) = settings_page(&texts, &client, &tx);
@@ -164,6 +165,7 @@ fn build(app: &adw::Application) {
         home_title,
         home_line,
         install_btn: install_btn.clone(),
+        tiles,
         inst: inst.clone(),
         set,
     });
@@ -261,6 +263,8 @@ fn handle(ui: &Ui, m: Msg) {
                     (_, Some(k)) => ui.texts.t(k),
                     _ => String::new(),
                 });
+                ui.tiles
+                    .show(&ui.texts, &model::home::Tiles::from_state(&w));
                 show_settings(&ui.set, &ui.texts, &Settings::from_state(&w));
                 let (can_install, job) = model::install::state(&w);
                 ui.install_btn.set_visible(can_install);
@@ -480,6 +484,191 @@ fn show_settings(ui: &SettingsUi, texts: &Texts, s: &Settings) {
         }
     }
     *ui.last.borrow_mut() = s.clone();
+}
+
+/// One home tile: a small label, a value, an optional note under it.
+struct Tile {
+    frame: gtk4::Box,
+    value: gtk4::Label,
+    note: gtk4::Label,
+}
+
+impl Tile {
+    fn new(key: &str, big: bool) -> Self {
+        let frame = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Vertical)
+            .spacing(6)
+            .css_classes(["card"])
+            .build();
+        let inner = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Vertical)
+            .spacing(6)
+            .margin_top(20)
+            .margin_bottom(20)
+            .margin_start(24)
+            .margin_end(24)
+            .valign(if big {
+                gtk4::Align::Center
+            } else {
+                gtk4::Align::Start
+            })
+            .vexpand(true)
+            .build();
+        let label = |text: &str, classes: &[&str]| {
+            gtk4::Label::builder()
+                .label(text)
+                .xalign(0.0)
+                .wrap(true)
+                .css_classes(classes.to_vec())
+                .build()
+        };
+        let value = label("", &[if big { "title-1" } else { "title-3" }]);
+        let note = label("", &["dim-label"]);
+        inner.append(&label(key, &["dim-label", "heading"]));
+        inner.append(&value);
+        inner.append(&note);
+        frame.append(&inner);
+        Tile { frame, value, note }
+    }
+
+    fn set(&self, value: &str, note: &str, alarm: bool) {
+        self.value.set_label(value);
+        self.note.set_label(note);
+        self.note.set_visible(!note.is_empty());
+        if alarm {
+            self.value.add_css_class("warning");
+        } else {
+            self.value.remove_css_class("warning");
+        }
+    }
+}
+
+/// The home tiles in an uneven grid (owner's 0.2.7 note 6): photos large on
+/// the left, room and phones beside it, health and the disk below.
+struct HomeTiles {
+    grid: gtk4::Grid,
+    photos: Tile,
+    room: Tile,
+    phones: Tile,
+    health: Tile,
+    kept: Tile,
+}
+
+impl HomeTiles {
+    fn new(texts: &Texts) -> Self {
+        let grid = gtk4::Grid::builder()
+            .column_spacing(18)
+            .row_spacing(18)
+            .column_homogeneous(true)
+            .row_homogeneous(true)
+            .vexpand(true)
+            .build();
+        let photos = Tile::new(&texts.t("status.photos"), true);
+        let room = Tile::new(&texts.t("status.room"), false);
+        let phones = Tile::new(&texts.t("status.phones"), false);
+        let health = Tile::new(&texts.t("lock.health"), false);
+        let kept = Tile::new(&texts.t("status.kept"), false);
+        grid.attach(&photos.frame, 0, 0, 2, 2);
+        grid.attach(&room.frame, 2, 0, 1, 1);
+        grid.attach(&phones.frame, 2, 1, 1, 1);
+        grid.attach(&health.frame, 0, 2, 1, 1);
+        grid.attach(&kept.frame, 1, 2, 2, 1);
+        HomeTiles {
+            grid,
+            photos,
+            room,
+            phones,
+            health,
+            kept,
+        }
+    }
+
+    fn show(&self, texts: &Texts, t: &model::home::Tiles) {
+        use model::home::{number, room_photos, size};
+        self.grid.set_visible(t.show);
+        if !t.show {
+            return;
+        }
+        self.photos.set(&number(t.photos), "", false);
+        self.room.set(
+            &size(t.free_bytes),
+            &texts.fill("where.room", &[("photos", &room_photos(t.free_bytes))]),
+            t.space != "ok",
+        );
+        let phones = if t.phones > 0 {
+            texts.fill("status.phones.n", &[("n", &t.phones.to_string())])
+        } else {
+            texts.t("status.phones.none")
+        };
+        let last = t
+            .last_upload
+            .as_deref()
+            .and_then(|s| glib::DateTime::from_iso8601(s, None).ok())
+            .and_then(|d| d.to_local().ok())
+            .and_then(|d| d.format("%e %b %Y, %H:%M").ok())
+            .map(|w| texts.fill("status.last", &[("when", w.trim())]))
+            .unwrap_or_default();
+        self.phones.set(&phones, &last, false);
+        self.health.set(
+            &texts.t(&format!("health.{}", t.health)),
+            "",
+            t.health != "ok",
+        );
+        self.kept.set(
+            t.place.as_deref().unwrap_or("–"),
+            &texts.t("home.kept.note"),
+            false,
+        );
+    }
+}
+
+/// The home page: the headline and the buttons on top, the tiles below,
+/// using the whole screen instead of a narrow middle column.
+fn home_layout(
+    title: &gtk4::Label,
+    line: &gtk4::Label,
+    buttons: &[&gtk4::Button],
+    tiles: &HomeTiles,
+) -> adw::Clamp {
+    title.set_xalign(0.0);
+    line.set_xalign(0.0);
+    let words = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .spacing(8)
+        .hexpand(true)
+        .valign(gtk4::Align::Center)
+        .build();
+    words.append(title);
+    words.append(line);
+    let actions = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Horizontal)
+        .spacing(12)
+        .valign(gtk4::Align::Center)
+        .build();
+    for b in buttons {
+        actions.append(*b);
+    }
+    let top = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Horizontal)
+        .spacing(24)
+        .build();
+    top.append(&words);
+    top.append(&actions);
+    let page = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .spacing(32)
+        .margin_top(48)
+        .margin_bottom(48)
+        .margin_start(48)
+        .margin_end(48)
+        .build();
+    page.append(&top);
+    page.append(&tiles.grid);
+    adw::Clamp::builder()
+        .maximum_size(1200)
+        .tightening_threshold(1000)
+        .child(&page)
+        .build()
 }
 
 fn column(children: &[gtk4::Widget]) -> gtk4::Box {
