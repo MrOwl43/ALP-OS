@@ -41,8 +41,10 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   `alp-index` (contract); the seed carries the whole pool plan (contract, reader in `alp_hw::firstboot`);
   `alp_storage::seed_check` + `alp_storage::pool` (LUKS2 per member, Btrfs dup/raid1, resumable, degraded
   = read-only); `alp_live::pool` (key in the index, @archive at the archive place, @immich at Immich's
-  data folder); API `POST live/archive/create-pool`, state `pool`. T-INST-02 written (CI pending).
-- Next: T-INST-02 green; native setup screens (password, pool progress, recovery, phone) on alp-screen;
+  data folder); API `POST live/archive/create-pool`, state `pool`. T-INST-02 passes in CI (2026-11-25,
+  run 45641929679): two data disks become RAID1, file written, reopens after restart with the TPM,
+  read-only and readable with one data disk missing.
+- Next: home screen names a missing pool disk (ALP-STO-001); native setup screens (password, pool progress, recovery, phone) on alp-screen;
   check gallery and phone approval on the native screen in a VM; code review of installer + pool
   (encryption/storage: opus reviewer) before the PR; `/claude-security` scan before release.
 
