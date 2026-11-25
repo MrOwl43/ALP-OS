@@ -652,11 +652,22 @@ fn install_start_files(x: &mut Exec<'_>, esp: &str, stick_esp: &str) -> Result<(
         .and_then(|_| {
             let r = (|| {
                 // Firmware entry where the firmware allows it; the fallback
-                // path EFI/BOOT/BOOTX64.EFI is written either way.
+                // path EFI/BOOT/BOOTX64.EFI is written either way. The
+                // start file is a UKI in EFI/Linux, so no entry directory
+                // and no entry token: bootctl would write the token to the
+                // read-only /etc/kernel/entry-token (bootctl-install.c v257,
+                // install_entry_token: skipped only for machine-id + no
+                // entry directory).
                 x.run(
                     CODE_COPY,
                     "bootctl",
-                    &owned(&["install", "--graceful", &format!("--esp-path={dir}")]),
+                    &owned(&[
+                        "install",
+                        "--graceful",
+                        "--entry-token=machine-id",
+                        "--make-entry-directory=no",
+                        &format!("--esp-path={dir}"),
+                    ]),
                     None,
                 )?;
                 let uki = pick_uki(
@@ -728,7 +739,10 @@ mod tests {
 
     /// A stick ESP with two start files; the running one carries `abc`.
     fn stick_esp() -> String {
-        let dir = std::env::temp_dir().join(format!("alp-inst-esp-{}", std::process::id()));
+        // One directory per call: tests run in parallel.
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("alp-inst-esp-{}-{n}", std::process::id()));
         let linux = dir.join("EFI/Linux");
         std::fs::create_dir_all(&linux).unwrap();
         std::fs::write(linux.join("alp-os-6.12-1.efi"), b"MZ.. roothash=abc ..").unwrap();
