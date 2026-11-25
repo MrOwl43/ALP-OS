@@ -525,6 +525,10 @@ pub fn execute(
                     profile: cfg.profile.clone(),
                     protection_tier: "standard".into(),
                     members: seed_members,
+                    data_profile: pool.data_profile,
+                    metadata_profile: pool.metadata_profile,
+                    usable_bytes: pool.usable_bytes,
+                    protection: pool.protection,
                     confirmed_at: cfg.confirmed_at.clone(),
                     plan_digest: digester.digest(&pool),
                 });

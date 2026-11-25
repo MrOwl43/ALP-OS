@@ -235,6 +235,39 @@ pub enum Protection {
     DiskFailure,
 }
 
+impl RaidProfile {
+    /// Stable lower-case name (the `mkfs.btrfs -d/-m` value and the seed
+    /// and digest spelling).
+    pub fn name(self) -> &'static str {
+        digest::profile(self)
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        [
+            Self::Single,
+            Self::Dup,
+            Self::Raid1,
+            Self::Raid1c3,
+            Self::Raid10,
+        ]
+        .into_iter()
+        .find(|p| p.name() == s)
+    }
+}
+
+impl Protection {
+    /// Stable name (seed and digest spelling).
+    pub fn name(self) -> &'static str {
+        digest::protection(self)
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        [Self::None, Self::BitRotOnly, Self::DiskFailure]
+            .into_iter()
+            .find(|p| p.name() == s)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PoolPlan {
     pub members: Vec<PoolMember>,

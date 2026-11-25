@@ -20,6 +20,10 @@ format_version = 1
 installer_version = "2026.10.17.1"
 profile = "generic-x86_64"
 protection_tier = "standard"
+data_profile = "dup"          # single | dup | raid1 | raid1c3 | raid10
+metadata_profile = "dup"
+usable_bytes = 240000000000
+protection = "bit-rot-only"   # none | bit-rot-only | disk-failure
 confirmed_at = "2026-10-17T09:30:00Z"
 plan_digest = "<64 hex digits>"
 
@@ -37,8 +41,11 @@ partition_uuid = "1b4e28ba-2fa1-11d2-883f-0016d3cca427"
    serial or size differs, its partition UUID is not an `alp-data`
    partition, or `alp_hw::safety::check_member` refuses it, first boot stops
    with `ALP-INST-005` and writes nothing.
-3. First boot recomputes the plan digest from the rediscovered members and
-   requires it to equal `plan_digest`; then it writes
+3. First boot rebuilds the `PoolPlan` from the rediscovered members plus
+   `data_profile`, `metadata_profile`, `usable_bytes` and `protection`
+   (added 2026-11-25: without them the plan, and so the digest, could not
+   be rebuilt), recomputes the plan digest and requires it to equal
+   `plan_digest`; then it writes
    `LedgerEvent::FirstBoot` followed by
    `LedgerEvent::OperationConfirmed { action: "create-pool", plan_digest }`
    (with `confirmed_at` in the payload) and builds the `Confirmed<PoolPlan>`
@@ -48,5 +55,7 @@ partition_uuid = "1b4e28ba-2fa1-11d2-883f-0016d3cca427"
 5. The installer creates the `alp-data` partition on every member (dedicated
    data disks too, with `image/install-layout/data-disk/`), so partition
    UUIDs are known and the members are `PoolMember::ExistingPartition`.
-6. The installer and first boot compute `plan_digest` with the single
+6. The TOML is written and read only by `FirstbootSeed::to_toml` and
+   `FirstbootSeed::from_toml` (alp-core).
+7. The installer and first boot compute `plan_digest` with the single
    implementation in `alp-hw` (`PlanDigest`), so both get the same value.

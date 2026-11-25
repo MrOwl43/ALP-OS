@@ -19,10 +19,11 @@ alp-live.workspace = true
 serde_json.workspace = true
 # Wipes Wi-Fi passwords from memory after use.
 zeroize.workspace = true
+# The first-boot seed file (firstboot.rs), same pinned version as alp-live.
+toml.workspace = true
 
 [dev-dependencies]
 serde.workspace = true
-toml.workspace = true
 
 [lints]
 workspace = true
