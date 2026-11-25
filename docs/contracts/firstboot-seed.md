@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 # Contract: installer → first boot hand-off
 
-Source of truth: `alp_core::firstboot::FirstbootSeed`
-(`crates/alp-core/src/firstboot.rs`). File: `paths().firstboot_seed`
+Source of truth: `alp_hw::firstboot::FirstbootSeed` (re-exported as `alp_core::firstboot`)
+(`crates/alp-hw/src/firstboot.rs`). File: `paths().firstboot_seed`
 (`/var/lib/alp/firstboot-seed.toml` on the installed `state` partition),
 mode 0600, owner alpd.
 
@@ -56,6 +56,6 @@ partition_uuid = "1b4e28ba-2fa1-11d2-883f-0016d3cca427"
    data disks too, with `image/install-layout/data-disk/`), so partition
    UUIDs are known and the members are `PoolMember::ExistingPartition`.
 6. The TOML is written and read only by `FirstbootSeed::to_toml` and
-   `FirstbootSeed::from_toml` (alp-core).
+   `FirstbootSeed::from_toml` (alp-hw).
 7. The installer and first boot compute `plan_digest` with the single
    implementation in `alp-hw` (`PlanDigest`), so both get the same value.

@@ -14,6 +14,8 @@ alp-crypto.workspace = true
 serde_json.workspace = true
 # SHA3-256 of the canonical plan encoding (PlanDigest; pinned in the workspace).
 sha3.workspace = true
+# The first-boot seed file (firstboot.rs; pinned in the workspace).
+toml.workspace = true
 
 [lints]
 workspace = true

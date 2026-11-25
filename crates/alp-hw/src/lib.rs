@@ -17,6 +17,7 @@ use std::path::PathBuf;
 
 pub use alp_crypto::{KeySealBackend, PoolKey, SealCapability, SealedBlob, Secret};
 
+pub mod firstboot;
 pub mod inspect;
 pub mod profile;
 pub mod safety;
