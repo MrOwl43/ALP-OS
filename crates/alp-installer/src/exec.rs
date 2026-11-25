@@ -443,6 +443,15 @@ pub fn execute(
                         &owned(&["--part-label", &dev, &(n + 1).to_string(), UNFINISHED_LABEL]),
                         None,
                     )?;
+                    // sfdisk makes the kernel and udev read the table again:
+                    // the by-partuuid links the next steps use come back
+                    // only after this.
+                    x.run(
+                        CODE_PARTITION,
+                        "udevadm",
+                        &owned(&["settle", "--timeout=30"]),
+                        None,
+                    )?;
                 }
                 parts.push((disk.clone(), got));
                 // Every partition UUID must be new and unique: pool members
@@ -1018,6 +1027,7 @@ mod tests {
                 "udevadm",
                 "lsblk",  // sda
                 "sfdisk", // ESP marked "install not finished"
+                "udevadm",
                 "systemd-repart",
                 "udevadm",
                 "lsblk", // sde
@@ -1062,7 +1072,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            m.calls[6].1[4],
+            m.calls[7].1[4],
             "--definitions=/usr/lib/alp/install-layout/data-disk"
         );
         // Only the three planned disks are ever named.
@@ -1075,16 +1085,16 @@ mod tests {
             );
         }
         // The seed goes to the new alp-state, with both members.
-        let (_, args, _) = &m.calls[13];
+        let (_, args, _) = &m.calls[14];
         assert_eq!(args[..4], ["-t", "vfat", "-o", "ro,nodev,nosuid,noexec"]);
         assert_eq!(args[4], "/dev/sdc1");
-        let (_, args, _) = &m.calls[16];
+        let (_, args, _) = &m.calls[17];
         assert!(args[3].ends_with("/loader/loader.conf"), "{args:?}");
         assert_eq!(args[4], "/run/alp-installer/esp/loader/loader.conf");
-        let (_, args, _) = &m.calls[17];
+        let (_, args, _) = &m.calls[18];
         assert!(args[3].ends_with("EFI/Linux/alp-os-6.12-1.efi"), "{args:?}");
         assert_eq!(args[4], "/run/alp-installer/esp/EFI/Linux/alp-os_0.2.8.efi");
-        let (_, args, stdin) = &m.calls[23];
+        let (_, args, stdin) = &m.calls[24];
         assert_eq!(args[..3], ["-m", "0600", "/dev/stdin"]);
         assert_eq!(args[3], "/run/alp-installer/state/firstboot-seed.toml");
         let seed: toml::Table = stdin.as_deref().unwrap().parse().unwrap();

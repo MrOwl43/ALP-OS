@@ -179,8 +179,11 @@ image_before=$(sha256sum "$image" | cut -d' ' -f1)
 # shellcheck disable=SC2016  # the $(...) must reach the guest literally
 probe3='-/usr/bin/sh -c "test -s /var/lib/alp/firstboot-seed.toml && echo SEED=yes || echo SEED=no"
 -/usr/bin/sh -c "s=$(readlink -f /dev/disk/by-id/virtio-ALPSTICK01); d=$(lsblk -no PKNAME $(findmnt -no SOURCE /var/lib/alp)); test /dev/$d = $s && echo STATE-ON-STICK=yes || echo STATE-ON-STICK=no"
--/usr/bin/sh -c "s=$(basename $(readlink -f /dev/disk/by-id/virtio-ALPSTICK01)); lsblk -rnso NAME /dev/mapper/root | grep -qx $s && echo ROOT-ON-STICK=yes || echo ROOT-ON-STICK=no"'
-args3="$args2 -drive if=none,id=stk,format=raw,readonly=on,file=$image -device virtio-blk-pci,drive=stk,serial=ALPSTICK01"
+-/usr/bin/sh -c "s=$(basename $(readlink -f /dev/disk/by-id/virtio-ALPSTICK01)); lsblk -rnso NAME /dev/mapper/root | grep -qx $s && echo ROOT-ON-STICK=yes || echo ROOT-ON-STICK=no"
+-/usr/bin/sh -c "bootctl status 2>/dev/null | grep -i partition | sed s/^/BOOT-FROM=/; lsblk -rno NAME,PARTUUID,PARTLABEL | sed s/^/PARTS=/"'
+# The stick sits on the last PCI slot, so fresh firmware starts the installed
+# disk (a -device without addr= may get a lower slot than the main disk).
+args3="$args2 -drive if=none,id=stk,format=raw,readonly=on,file=$image -device virtio-blk-pci,drive=stk,serial=ALPSTICK01,addr=0x1e"
 status=0
 out=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe3" ALP_PROBE_DELAY=5 ALP_QEMU_ARGS="$args3" ALP_OVERLAY_SIZE=64G \
     "$here/run-vm.sh" "$target" 600) || status=$?
