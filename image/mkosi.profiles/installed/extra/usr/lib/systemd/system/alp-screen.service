@@ -39,6 +39,11 @@ RestartSec=3
 TimeoutStopSec=10s
 NoNewPrivileges=yes
 ProtectSystem=strict
+# pam_systemd gives the session XDG_RUNTIME_DIR=/run/user/<uid> before the
+# sandbox is set up; ProtectSystem=strict made it read-only, so cage could
+# not create its Wayland socket and the screen stayed black ("Unable to open
+# Wayland socket", T-SCREEN-01, CI 2026-11-25). %U: the uid of User=.
+ReadWritePaths=-/run/user/%U
 ProtectHome=yes
 PrivateTmp=yes
 
