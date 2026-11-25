@@ -19,6 +19,9 @@ use crate::{HwError, Result};
 
 /// The disk list could not be read (stream D range, `errors/catalog.toml`).
 pub const CODE_DISK_LIST: &str = "ALP-INST-400";
+/// ESP label of a system disk while the installer writes it; the last
+/// install step sets it back to `esp` (crates/alp-installer exec.rs).
+pub const UNFINISHED_LABEL: &str = "alp-installing";
 
 // ------------------------------------------------------------ GPT types
 // Upper case, as normalised by the parser.
@@ -471,6 +474,27 @@ fn partition_systems(p: &Partition, windows_disk: bool, out: &mut Vec<System>) {
     }
 }
 
+/// An install of ALP-OS that stopped before its last step: the ESP still
+/// carries [`UNFINISHED_LABEL`], every partition is one the installer makes,
+/// and nothing is encrypted (a finished system's index and archive are
+/// LUKS; an unfinished one never got that far). The next try may erase it
+/// (strong confirmation), instead of the disk being greyed out for good.
+pub fn unfinished_install(d: &Disk) -> bool {
+    let ours = |p: &Partition| {
+        let l = p.label.as_str();
+        (l == UNFINISHED_LABEL && gpt(p) == Some(ESP))
+            || (l.starts_with("alp-os_") && in_list(gpt(p), LINUX_SYSTEM))
+            || (l == "_empty" && in_list(gpt(p), LINUX_SYSTEM))
+            || matches!(l, "alp-state" | "alp-index" | "alp-data")
+    };
+    d.table == "gpt"
+        && d.fstype.is_empty()
+        && d.partitions.iter().any(|p| p.label == UNFINISHED_LABEL)
+        && d.partitions
+            .iter()
+            .all(|p| ours(p) && p.fstype != "crypto_LUKS" && !is_group_member(p) && !p.mounted)
+}
+
 /// The most specific operating system on the disk, if any (plan (b)).
 pub fn find_system(d: &Disk) -> Option<System> {
     let windows_disk = d
@@ -715,13 +739,14 @@ fn verdict(d: &Disk, ctx: &Context, stick_found: bool) -> Verdict {
     if d.read_only {
         return no(Reason::ReadOnly);
     }
-    if let Some(s) = find_system(d) {
+    let unfinished = unfinished_install(d);
+    if !unfinished && let Some(s) = find_system(d) {
         return no(Reason::HoldsSystem(s));
     }
     if is_group_fstype(&d.fstype) || d.partitions.iter().any(is_group_member) {
         return no(Reason::DiskGroup);
     }
-    if d.partitions.iter().any(|p| p.label == "alp-data") {
+    if !unfinished && d.partitions.iter().any(|p| p.label == "alp-data") {
         return no(Reason::AlpArchive);
     }
     if d.fstype == "crypto_LUKS" || d.partitions.iter().any(|p| p.fstype == "crypto_LUKS") {
@@ -755,7 +780,11 @@ fn verdict(d: &Disk, ctx: &Context, stick_found: bool) -> Verdict {
     }
     Verdict::Usable {
         roles,
-        contents: contents(d),
+        contents: if unfinished {
+            Contents::Files(vec!["an unfinished ALP-OS install".into()])
+        } else {
+            contents(d)
+        },
     }
 }
 
@@ -961,6 +990,35 @@ mod tests {
         assert_eq!(reason_of(&l, "sda"), Reason::HoldsSystem(System::AlpOs));
         // alp-data holds LUKS: the archive reason wins over "encrypted".
         assert_eq!(reason_of(&l, "sdb"), Reason::AlpArchive);
+    }
+
+    #[test]
+    fn an_unfinished_install_can_be_erased_again() {
+        let unfinished = fixture("alp")
+            .replacen(
+                "\"partlabel\": \"esp\"",
+                "\"partlabel\": \"alp-installing\"",
+                1,
+            )
+            .replacen(
+                "\"partlabel\": \"alp-state\", \"partflags\": null, \"fstype\": \"crypto_LUKS\"",
+                "\"partlabel\": \"alp-state\", \"partflags\": null, \"fstype\": \"ext4\"",
+                1,
+            );
+        let l = discover(&unfinished, &ctx(Some("sdc"))).unwrap();
+        let (_, contents) = usable(&l, "sda");
+        assert!(contents.will_erase_files(), "strong confirmation");
+        // The mark alone is not enough: something encrypted stays greyed.
+        let luks = fixture("alp").replacen(
+            "\"partlabel\": \"esp\"",
+            "\"partlabel\": \"alp-installing\"",
+            1,
+        );
+        let l = discover(&luks, &ctx(Some("sdc"))).unwrap();
+        assert_eq!(reason_of(&l, "sda"), Reason::HoldsSystem(System::AlpOs));
+        // A finished system (ESP labelled esp) stays greyed.
+        let l = run("alp", Some("sdc"));
+        assert_eq!(reason_of(&l, "sda"), Reason::HoldsSystem(System::AlpOs));
     }
 
     #[test]

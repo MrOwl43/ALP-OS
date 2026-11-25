@@ -84,6 +84,8 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   ESP named by systemd-boot's LoaderDevicePartUUID (alp-hw inspect), so state, index and keys come from
   the disk that started even when udev reads the identical root from the stick; the home screen then
   says to remove the stick and restart (ALP-BOOT-002). T-INST-01 part 3 starts with the stick in.
+- Failed install (review item 4): the ESP is labelled `alp-installing` until the last install step;
+  such a disk (installer partitions only, nothing encrypted) is offered again with the strong confirm.
 - Owner (2026-11-25): no interim laptop build; he tests the finished product on old and new laptops.
 - Next: T-SCREEN-01 VM test of the native setup
   screens; review items 4 and 5; PR with the owner's OK; `/claude-security` scan before release.

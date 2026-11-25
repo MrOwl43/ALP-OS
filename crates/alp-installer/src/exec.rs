@@ -44,6 +44,8 @@ pub const CODE_PARTITION: &str = "ALP-INST-404";
 pub const CODE_COPY: &str = "ALP-INST-405";
 /// Writing the first-boot seed failed.
 pub const CODE_SEED: &str = "ALP-INST-406";
+/// ESP label while an install runs (see `alp_hw::inspect::blockdev`).
+pub const UNFINISHED_LABEL: &str = alp_hw::inspect::blockdev::UNFINISHED_LABEL;
 /// This installer cannot finish an install yet (the pool plan digest of
 /// block 4 is missing).
 pub const CODE_NOT_READY: &str = "ALP-INST-407";
@@ -428,6 +430,20 @@ pub fn execute(
                         format!("{dev}: partitions {labels:?}, expected {want:?}"),
                     ));
                 }
+                // A system disk carries the "install not finished" mark
+                // (its ESP labelled `alp-installing`) until the last step,
+                // so a failed install can be erased again by the next try
+                // (alp_hw blockdev: unfinished_install) instead of being
+                // greyed out as an ALP-OS system. Fresh table: partition
+                // numbers follow the layout order.
+                if let Some(n) = got.iter().position(|p| p.label == "esp") {
+                    x.run(
+                        CODE_PARTITION,
+                        "sfdisk",
+                        &owned(&["--part-label", &dev, &(n + 1).to_string(), UNFINISHED_LABEL]),
+                        None,
+                    )?;
+                }
                 parts.push((disk.clone(), got));
                 // Every partition UUID must be new and unique: pool members
                 // are found by it (repart's --seed=random, VERIFY).
@@ -552,6 +568,22 @@ pub fn execute(
                     x.run(CODE_SEED, "sync", &owned(&["-f", &file]), None)?;
                 }
             }
+        }
+    }
+    // Everything is written: the ESP gets its contract label back.
+    for (disk, got) in &parts {
+        if let Some(n) = got.iter().position(|p| p.label == "esp") {
+            x.run(
+                CODE_SEED,
+                "sfdisk",
+                &owned(&[
+                    "--part-label",
+                    &format!("/dev/{disk}"),
+                    &(n + 1).to_string(),
+                    "esp",
+                ]),
+                None,
+            )?;
         }
     }
     x.step = plan.steps.len();
@@ -984,7 +1016,8 @@ mod tests {
                 "lsblk", // preflight: list, identities
                 "systemd-repart",
                 "udevadm",
-                "lsblk", // sda
+                "lsblk",  // sda
+                "sfdisk", // ESP marked "install not finished"
                 "systemd-repart",
                 "udevadm",
                 "lsblk", // sde
@@ -1005,8 +1038,17 @@ mod tests {
                 "install",
                 "sync",
                 "umount",
+                "sfdisk", // ESP label back: finished
             ]
         );
+        let sf: Vec<_> = m
+            .calls
+            .iter()
+            .filter(|c| c.0 == "sfdisk")
+            .map(|c| c.1.clone())
+            .collect();
+        assert_eq!(sf[0], ["--part-label", "/dev/sda", "1", "alp-installing"]);
+        assert_eq!(sf[1], ["--part-label", "/dev/sda", "1", "esp"]);
         let repart = &m.calls[2].1;
         assert_eq!(
             repart,
@@ -1020,7 +1062,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            m.calls[5].1[4],
+            m.calls[6].1[4],
             "--definitions=/usr/lib/alp/install-layout/data-disk"
         );
         // Only the three planned disks are ever named.
@@ -1033,16 +1075,16 @@ mod tests {
             );
         }
         // The seed goes to the new alp-state, with both members.
-        let (_, args, _) = &m.calls[12];
+        let (_, args, _) = &m.calls[13];
         assert_eq!(args[..4], ["-t", "vfat", "-o", "ro,nodev,nosuid,noexec"]);
         assert_eq!(args[4], "/dev/sdc1");
-        let (_, args, _) = &m.calls[15];
+        let (_, args, _) = &m.calls[16];
         assert!(args[3].ends_with("/loader/loader.conf"), "{args:?}");
         assert_eq!(args[4], "/run/alp-installer/esp/loader/loader.conf");
-        let (_, args, _) = &m.calls[16];
+        let (_, args, _) = &m.calls[17];
         assert!(args[3].ends_with("EFI/Linux/alp-os-6.12-1.efi"), "{args:?}");
         assert_eq!(args[4], "/run/alp-installer/esp/EFI/Linux/alp-os_0.2.8.efi");
-        let (_, args, stdin) = &m.calls[22];
+        let (_, args, stdin) = &m.calls[23];
         assert_eq!(args[..3], ["-m", "0600", "/dev/stdin"]);
         assert_eq!(args[3], "/run/alp-installer/state/firstboot-seed.toml");
         let seed: toml::Table = stdin.as_deref().unwrap().parse().unwrap();
