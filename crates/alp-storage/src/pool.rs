@@ -472,24 +472,17 @@ pub fn test_recovery(r: &mut dyn Run, dev: &str, secret: &str, slot: u8) -> Resu
     }
 }
 
-/// Does `secret` (the recovery code's unlock secret) open any key slot of
-/// `dev`? Nothing is opened (`--test-passphrase`); the secret comes on
-/// stdin as one line, as when it was added.
-pub fn opens_with_recovery(r: &mut dyn Run, dev: &str, secret: &str) -> Result<bool> {
-    let mut input = Zeroizing::new(secret.as_bytes().to_vec());
-    input.push(b'\n');
-    let out = r.run(
-        "cryptsetup",
-        &owned(&["open", "--test-passphrase", dev]),
-        Some(&input),
-    );
-    if out.ok {
-        Ok(true)
-    } else if out.stderr.contains("No key available") {
-        Ok(false)
-    } else {
-        Err(err(CODE_OPEN, &format!("test {dev}"), &out))
+/// Does `secret` open one of the recovery slots (1 or 2) of `dev`? Only
+/// those count before a reopen clears slot 0: words that opened slot 0
+/// alone would leave the member with no way in after the clear.
+pub fn recovery_slot_opens(r: &mut dyn Run, dev: &str, secret: &str) -> Result<bool> {
+    let used = keyslots(r, dev)?;
+    for slot in RECOVERY_SLOTS {
+        if used.contains(&slot) && test_recovery(r, dev, secret, slot)? {
+            return Ok(true);
+        }
     }
+    Ok(false)
 }
 
 /// Does the pool key open slot 0 of `dev`?
@@ -506,9 +499,11 @@ fn opens_with_key(r: &mut dyn Run, dev: &str, key: &[u8]) -> Result<bool> {
         ]),
         Some(key),
     );
+    // An empty slot 0 (power cut after luksKillSlot): cryptsetup 2.7 says
+    // "No usable keyslot is available." instead (review 2026-11-25).
     if out.ok {
         Ok(true)
-    } else if out.stderr.contains("No key available") {
+    } else if out.stderr.contains("No key available") || out.stderr.contains("No usable keyslot") {
         Ok(false)
     } else {
         Err(err(CODE_OPEN, &format!("test {dev}"), &out))
@@ -517,7 +512,8 @@ fn opens_with_key(r: &mut dyn Run, dev: &str, key: &[u8]) -> Result<bool> {
 
 /// Reopen after losing the system disk (docs/plans/0.2.8-reopen-archive.md):
 /// give member `dev` the new pool `key` in slot 0, authorised by `secret`
-/// (the caller has checked that `secret` opens every member first). The
+/// (the caller has checked that `secret` opens a recovery slot of every
+/// member first; checked again here before slot 0 is cleared). The
 /// old slot 0 key went with the lost index, so slot 0 is cleared first;
 /// the recovery slots stay, so after a power cut between the two steps the
 /// words still open the member and a new try finishes it. Already done
@@ -546,10 +542,25 @@ pub fn rekey_with_recovery(
             detail: "the pool key file is not 64 bytes".into(),
         });
     }
-    if opens_with_key(r, dev, &key)? {
+    // A key file left by a run killed during luksAddKey (tmpfs, 0600).
+    if let Ok(dir) = std::fs::read_dir(tmp_dir) {
+        for e in dir.flatten() {
+            if e.file_name().to_string_lossy().starts_with(".new-key-") {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    let used = keyslots(r, dev)?;
+    if used.contains(&0) && opens_with_key(r, dev, &key)? {
         return Ok(());
     }
-    if keyslots(r, dev)?.contains(&0) {
+    if !recovery_slot_opens(r, dev, secret)? {
+        return Err(HwError {
+            code: CODE_OPEN,
+            detail: format!("the recovery words open no recovery slot of {dev}"),
+        });
+    }
+    if used.contains(&0) {
         let out = r.run(
             "cryptsetup",
             &owned(&["luksKillSlot", "--batch-mode", dev, "0"]),
@@ -667,6 +678,8 @@ mod tests {
         key_wrong: HashSet<String>,
         /// `--test-passphrase` with the recovery words fails on these.
         words_wrong: HashSet<String>,
+        /// `luksDump` key slot lines for these (default: slot 0 only).
+        dump: HashMap<String, String>,
     }
 
     impl Mock {
@@ -719,7 +732,9 @@ mod tests {
                     },
                 },
                 "cryptsetup" if a(0) == "luksDump" => {
-                    if self.no_slots.contains(a(1)) {
+                    if let Some(d) = self.dump.get(a(1)) {
+                        ok(&format!("Keyslots:\n{d}Tokens:\n"))
+                    } else if self.no_slots.contains(a(1)) {
                         ok("Keyslots:\nTokens:\n")
                     } else {
                         ok("Keyslots:\n  0: luks2\n")
@@ -749,6 +764,14 @@ mod tests {
                 "cryptsetup" if a(0) == "open" && a(1) == "--test-passphrase" => {
                     let dev = args.last().unwrap().clone();
                     let by_key = args.iter().any(|x| x == "--key-file=-");
+                    let slot0 = args.iter().any(|x| x == "--key-slot=0");
+                    if slot0 && self.dump.get(&dev).is_some_and(|d| !d.contains("  0: ")) {
+                        return Out {
+                            ok: false,
+                            stdout: String::new(),
+                            stderr: "No usable keyslot is available.".into(),
+                        };
+                    }
                     let wrong = if by_key {
                         self.key_wrong.contains(&dev)
                     } else {
@@ -1075,22 +1098,49 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("alp-rekey-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let key = PoolKey::generate().unwrap();
+        let both = "  0: luks2\n  1: luks2\n";
+        let ops = |m: &Mock| -> Vec<String> {
+            m.ran("cryptsetup")
+                .into_iter()
+                .map(|a| a[0].clone())
+                .collect()
+        };
         let mut m = Mock::default();
+        m.dump.insert("/dev/vdb1".into(), both.into());
+        m.dump.insert("/dev/vdc1".into(), both.into());
         m.words_wrong.insert("/dev/vdc1".into());
-        assert!(opens_with_recovery(&mut m, "/dev/vdb1", "s3cret").unwrap());
-        assert!(!opens_with_recovery(&mut m, "/dev/vdc1", "s3cret").unwrap());
-        // Slot 0 holds the lost index's key: cleared, then the new key added.
+        assert!(recovery_slot_opens(&mut m, "/dev/vdb1", "s3cret").unwrap());
+        assert!(!recovery_slot_opens(&mut m, "/dev/vdc1", "s3cret").unwrap());
+        // Only a recovery slot counts: words never tested on slot 0.
+        assert!(
+            !m.ran("cryptsetup")
+                .iter()
+                .any(|a| a.contains(&"--key-slot=0".to_string()))
+        );
+        // Words that open no recovery slot: slot 0 is never cleared.
+        m.key_wrong.insert("/dev/vdc1".into());
+        m.calls.clear();
+        assert!(rekey_with_recovery(&mut m, "/dev/vdc1", "s3cret", &key, &tmp).is_err());
+        assert!(!ops(&m).contains(&"luksKillSlot".to_string()));
+        // Slot 0 holds the lost index's key: cleared, then the new key
+        // added; a key file left by a killed run is removed first.
+        std::fs::write(tmp.join(".new-key-1"), b"old").unwrap();
         m.key_wrong.insert("/dev/vdb1".into());
         m.calls.clear();
         m.key_seen.clear();
         rekey_with_recovery(&mut m, "/dev/vdb1", "s3cret", &key, &tmp).unwrap();
-        let cs: Vec<_> = m
-            .ran("cryptsetup")
-            .into_iter()
-            .map(|a| a[0].clone())
-            .collect();
-        assert_eq!(cs, ["open", "luksDump", "luksKillSlot", "luksAddKey"]);
-        let add = m.ran("cryptsetup")[3].clone();
+        assert_eq!(
+            ops(&m),
+            [
+                "luksDump",
+                "open",
+                "luksDump",
+                "open",
+                "luksKillSlot",
+                "luksAddKey"
+            ]
+        );
+        let add = m.ran("cryptsetup")[5].clone();
         assert!(add.contains(&"--new-key-slot=0".to_string()), "{add:?}");
         assert!(add.iter().any(|a| a.starts_with("--new-keyfile=")));
         // The secret only on stdin; the key file is gone afterwards.
@@ -1101,18 +1151,15 @@ mod tests {
         m.key_wrong.clear();
         m.calls.clear();
         rekey_with_recovery(&mut m, "/dev/vdb1", "s3cret", &key, &tmp).unwrap();
-        assert_eq!(m.ran("cryptsetup").len(), 1, "only the check");
-        // Cut after the kill: slot 0 empty, the add still happens.
+        assert_eq!(ops(&m), ["luksDump", "open"], "only the checks");
+        // Cut after the kill: slot 0 empty ("No usable keyslot" from the
+        // key test is "does not open"), the add still happens.
         let mut m = Mock::default();
-        m.key_wrong.insert("/dev/vdb1".into());
-        m.no_slots.insert("/dev/vdb1".into());
+        m.dump.insert("/dev/vdb1".into(), "  1: luks2\n".into());
+        assert!(!opens_with_key(&mut m, "/dev/vdb1", &key_bytes(&key)).unwrap());
+        m.calls.clear();
         rekey_with_recovery(&mut m, "/dev/vdb1", "s3cret", &key, &tmp).unwrap();
-        let cs: Vec<_> = m
-            .ran("cryptsetup")
-            .into_iter()
-            .map(|a| a[0].clone())
-            .collect();
-        assert_eq!(cs, ["open", "luksDump", "luksAddKey"]);
+        assert_eq!(ops(&m), ["luksDump", "luksDump", "open", "luksAddKey"]);
         assert!(rekey_with_recovery(&mut m, "/dev/vdb1", "a\nb", &key, &tmp).is_err());
         let _ = std::fs::remove_dir_all(&tmp);
     }

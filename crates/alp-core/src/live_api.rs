@@ -2787,6 +2787,12 @@ impl Live {
                 "There is no disk plan from the installation to set up.",
             ));
         }
+        if pool::seed_reopen() {
+            return Err(Fail::new(
+                "archive.reopen_needed",
+                "These disks hold an archive: type its 15 recovery words to open it.",
+            ));
+        }
         let job = Job::start(
             "archive.create",
             "preparing",

@@ -312,6 +312,13 @@ pub fn create(say: &mut dyn FnMut(&str)) -> Result<(), HwError> {
     }
     let text = fs::read_to_string(SEED).map_err(|e| fail(format!("no first-boot seed: {e}")))?;
     let seed = FirstbootSeed::from_toml(&text).map_err(fail)?;
+    if seed.reopen {
+        // These disks hold an archive: they are opened with the recovery
+        // words (`reopen`), never made into a new pool.
+        return Err(fail(
+            "the installation chose an archive to open with the recovery words".into(),
+        ));
+    }
     say("Checking your disks…");
     let _ = run("udevadm", &["settle", "--timeout=30"]);
     let disks = inspect::inspect(&inspect::Roots::system()).disks;
@@ -350,11 +357,11 @@ pub fn create(say: &mut dyn FnMut(&str)) -> Result<(), HwError> {
     Ok(())
 }
 
-/// The installer left a seed to open an old archive with the recovery words
-/// (docs/plans/0.2.8-reopen-archive.md).
 /// Catalog code of a failed `archive.reopen` job (wrong words included).
 pub const CODE_REOPEN: &str = "ALP-STO-126";
 
+/// The installer left a seed to open an old archive with the recovery words
+/// (docs/plans/0.2.8-reopen-archive.md).
 pub fn seed_reopen() -> bool {
     seed_waiting()
         && fs::read_to_string(SEED)
@@ -426,7 +433,7 @@ pub fn reopen(secret: &str, say: &mut dyn FnMut(&str)) -> Result<(), String> {
     say("Checking your recovery code…");
     // Every member first: a wrong code never changes any disk.
     for d in &devs {
-        if !pool::opens_with_recovery(&mut System, d, secret).map_err(|e| e.to_string())? {
+        if !pool::recovery_slot_opens(&mut System, d, secret).map_err(|e| e.to_string())? {
             return Err(crate::archive::RECOVERY_WRONG.into());
         }
     }
@@ -456,9 +463,21 @@ pub fn reopen(secret: &str, say: &mut dyn FnMut(&str)) -> Result<(), String> {
     // database is set aside (kept), so the photo service starts a new one
     // and puts the newest backup from the archive back (ADR 0025,
     // crate::immich_restore).
+    // A unique name each time: the system disk may be lost again later.
+    // After a cut here the new start finds no `postgres` (the photo service
+    // starts only once the record exists), so nothing is moved twice.
+    for sv in pool::SUBVOLUMES {
+        let p = Path::new(TOP_MNT).join(sv);
+        if !p.is_dir() {
+            run("btrfs", &["subvolume", "create", &p.to_string_lossy()])?;
+        }
+    }
     let pg = Path::new(TOP_MNT).join("@immich/postgres");
-    let kept = Path::new(TOP_MNT).join("@immich/postgres.before-reopen");
-    if pg.exists() && !kept.exists() {
+    if pg.exists() {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let kept = Path::new(TOP_MNT).join(format!("@immich/postgres.before-reopen-{secs}"));
         fs::rename(&pg, &kept).map_err(|e| e.to_string())?;
     }
     show_archive(false)?;
