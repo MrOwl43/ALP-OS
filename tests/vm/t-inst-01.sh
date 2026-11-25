@@ -124,7 +124,7 @@ probe2='-/usr/bin/sh -c "lsblk -rnso PARTLABEL /dev/mapper/root | tr -s [:space:
 -/usr/bin/sh -c "test -s /var/lib/alp/firstboot-seed.toml && echo SEED=yes || echo SEED=no"'
 args2="-drive if=none,id=win,format=raw,file=$windows -device virtio-blk-pci,drive=win,serial=ALPWINDOWS01"
 status=0
-out=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe2" ALP_PROBE_DELAY=5 ALP_QEMU_ARGS="$args2" \
+out=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe2" ALP_PROBE_DELAY=5 ALP_QEMU_ARGS="$args2" ALP_OVERLAY_SIZE=64G \
     "$here/run-vm.sh" "$target" 600) || status=$?
 echo "$out"
 (( status == 0 )) || { echo "FAIL: T-INST-01 (the installed disk did not start)" >&2; exit 1; }
