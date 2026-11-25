@@ -33,9 +33,9 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
 - Done since: notes (1), (3), (4), (5) fixed; (6) native home is an uneven grid of tiles (screenshot
   checked); (2) rule written (`installed_backup_disk`) and the backup-disk plan changed to exFAT, the
   backup job itself comes with the backup role. Image profiles `live` / `installed` build in CI;
-  T-INST-01 in CI (first run picked the wrong disk: kernel names follow PCI order; test now uses the
-  disk serial).
-- Next: T-INST-01 green; gallery view and phone-pairing approval on the native screen; install-time
+  T-INST-01 passes in CI (2026-11-25): Windows disk greyed and unchanged, the target gets the contract
+  layout, slot 1 filled by repart CopyBlocks=auto, systemd-boot + the running UKI on the new ESP.
+- Next: a test that boots the installed disk without the stick (first boot, seed, pool); gallery view and phone-pairing approval on the native screen; install-time
   sysupdate definitions; code review of digest + installer before the PR.
 
 ## Alpha 0.2.7 (started 2026-11-15, same branch, on top of 0.2.61)
