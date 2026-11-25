@@ -181,6 +181,9 @@ pub mod install {
         pub contents: Vec<String>,
         /// Why it is greyed out: translation key and English text.
         pub reason: Option<(String, String)>,
+        /// Not usable, but an ALP-OS archive the recovery words can open
+        /// again (plan 0.2.8-reopen-archive): never erased.
+        pub reopenable: bool,
     }
 
     /// `GET install/disks`: every disk, in alpd's order.
@@ -205,6 +208,7 @@ pub mod install {
                             contents: lines(&d["contents"]),
                             reason: (!usable)
                                 .then(|| (s(&d["reason"]["key"]), s(&d["reason"]["text"]))),
+                            reopenable: !usable && d["reopenable"].as_bool().unwrap_or(false),
                         }
                     })
                     .collect()
@@ -224,6 +228,8 @@ pub mod install {
         /// Sent back with `install/start`: the installer refuses when the
         /// disks changed after this plan was shown.
         pub confirm_token: String,
+        /// Old archive disks opened again with the recovery words (kept).
+        pub reopen: Vec<String>,
     }
 
     /// `POST install/plan`.
@@ -249,6 +255,7 @@ pub mod install {
             usable: s(&w["pool"]["usable"]),
             protection: s(&w["pool"]["protection"]),
             confirm_token: s(&w["confirm_token"]),
+            reopen: lines(&w["reopen"]),
         }
     }
 
@@ -307,6 +314,17 @@ pub mod setup {
             /// Why it stopped; a retry resumes (alpd's error message).
             failed: Option<String>,
         },
+        /// The installer kept old archive disks (`pool` `reopen`): type the
+        /// 15 recovery words to open them (`archive/reopen-pool`).
+        Words {
+            /// The `archive.reopen` job runs.
+            running: bool,
+            percent: u8,
+            message: String,
+            /// The job failed: alpd's error key (`recovery.wrong`: the words
+            /// do not open it, nothing changed) and message. A retry resumes.
+            failed: Option<(String, String)>,
+        },
         Recovery,
         Phone,
     }
@@ -328,6 +346,35 @@ pub mod setup {
         }
         let a = &w["archive"];
         let job = &a["job"];
+        // An old archive kept by the installer: the words, not a new one.
+        let reopening = job["id"].as_str() == Some("archive.reopen")
+            && matches!(
+                job["state"].as_str(),
+                Some("running" | "cancelling" | "failed")
+            );
+        if reopening || w["pool"].as_str() == Some("reopen") {
+            let state = job["state"].as_str().unwrap_or("");
+            let mine = job["id"].as_str() == Some("archive.reopen");
+            return Some(Step::Words {
+                running: mine && matches!(state, "running" | "cancelling"),
+                percent: job["percent"].as_u64().unwrap_or(0).min(100) as u8,
+                message: if mine {
+                    job["message"].as_str().unwrap_or_default().to_string()
+                } else {
+                    String::new()
+                },
+                failed: (mine && state == "failed").then(|| {
+                    (
+                        job["error"]["key"].as_str().unwrap_or_default().to_string(),
+                        job["error"]["message"]
+                            .as_str()
+                            .or(job["message"].as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                    )
+                }),
+            });
+        }
         if job["id"].as_str() == Some("archive.create") || w["pool"].as_str() == Some("waiting") {
             let state = job["state"].as_str().unwrap_or("");
             let running = matches!(state, "running" | "cancelling");
@@ -864,6 +911,14 @@ mod tests {
         assert!(!d[1].can_be_system && d[1].can_be_data);
         assert!(!d[2].usable && !d[2].can_be_data);
         assert_eq!(d[2].reason.as_ref().unwrap().0, "holds_windows");
+        assert!(!d[2].reopenable);
+        // An old archive: not usable, but it can be opened again.
+        let old = install::disks(&json!({"disks": [{"name": "sdc", "usable": false,
+            "reopenable": true, "reason": {"key": "alp_archive", "text": "An archive."}}]}));
+        assert!(old[0].reopenable && !old[0].can_be_data);
+        let usable = install::disks(&json!({"disks": [{"name": "sdc", "usable": true,
+            "reopenable": true, "roles": ["data"]}]}));
+        assert!(!usable[0].reopenable, "only greyed-out disks are reopened");
 
         let p = install::plan(&json!({
             "erases": [{"name": "sdb", "model": "M", "size": "1 TB", "contents": ["x"]}],
@@ -871,6 +926,9 @@ mod tests {
         }));
         assert!(p.strong_warning);
         assert_eq!(p.erases[0].3, ["x"]);
+        assert!(p.reopen.is_empty());
+        let p = install::plan(&json!({"erases": [], "reopen": ["sdb", "sdc"]}));
+        assert_eq!(p.reopen, ["sdb", "sdc"]);
         // A plan without the flag never skips the warning.
         assert!(install::plan(&json!({})).strong_warning);
 
@@ -981,6 +1039,62 @@ mod tests {
             "console": {"state": "open"}, "pool": "waiting",
             "archive": {"state": "none", "job": null}});
         assert!(matches!(step(&w), Some(Step::Pool { start: true, .. })));
+    }
+
+    #[test]
+    fn setup_reopens_an_old_archive_with_the_words() {
+        use super::setup::{Step, step};
+        let at = |pool: &str, job: Value| {
+            step(
+                &json!({"lock": {"state": "open"}, "console": {"state": "open"},
+                "setup": {"finished": false}, "pool": pool,
+                "archive": {"state": "none", "recovery": "none", "job": job}}),
+            )
+        };
+        // The password comes first: the index must be open.
+        assert_eq!(
+            step(&json!({"lock": {"state": "setup"}, "pool": "reopen"})),
+            Some(Step::Password)
+        );
+        assert_eq!(
+            at("reopen", Value::Null),
+            Some(Step::Words {
+                running: false,
+                percent: 0,
+                message: String::new(),
+                failed: None
+            })
+        );
+        let run = json!({"id": "archive.reopen", "state": "running", "percent": 50,
+            "message": "Opening disk 1 of 2"});
+        assert!(matches!(
+            at("reopen", run),
+            Some(Step::Words {
+                running: true,
+                percent: 50,
+                ..
+            })
+        ));
+        let wrong = json!({"id": "archive.reopen", "state": "failed",
+            "error": {"key": "recovery.wrong", "message": "These words do not open it."}});
+        let Some(Step::Words {
+            failed: Some((key, _)),
+            running: false,
+            ..
+        }) = at("reopen", wrong)
+        else {
+            panic!("wrong words keep the words page");
+        };
+        assert_eq!(key, "recovery.wrong");
+        // Done: the archive is made; the usual steps follow.
+        let done = json!({"id": "archive.reopen", "state": "done"});
+        assert!(!matches!(at("made", done), Some(Step::Words { .. })));
+        // Another job's leftovers do not show on the words page.
+        let other = json!({"id": "archive.create", "state": "failed", "message": "x"});
+        assert!(matches!(
+            at("reopen", other),
+            Some(Step::Words { failed: None, .. })
+        ));
     }
 
     #[test]

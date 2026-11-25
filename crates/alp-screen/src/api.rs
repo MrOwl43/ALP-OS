@@ -33,6 +33,8 @@ pub struct ApiError {
     pub message: String,
     pub status: u16,
     pub retry_after: u64,
+    /// Which recovery word is wrong (1-based), for a typo in a code.
+    pub index: Option<usize>,
 }
 
 impl ApiError {
@@ -42,6 +44,7 @@ impl ApiError {
             message: String::new(),
             status: 0,
             retry_after: 0,
+            index: None,
         }
     }
 }
@@ -140,6 +143,7 @@ impl Client {
             message: e["message"].as_str().unwrap_or_default().to_string(),
             status: answer.status,
             retry_after: e["retry_after_seconds"].as_u64().unwrap_or(0),
+            index: e["index"].as_u64().map(|i| i as usize),
         };
         if err.key == "console.locked" {
             self.forget();

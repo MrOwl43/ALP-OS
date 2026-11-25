@@ -10,6 +10,9 @@
 //!   end are needed before Install (owner decision 2026-11-24).
 //! - Install sends the exact list of disks shown; the installer refuses if
 //!   it differs from its own plan or if any disk changed meanwhile.
+//! - An old ALP-OS archive disk (plan `0.2.8-reopen-archive.md`) can be
+//!   ticked to open it again with the 15 recovery words at the first start.
+//!   It is never erased; it cannot be mixed with new archive disks.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -39,14 +42,20 @@ struct Choice {
     /// `None`: keep running from the start stick.
     system: Option<String>,
     data: Vec<String>,
+    /// Old archive disks to open again (never erased).
+    reopen: Vec<String>,
 }
 
 impl Choice {
     fn json(&self) -> Value {
-        match &self.system {
+        let mut v = match &self.system {
             Some(s) => json!({"system": s, "data": self.data}),
             None => json!({"system": null, "keep_running": true, "data": self.data}),
+        };
+        if !self.reopen.is_empty() {
+            v["reopen"] = json!(self.reopen);
         }
+        v
     }
 }
 
@@ -58,15 +67,23 @@ pub struct InstallUi {
     // Choose page.
     system_group: adw::PreferencesGroup,
     data_group: adw::PreferencesGroup,
+    reopen_group: adw::PreferencesGroup,
     rows: RefCell<Vec<adw::ActionRow>>,
     /// Archive disk rows by name: the system disk cannot also be one.
     data_checks: RefCell<Vec<(String, adw::ActionRow, gtk4::CheckButton)>>,
+    /// Old archive disk rows: ticking one keeps new archive disks out.
+    reopen_checks: RefCell<Vec<(adw::ActionRow, gtk4::CheckButton)>>,
+    /// The disk list last shown (names the kept disks on the confirm page).
+    disks: RefCell<Vec<Disk>>,
+    /// "Keep running from this USB stick" is picked.
+    keep_running: std::cell::Cell<bool>,
     choice: Rc<RefCell<Choice>>,
     next: gtk4::Button,
     choose_note: gtk4::Label,
     // Confirm page.
     erase_group: adw::PreferencesGroup,
     erase_rows: RefCell<Vec<adw::ActionRow>>,
+    kept_group: adw::PreferencesGroup,
     summary: gtk4::Label,
     warning: style::Note,
     slide: gtk4::Scale,
@@ -166,7 +183,17 @@ impl InstallUi {
                 "Optional. With two or more, every photo is kept on two disks.",
             ))
             .build();
+        let reopen_group = adw::PreferencesGroup::builder()
+            .title(text(t, "install.reopen.title", "Archives from before"))
+            .description(text(
+                t,
+                "install.reopen.sub",
+                "Tick a disk to open it again with your 15 recovery words after the restart. It is never erased.",
+            ))
+            .visible(false)
+            .build();
         choose.add(&system_group);
+        choose.add(&reopen_group);
         choose.add(&data_group);
         let choose_note = gtk4::Label::builder()
             .css_classes(["error"])
@@ -201,7 +228,16 @@ impl InstallUi {
         let erase_group = adw::PreferencesGroup::builder()
             .title(text(t, "install.erase.title", "These disks will be erased"))
             .build();
+        let kept_group = adw::PreferencesGroup::builder()
+            .title(text(
+                t,
+                "install.kept.title",
+                "These disks are opened again, not erased",
+            ))
+            .visible(false)
+            .build();
         confirm.add(&erase_group);
+        confirm.add(&kept_group);
         let summary = gtk4::Label::builder().wrap(true).xalign(0.0).build();
         let warning = style::Note::new(
             "bad",
@@ -296,13 +332,18 @@ impl InstallUi {
             stack: stack.clone(),
             system_group,
             data_group,
+            reopen_group,
             rows: RefCell::new(Vec::new()),
             data_checks: RefCell::new(Vec::new()),
+            reopen_checks: RefCell::new(Vec::new()),
+            keep_running: std::cell::Cell::new(false),
+            disks: RefCell::new(Vec::new()),
             choice: Rc::new(RefCell::new(Choice::default())),
             next: next.clone(),
             choose_note,
             erase_group,
             erase_rows: RefCell::new(Vec::new()),
+            kept_group,
             summary,
             warning,
             slide: slide.clone(),
@@ -420,6 +461,9 @@ impl InstallUi {
         }
         *self.choice.borrow_mut() = Choice::default();
         self.data_checks.borrow_mut().clear();
+        self.reopen_checks.borrow_mut().clear();
+        self.keep_running.set(false);
+        *self.disks.borrow_mut() = disks.to_vec();
         let t = &self.texts;
         let mut rows = self.rows.borrow_mut();
         let mut first: Option<gtk4::CheckButton> = None;
@@ -457,7 +501,8 @@ impl InstallUi {
             row.set_activatable_widget(Some(&c));
             c
         };
-        for d in disks {
+        // Old archives are listed in their own group, not greyed out here.
+        for d in disks.iter().filter(|d| !d.reopenable) {
             let row = adw::ActionRow::builder()
                 .title(title(d))
                 .subtitle(match &d.reason {
@@ -500,6 +545,42 @@ impl InstallUi {
         self.system_group.add(&keep);
         rows.push(keep);
 
+        // Old archives: open again with the recovery words, or leave alone.
+        let old: Vec<&Disk> = disks.iter().filter(|d| d.reopenable).collect();
+        self.reopen_group.set_visible(!old.is_empty());
+        for d in old {
+            let row = adw::ActionRow::builder()
+                .title(title(d))
+                .subtitle(format!(
+                    "{} · {}",
+                    d.size,
+                    text(
+                        t,
+                        "install.reopen.row",
+                        "ALP-OS archive: can be opened again"
+                    )
+                ))
+                .build();
+            let c = gtk4::CheckButton::new();
+            row.add_prefix(&style::chip("drive-harddisk-symbolic", Tone::Ok, 20));
+            row.add_prefix(&c);
+            row.set_activatable_widget(Some(&c));
+            let (u, name) = (self.clone(), d.name.clone());
+            c.connect_toggled(move |c| {
+                {
+                    let mut ch = u.choice.borrow_mut();
+                    ch.reopen.retain(|n| *n != name);
+                    if c.is_active() {
+                        ch.reopen.push(name.clone());
+                    }
+                }
+                u.sync_rows();
+            });
+            self.reopen_group.add(&row);
+            self.reopen_checks.borrow_mut().push((row.clone(), c));
+            rows.push(row);
+        }
+
         // Archive disks: any number of the usable ones.
         for d in disks.iter().filter(|d| d.can_be_data) {
             let row = adw::ActionRow::builder()
@@ -512,11 +593,14 @@ impl InstallUi {
             row.set_activatable_widget(Some(&c));
             let (u, name) = (self.clone(), d.name.clone());
             c.connect_toggled(move |c| {
-                let mut ch = u.choice.borrow_mut();
-                ch.data.retain(|n| *n != name);
-                if c.is_active() {
-                    ch.data.push(name.clone());
+                {
+                    let mut ch = u.choice.borrow_mut();
+                    ch.data.retain(|n| *n != name);
+                    if c.is_active() {
+                        ch.data.push(name.clone());
+                    }
                 }
+                u.sync_rows();
             });
             self.data_group.add(&row);
             self.data_checks
@@ -529,22 +613,49 @@ impl InstallUi {
     fn pick_system(&self, system: Option<String>) {
         // The system disk already holds the archive when no other disk is
         // chosen; it cannot also be a separate archive disk.
-        for (name, row, check) in self.data_checks.borrow().iter() {
-            let is_system = system.as_deref() == Some(name.as_str());
-            if is_system {
+        for (name, _, check) in self.data_checks.borrow().iter() {
+            if system.as_deref() == Some(name.as_str()) {
                 check.set_active(false);
             }
-            row.set_sensitive(!is_system);
         }
+        // Keep running from the stick: nothing is installed, so no old
+        // archive is opened by this install.
+        if system.is_none() {
+            for (_, check) in self.reopen_checks.borrow().iter() {
+                check.set_active(false);
+            }
+        }
+        self.keep_running.set(system.is_none());
         self.choice.borrow_mut().system = system;
+        self.sync_rows();
         self.next.set_sensitive(true);
+    }
+
+    /// Which rows can be ticked now: an old archive opened again and new
+    /// archive disks do not mix; the system disk is never an archive disk.
+    fn sync_rows(&self) {
+        let Ok(ch) = self.choice.try_borrow() else {
+            return;
+        };
+        let (reopening, new_data) = (!ch.reopen.is_empty(), !ch.data.is_empty());
+        for (name, row, _) in self.data_checks.borrow().iter() {
+            row.set_sensitive(!reopening && ch.system.as_deref() != Some(name.as_str()));
+        }
+        for (row, _) in self.reopen_checks.borrow().iter() {
+            row.set_sensitive(!new_data && !self.keep_running.get());
+        }
     }
 
     fn show_plan(&self, p: &Plan) {
         let t = &self.texts;
         *self.token.borrow_mut() = p.confirm_token.clone();
         for r in self.erase_rows.borrow_mut().drain(..) {
-            self.erase_group.remove(&r);
+            if let Some(g) = r
+                .parent()
+                .and_then(|p| p.ancestor(adw::PreferencesGroup::static_type()))
+            {
+                g.downcast::<adw::PreferencesGroup>().unwrap().remove(&r);
+            }
         }
         let mut rows = self.erase_rows.borrow_mut();
         for (name, model, size, contents) in &p.erases {
@@ -569,6 +680,25 @@ impl InstallUi {
             self.erase_group.add(&row);
             rows.push(row);
         }
+        for name in &p.reopen {
+            let shown = self.disks.borrow();
+            let title = match shown.iter().find(|d| d.name == *name) {
+                Some(d) if !d.model.is_empty() => format!("{} · {}", d.model, d.size),
+                _ => name.clone(),
+            };
+            let row = adw::ActionRow::builder()
+                .title(title)
+                .subtitle(text(
+                    t,
+                    "install.kept.row",
+                    "Opened with your 15 recovery words after the restart",
+                ))
+                .build();
+            row.add_prefix(&style::chip("drive-harddisk-symbolic", Tone::Ok, 20));
+            self.kept_group.add(&row);
+            rows.push(row);
+        }
+        self.kept_group.set_visible(!p.reopen.is_empty());
         *self.shown.borrow_mut() = p.erases.iter().map(|e| e.0.clone()).collect();
         let protection = match p.protection.as_str() {
             "disk_failure" => text(
@@ -656,8 +786,18 @@ mod tests {
         let c = Choice {
             system: Some("sda".into()),
             data: vec!["sdb".into()],
+            ..Choice::default()
         };
         assert_eq!(c.json(), json!({"system": "sda", "data": ["sdb"]}));
+        let c = Choice {
+            system: Some("sda".into()),
+            reopen: vec!["sdb".into(), "sdc".into()],
+            ..Choice::default()
+        };
+        assert_eq!(
+            c.json(),
+            json!({"system": "sda", "data": [], "reopen": ["sdb", "sdc"]})
+        );
         let c = Choice::default();
         assert_eq!(c.json()["keep_running"], true);
     }
