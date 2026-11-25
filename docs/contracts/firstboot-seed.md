@@ -59,3 +59,10 @@ partition_uuid = "1b4e28ba-2fa1-11d2-883f-0016d3cca427"
    `FirstbootSeed::from_toml` (alp-hw).
 7. The installer and first boot compute `plan_digest` with the single
    implementation in `alp-hw` (`PlanDigest`), so both get the same value.
+8. Optional `reopen = true` (added 2026-11-25, `format_version` stays 1;
+   absent means false, and the installer writes it only when true): the
+   members are the `alp-data` partitions of an existing archive to open
+   with the recovery words (`docs/plans/0.2.8-reopen-archive.md`), never
+   formatted. The profile fields and the digest are computed as for a new
+   pool, so rules 2 and 3 check the same disks; the pool record then takes
+   the real profile from `btrfs filesystem df` after opening.

@@ -975,7 +975,7 @@ while a job runs; `400 archive.no_pool_plan` when there is no seed (state
 `pool` is not `"waiting"`). A failed job carries `ALP-INST-005` (the disks
 changed since installation) or `ALP-STO-008`; a retry resumes.
 
-State gains `"pool": "none" | "waiting" | "made"`: `waiting` means setup
+State gains `"pool": "none" | "waiting" | "reopen" | "made"`: `waiting` means setup
 skips the "where" step and calls this instead.
 
 With a pool, `archive` gains `missing_disks`: the screen names (from the
@@ -984,6 +984,22 @@ connected now. An open pool with missing disks is read-only and carries
 `error` `archive.disk_missing` (`ALP-STO-001`, level `now`), so the home
 screen names the disk; a pool that could not open says which disks to
 connect in its `archive.missing` message. Additive.
+
+### `POST /api/v1/live/archive/reopen-pool` → 202 `{ "job": Job }`
+
+Installed system only (`docs/plans/0.2.8-reopen-archive.md`). Body
+`{"words": "<15 words>", "passphrase"?: "<serious-encryption passphrase>"}`.
+State `pool` is `"reopen"` while the installer's seed asks to open an old
+archive: setup shows a "Type your 15 recovery words" step instead of
+"Preparing your disks" and calls this. Needs the index open. The words are
+checked like `archive/recover` before the job starts (`400 recovery.format`,
+`recovery.word_count`, `recovery.chain_code`, a typo with `index`); `400
+archive.no_pool_plan` without such a seed; `409 archive.busy`; `429` while
+password tries wait. Runs the `archive.reopen` job: every disk is checked
+with the words first, then gets the new pool key, opens, and the record is
+written from what is found. A failed job carries `ALP-STO-126`; its error
+key is `recovery.wrong` when the words do not open every disk (nothing
+changed; counts as a failed try), else `archive.failed`. A retry resumes.
 
 ### `POST /api/v1/live/archive/cancel` → 202 `{ "job": Job }`
 

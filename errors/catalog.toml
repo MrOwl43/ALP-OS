@@ -344,6 +344,12 @@ title = "The disk check could not finish"
 action = "Nothing on the disk was changed. Unplug the disk, plug it in again and try the check again. If it keeps failing, copy what you need from the disk."
 technician = "Job disk.check (crates/alp-live/src/disks.rs check_disk): the disk was unplugged or open, or the sandboxed read-only fsck (systemd-run unit alp-disk-check) did not run. fsck output is never logged. Logs: journalctl -u alpd -u alp-disk-check."
 
+[ALP-STO-126]
+severity = "action"
+title = "The old archive could not be opened"
+action = "Check that every archive disk is connected and that you typed the 15 recovery words of this archive. Nothing on the disks was erased; you can try again."
+technician = "Job archive.reopen (crates/alp-live/src/pool.rs reopen, plan 0.2.8-reopen-archive): the words did not open every member (cryptsetup open --test-passphrase), a member was missing, luksKillSlot/luksAddKey on slot 0 failed (the recovery slots stay, a retry finishes it), or btrfs filesystem show counted another number of devices. Secrets are never logged. Logs: journalctl -u alpd; cryptsetup luksDump on each alp-data partition."
+
 # ----------------------------------------------------------------- KEY
 
 [ALP-KEY-001]

@@ -1724,6 +1724,7 @@ impl Live {
             }),
             "archive/create" if post => self.need_open().and_then(|()| self.archive_create(req)),
             "archive/create-pool" if post => self.need_open().and_then(|()| self.archive_create_pool()),
+            "archive/reopen-pool" if post => self.need_open().and_then(|()| self.archive_reopen_pool(req)),
             "disks" if get => Ok(Response::json(200, &disks::list_json())),
             "events" if get => Ok(Response::json(200, &events::recent_json())),
             "disks/eject" if post => self.disks_eject(req),
@@ -1914,6 +1915,7 @@ impl Live {
             | "archive/candidates"
             | "archive/create"
             | "archive/create-pool"
+            | "archive/reopen-pool"
             | "disks"
             | "events"
             | "disks/eject"
@@ -2473,7 +2475,7 @@ impl Live {
             "archive": self.archive_state(),
             // Installed system (ADR 0028): "waiting" until the first start
             // made the pool from the installer's choices, then "made".
-            "pool": if pool::record().is_some() { "made" } else if pool::seed_waiting() { "waiting" } else { "none" },
+            "pool": if pool::record().is_some() { "made" } else if pool::seed_reopen() { "reopen" } else if pool::seed_waiting() { "waiting" } else { "none" },
             "immich": if *lock(&self.paused) {
                 json!({"state": "paused", "error": fail_json(&Fail::new("space.full",
                     "There is no room left, so new photos are not saved for now. Make room or use a bigger disk."))})
@@ -2815,6 +2817,83 @@ impl Live {
             if res.is_ok() {
                 systemctl(&["start", "alp-live-archive.service"]);
                 systemctl(&["start", "--no-block", immich::UNIT]);
+            }
+            me.finish(&res);
+        });
+        Ok(Response::json(202, &json!({"job": job.json()})))
+    }
+
+    /// `POST archive/reopen-pool {words, passphrase?}` (installed system,
+    /// plan 0.2.8-reopen-archive): open the old archive disks the installer
+    /// seed names with the 15 recovery words and give them the new pool
+    /// key. Every disk is checked with the words before anything changes,
+    /// so a wrong code changes nothing. Runs as the `archive.reopen` job.
+    fn archive_reopen_pool(self: &Arc<Self>, req: &Request) -> Result<Response, Fail> {
+        let b = body(req)?;
+        let typed = zeroize::Zeroizing::new(
+            field(&b, "words")?
+                .as_str()
+                .ok_or_else(|| Fail::new("request.json", "\"words\" must be text."))?
+                .to_string(),
+        );
+        let passphrase = zeroize::Zeroizing::new(
+            b.get("passphrase")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+        );
+        if !pool::seed_reopen() {
+            return Err(Fail::new(
+                "archive.no_pool_plan",
+                "There is no old archive from the installation to open.",
+            ));
+        }
+        self.password_wait()?;
+        let RecoveryInput::Secret(secret) = recovery_input(&typed, &passphrase)? else {
+            return Err(Fail::new(
+                "recovery.old_archive",
+                "This is an old 64-letter key; this archive opens with its 15 words.",
+            ));
+        };
+        let job = Job::start(
+            "archive.reopen",
+            "checking",
+            "Checking your recovery words…",
+            Some(0),
+        );
+        {
+            let mut j = lock(&self.archive_job);
+            if Job::running(&j) {
+                return Err(Fail::new("archive.busy", "The archive is busy."));
+            }
+            *j = Some(job.clone());
+        }
+        let me = Arc::clone(self);
+        std::thread::spawn(move || {
+            let res = me.drive("archive.reopen", |say| {
+                pool::reopen(&secret, &mut |m| say(&job::Update::step("opening", m, 50))).map_err(
+                    |e| job::End::Failed {
+                        code: pool::CODE_REOPEN,
+                        step: if e == archive::RECOVERY_WRONG {
+                            "words"
+                        } else {
+                            "opening"
+                        },
+                        message: e,
+                    },
+                )
+            });
+            match &res {
+                Ok(()) => {
+                    *lock(&me.tries) = Tries::default();
+                    systemctl(&["start", "alp-live-archive.service"]);
+                    systemctl(&["start", "--no-block", immich::UNIT]);
+                }
+                Err(job::End::Failed { step: "words", .. }) => {
+                    // Wrong words count like wrong passwords.
+                    lock(&me.tries).failed();
+                }
+                Err(_) => {}
             }
             me.finish(&res);
         });
@@ -3311,6 +3390,18 @@ impl Live {
                             "reset.failed",
                             format!(
                                 "ALPArchive could not delete everything: {message}. Please try again."
+                            ),
+                        )
+                    } else if j.id == "archive.reopen" && message == archive::RECOVERY_WRONG {
+                        Fail::new(
+                            "recovery.wrong",
+                            "These words do not open this archive. Nothing was changed; please check them and try again.",
+                        )
+                    } else if j.id == "archive.reopen" {
+                        Fail::new(
+                            "archive.failed",
+                            format!(
+                                "ALPArchive could not open the old archive ({message}). Nothing was erased on it."
                             ),
                         )
                     } else if j.id == "disk.prepare" {
@@ -4720,6 +4811,22 @@ mod tests {
 
     fn key(v: &(u16, Value)) -> (u16, Option<&str>) {
         (v.0, v.1["error"]["key"].as_str())
+    }
+
+    #[test]
+    fn reopen_needs_words_and_a_reopen_plan() {
+        let l = live("reopen");
+        assert_eq!(
+            key(&call(&l, "POST", "archive/reopen-pool", "{}")).1,
+            Some("request.json")
+        );
+        // No installer seed with `reopen = true` on this machine.
+        let j = json!({"words": RECOVERY15}).to_string();
+        assert_eq!(
+            key(&call(&l, "POST", "archive/reopen-pool", &j)).1,
+            Some("archive.no_pool_plan")
+        );
+        assert_eq!(key(&call(&l, "GET", "archive/reopen-pool", "")).0, 405);
     }
 
     #[test]

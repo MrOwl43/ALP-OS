@@ -352,6 +352,9 @@ pub fn create(say: &mut dyn FnMut(&str)) -> Result<(), HwError> {
 
 /// The installer left a seed to open an old archive with the recovery words
 /// (docs/plans/0.2.8-reopen-archive.md).
+/// Catalog code of a failed `archive.reopen` job (wrong words included).
+pub const CODE_REOPEN: &str = "ALP-STO-126";
+
 pub fn seed_reopen() -> bool {
     seed_waiting()
         && fs::read_to_string(SEED)
