@@ -46,7 +46,10 @@ probe="/bin/sleep 30
 -/usr/bin/sh -c 'systemctl show -p NRestarts --value alp-screen.service | sed s/^/SCREEN-RESTARTS=/'
 -/usr/bin/sh -c 'curl -s -m 20 http://127.0.0.1:8411/api/v1/live/state | grep -o place.:.[a-z]* | sed s/^/PLACE=/'
 -/usr/bin/sh -c 'curl -s -m 20 http://127.0.0.1:8411/api/v1/live/state | grep -q temperature_c && echo TEMP-KEY=yes || echo TEMP-KEY=no'
--/usr/bin/sh -c 'journalctl -b -u alp-screen.service -o cat --no-pager | tail -15 | sed s/^/SCREEN-LOG=/'"
+-/usr/bin/sh -c 'journalctl -b -u alp-screen.service -o cat --no-pager | tail -15 | sed s/^/SCREEN-LOG=/'
+-/usr/bin/sh -c 'journalctl -b _UID=988 -o cat --no-pager | tail -25 | sed s/^/SCREEN-USER-LOG=/'
+-/usr/bin/sh -c 'ps -eo pid,user,args | grep -E \"cage|alp-screen\" | grep -v grep | sed s/^/SCREEN-PS=/'
+-/usr/bin/sh -c '{ ls -l /dev/dri; dmesg | grep -iE \"drm|bochs|fb0\" | tail -8; } | sed s/^/SCREEN-DRM=/'"
 
 status=0
 out=$(ALP_RAM=${ALP_RAM:-2G} ALP_PROBE="$probe" ALP_PROBE_DELAY=5 ALP_HOST_HOOK=shoot \
