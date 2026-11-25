@@ -16,7 +16,7 @@
 #   - the Windows disk is bit-for-bit unchanged afterwards,
 #   - the installer reports RESULT ok and the target holds exactly the partitions of
 #     the disk-layout contract: esp, slot 1 filled (alp-os_<version> and its
-#     _verity), slot 2 _empty (root and verity), alp-state, alp-data;
+#     _verity), slot 2 _empty (root and verity), alp-state, alp-index, alp-data;
 #   - the installed disk then starts on its own (stick removed): root from
 #     slot 1, the first-boot seed on its alp-state, Windows disk unchanged.
 # Until block 4's pool plan digest exists the installer refuses before any
@@ -105,7 +105,7 @@ import json, re, subprocess, sys
 parts = json.loads(subprocess.run(["sfdisk", "--json", sys.argv[1]], check=True,
                                   capture_output=True, text=True).stdout)["partitiontable"]["partitions"]
 want = [r"esp", r"alp-os_[0-9.]+", r"alp-os_[0-9.]+_verity", r"_empty", r"_empty",
-        r"alp-state", r"alp-data"]
+        r"alp-state", r"alp-index", r"alp-data"]
 got = [p.get("name", "") for p in parts]
 print("partitions:", got)
 ok = len(got) == len(want) and all(re.fullmatch(w, g) for w, g in zip(want, got))

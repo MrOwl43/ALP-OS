@@ -13,8 +13,8 @@ use alp_hw::RaidProfile;
 
 /// System partitions on a single-disk install (contract `disk-layout.md`):
 /// ESP 1 GiB, two 8 GiB root slots, two 128 MiB verity partitions, 2 GiB
-/// state.
-pub const SYSTEM_AREA_BYTES: u64 = (1 + 8 + 8 + 2) * GIB + 2 * 128 * MIB;
+/// state, 1 GiB index.
+pub const SYSTEM_AREA_BYTES: u64 = (1 + 8 + 8 + 2 + 1) * GIB + 2 * 128 * MIB;
 
 /// GPT headers at both ends and partition alignment (1 MiB each side is
 /// what systemd-repart leaves; rounded up).
@@ -137,8 +137,8 @@ mod tests {
 
     #[test]
     fn data_partition_leaves_room_for_the_system() {
-        // Contract: the system partitions need about 19.2 GiB.
-        assert_eq!(SYSTEM_AREA_BYTES, 20_669_530_112);
+        // Contract: the system partitions need about 20.2 GiB.
+        assert_eq!(SYSTEM_AREA_BYTES, 21_743_271_936);
         let d = data_partition_bytes(500_107_862_016, true);
         assert_eq!(d, 500_107_862_016 - SYSTEM_AREA_BYTES - 20 * MIB);
         assert_eq!(data_partition_bytes(20 * TB, false), 20 * TB - 20 * MIB);

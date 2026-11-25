@@ -60,7 +60,7 @@ pub struct Choice {
 /// A systemd-repart definition set (contract `disk-layout.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Layout {
-    /// ESP, two root slots with verity, `alp-state`.
+    /// ESP, two root slots with verity, `alp-state`, `alp-index`.
     System,
     /// `alp-data` filling the rest of a single disk, after `System`.
     SingleDiskData,
@@ -89,6 +89,7 @@ impl Layout {
                 "_empty",
                 "_empty",
                 "alp-state",
+                "alp-index",
             ],
             Layout::SingleDiskData | Layout::DataDisk => &["alp-data"],
         }
@@ -493,7 +494,7 @@ mod tests {
             p.pool.usable_bytes,
             capacity::data_partition_bytes(20_000_000_000_000, false)
         );
-        assert_eq!(Layout::System.labels().last(), Some(&"alp-state"));
+        assert_eq!(Layout::System.labels().last(), Some(&"alp-index"));
         assert_eq!(Layout::DataDisk.dir(), "data-disk");
     }
 

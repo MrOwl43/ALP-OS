@@ -895,6 +895,7 @@ mod tests {
         "_empty",
         "_empty",
         "alp-state",
+        "alp-index",
     ];
 
     fn mock() -> Mock {

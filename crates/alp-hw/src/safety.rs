@@ -15,6 +15,7 @@ const SYSTEM_TYPES: [&str; 4] = [
 ];
 const LINUX_GENERIC: &str = "0FC63DAF-8483-4772-8E79-3D69D8477DE4";
 const STATE_LABEL: &str = "alp-state";
+const INDEX_LABEL: &str = "alp-index";
 const DATA_LABEL: &str = "alp-data";
 const REFUSED: &str = "ALP-STO-006";
 
@@ -30,6 +31,7 @@ fn holds_system(disk: &DiskInfo) -> bool {
         || disk.partitions.iter().any(|p| {
             SYSTEM_TYPES.contains(&p.type_uuid.to_ascii_uppercase().as_str())
                 || p.label == STATE_LABEL
+                || p.label == INDEX_LABEL
         })
 }
 
@@ -111,6 +113,7 @@ mod tests {
                 part("p1", SYSTEM_TYPES[0], "esp"),
                 part("p2", SYSTEM_TYPES[1], "alp-os_1"),
                 part("p6", LINUX_GENERIC, STATE_LABEL),
+                part("p8", "A3E1C6B2-5B7E-4F0A-9C1D-6B2F0E8A4D11", INDEX_LABEL),
                 part("p7", LINUX_GENERIC, DATA_LABEL),
             ],
         )
@@ -133,6 +136,13 @@ mod tests {
     }
 
     #[test]
+    fn disk_with_only_an_index_is_refused_as_whole_disk() {
+        let d = disk("other", false, vec![part("p1", LINUX_GENERIC, INDEX_LABEL)]);
+        let err = check_member(&PoolMember::WholeDisk(d.id.clone()), &[d]).unwrap_err();
+        assert_eq!(err.code, REFUSED);
+    }
+
+    #[test]
     fn data_partition_on_single_disk_is_accepted() {
         let m = PoolMember::ExistingPartition {
             disk: DiskId("laptop".into()),
@@ -143,7 +153,7 @@ mod tests {
 
     #[test]
     fn state_and_system_partitions_are_refused_as_partition_members() {
-        for uuid in ["p1", "p2", "p6"] {
+        for uuid in ["p1", "p2", "p6", "p8"] {
             let m = PoolMember::ExistingPartition {
                 disk: DiskId("laptop".into()),
                 partition_uuid: uuid.into(),

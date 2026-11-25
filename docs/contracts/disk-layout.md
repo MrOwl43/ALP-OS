@@ -15,7 +15,8 @@ machine once installed.
 | 4 | root, slot 2 | `root` | `_empty` | 8 GiB |
 | 5 | verity, slot 2 | `root-verity` | `_empty` | 128 MiB |
 | 6 | state (`/var/lib/alp`, `/etc` overlay upper) | `linux-generic` | `alp-state` | 2 GiB |
-| 7 | data, single-disk machines only (dedicated data disks: `image/install-layout/data-disk/`) | `linux-generic` | `alp-data` | rest of disk |
+| 7 | index (encrypted secrets and settings, ADR 0011; LUKS2 made at the first start) | ALP-OS index `a3e1c6b2-5b7e-4f0a-9c1d-6b2f0e8a4d11` | `alp-index` | 1 GiB |
+| 8 | data, single-disk machines only (dedicated data disks: `image/install-layout/data-disk/`) | `linux-generic` | `alp-data` | rest of disk |
 
 Rules
 
@@ -29,7 +30,7 @@ Rules
   disk added later), or a whole new data disk during expansion/replacement. A member is
   identified by its GPT partition UUID (by-id names are for display only).
   `alp_hw::safety::check_member` refuses the system disk and any disk or
-  partition holding the ESP, a root/verity slot or `alp-state`
+  partition holding the ESP, a root/verity slot, `alp-state` or `alp-index`
   (`ALP-STO-006`); `alp-storage` calls it right before writing.
 - Pool subvolumes: `@archive`, `@snapshots`, `@system-backup` (spec block 4)
   and `@apps` (application databases; approved in ADR 0005), mounted under `/var/lib/alp-pool` (`paths().pool`).

@@ -34,8 +34,10 @@ G, M = 1024**3, 1024**2
 ESP, ROOT, VERITY, GENERIC = ("C12A7328-F81F-11D2-BA4B-00A0C93EC93B",
     "4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709", "2C7357ED-EBD2-46D9-AEC1-23D437EC2BF5",
     "0FC63DAF-8483-4772-8E79-3D69D8477DE4")
+INDEX = "A3E1C6B2-5B7E-4F0A-9C1D-6B2F0E8A4D11"
 want = [(ESP, "esp", 1*G), (ROOT, "alp-os_9.9.9", 8*G), (VERITY, "alp-os_9.9.9_verity", 128*M),
-        (ROOT, "_empty", 8*G), (VERITY, "_empty", 128*M), (GENERIC, "alp-state", 2*G)]
+        (ROOT, "_empty", 8*G), (VERITY, "_empty", 128*M), (GENERIC, "alp-state", 2*G),
+        (INDEX, "alp-index", 1*G)]
 if want_data:
     want.append((GENERIC, "alp-data", None))
 errors = []
