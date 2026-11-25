@@ -131,6 +131,7 @@ test-vm-update:
 # onto a virtual disk next to a fake Windows disk that must stay untouched.
 test-vm-installed:
     tests/vm/t-core.sh {{image}}
+    tests/vm/t-screen-01.sh {{image}}
     tests/vm/t-inst-01.sh {{image}}
     tests/vm/t-inst-02.sh {{image}}
 

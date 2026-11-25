@@ -605,6 +605,10 @@ fn hardware_json() -> Value {
                 "report_file": report_file,
                 "specs": specs_json(&r),
                 "root_elsewhere": r.root_elsewhere,
+                // Running from the ALP-OS stick (its own image layout has the
+                // ALP-REPORT partition; an installed disk does not).
+                "on_stick": r.disks.iter().any(|d| d.is_system_disk
+                    && d.partitions.iter().any(|p| p.label == "ALP-REPORT")),
             })
         }
         Err(e) => {
@@ -4386,13 +4390,11 @@ fn setup_place(st: &Value) -> &'static str {
     if st["pool"] != "none" || st["install"]["available"] != true {
         return "done";
     }
-    let on_stick = st["hardware"]["specs"]["disks"]
-        .as_array()
-        .is_some_and(|d| {
-            d.iter()
-                .any(|d| d["system"] == true && d["internal"] == false)
-        });
-    if on_stick { "choose" } else { "done" }
+    if st["hardware"]["on_stick"] == true {
+        "choose"
+    } else {
+        "done"
+    }
 }
 
 /// The hottest temperature sensor, in whole degrees Celsius (hwmon and
@@ -5329,10 +5331,10 @@ mod tests {
 
     #[test]
     fn the_first_setup_step_is_the_place() {
-        let stick = json!({"system": true, "internal": false});
-        let disk = json!({"system": true, "internal": true});
+        let stick = json!(true);
+        let disk = json!(false);
         let st = |d: &Value, pool: &str, job: Value| {
-            json!({"hardware": {"specs": {"disks": [d]}}, "pool": pool,
+            json!({"hardware": {"on_stick": d}, "pool": pool,
                    "install": {"available": true, "job": job}})
         };
         assert_eq!(setup_place(&st(&stick, "none", Value::Null)), "choose");
