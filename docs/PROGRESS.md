@@ -90,6 +90,12 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   reproduced the root read from the stick; state still came from the installed disk.
 - Design pass from the UI/UX thread waits on branch claude/project-thread-2tu0xs (fast-forwards here)
   for the owner's OK.
+- 2026-11-25 late: owner approved the new look (merged); lock screen always shows temperature, disks,
+  phone count (`system.temperature_c`); first setup step on the stick is the place (`setup.place`:
+  choose / installed / done; before the password, nothing secret moves to the new disk); install also
+  under Settings > Advanced (dev option). CI on a6f77d5: base + installed green; the shell job fails
+  only on two merge commits from the design branch (default "Merge branch 'claude/…'" message):
+  squash-merge the PR so main stays clean.
 - Owner (2026-11-25): no interim laptop build; he tests the finished product on old and new laptops.
 - Next: T-SCREEN-01 VM test of the native setup
   screens; review items 4 and 5; PR with the owner's OK; `/claude-security` scan before release.
