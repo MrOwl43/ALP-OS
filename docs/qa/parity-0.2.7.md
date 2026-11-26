@@ -13,15 +13,15 @@ to a later version with the owner's agreement · **dropped** on purpose.
 | 0.2.7 step | What it does | Native | Status |
 |---|---|---|---|
 | Welcome | hardware check list, date, time and time zone (zone picker, "which time is right" question), network line with "Connect to Wi-Fi" | `start.rs` welcome page | ok (2026-11-26) |
-| Too small | under 4 GB memory: power off | — | gap |
+| Too small | under 4 GB memory: power off | — | ok |
 | Network | cable status, Wi-Fi list, password, WPA3→WPA2 note, Check again, skip with a note | `start.rs` network page | ok (2026-11-26) |
 | (0.2.8) Place | install on a disk, or keep running from the stick | install pages | ok |
-| Protect / Password | protection level and password | setup password page (password only) | gap: protection choice (level "none"/"console") |
+| Protect / Password | protection level and password | setup password page (password only) | later: owner decision (0.2.8 archives are always encrypted) |
 | Where / Progress | archive disks and making the archive | install page data disks + setup pool page | ok |
 | Recovery | 15 words, type three back, skip with a reminder | setup recovery pages | ok |
 | Phone | connect a phone (pairing), skip | setup phone page + pairing pages | ok |
 | Done | "All set" | home | ok |
-| Reminders | skipped steps shown on home with "Do it now" | — | gap |
+| Reminders | skipped steps shown on home with "Do it now" | — | ok (Set up takes you to the right Settings page) |
 
 ## Everyday pages
 
@@ -31,10 +31,10 @@ to a later version with the owner's agreement · **dropped** on purpose.
 | Home (tiles, gallery button) | home page | ok |
 | Gallery (locked embedded view) | gallery page | ok |
 | Status tray (network, disk, battery, clock) | top bar | ok, check items |
-| Errors list behind (i) with codes | — | gap |
+| Errors list behind (i) with codes | — | ok |
 | Phone approve pop-up | pairing pages | ok |
 | Shut down / restart with steps | top bar power + alpd | ok (no step list: gap, small) |
-| Import from a USB disk | — | gap |
+| Import from a USB disk | — | later: alpd has no import routes (media/browse, import) yet |
 | Files (USB disks) | — | ok: read only; photos and text open; videos are not played yet |
 | Disks and format (danger + slide) | — | ok |
 | Terminal (advanced) | — | ok (locked viewer on the local terminal port) |

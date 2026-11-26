@@ -17,6 +17,7 @@ mod display;
 mod files;
 mod gallery;
 mod install;
+mod messages;
 mod pairing;
 mod phones;
 mod saver;
@@ -83,6 +84,9 @@ struct Ui {
     start: Rc<welcome::StartUi>,
     set: SettingsUi,
     saver: Rc<saver::SaverUi>,
+    msgs: Rc<messages::MessagesUi>,
+    reminders: Rc<messages::Reminders>,
+    errs: Rc<RefCell<alp_screen::set::ErrLog>>,
     local: Rc<Cell<alp_screen::set::LocalPrefs>>,
     /// When the screen was last touched, and when alpd was last told.
     last_touch: Cell<std::time::Instant>,
@@ -405,7 +409,6 @@ fn build(app: &adw::Application) {
         &["pill", "glass-btn"],
     );
     let tiles = HomeTiles::new(&texts);
-    let home_page = home_layout(&home, &[&home.photos_btn, &settings_btn, &lock_btn], &tiles);
 
     let stack = gtk4::Stack::builder()
         .transition_type(gtk4::StackTransitionType::Crossfade)
@@ -424,6 +427,14 @@ fn build(app: &adw::Application) {
         note: Rc::new(style::Note::new("bad", "")),
         errs: Rc::new(RefCell::new(alp_screen::set::ErrLog::default())),
     };
+    let reminders = messages::Reminders::new(&ctx);
+    let msgs = messages::MessagesUi::new(&ctx);
+    let home_page = home_layout(
+        &home,
+        &[&home.photos_btn, &settings_btn, &lock_btn],
+        &reminders.root,
+        &tiles,
+    );
     let setup_ui = setup::SetupUi::new(texts.clone(), client.clone(), tx.clone(), &stack);
     let (settings_page, set) = settings_page(&ctx, &setup_ui);
     let inst = install::InstallUi::new(texts.clone(), client.clone(), tx.clone(), &stack);
@@ -474,6 +485,9 @@ fn build(app: &adw::Application) {
         start: start.clone(),
         set,
         saver,
+        msgs,
+        reminders,
+        errs: ctx.errs.clone(),
         local: ctx.local.clone(),
         last_touch: Cell::new(std::time::Instant::now()),
         last_ping: Cell::new(std::time::Instant::now()),
@@ -519,6 +533,8 @@ fn build(app: &adw::Application) {
             u.gallery.close();
             u.stack.set_visible_child_name("home");
         });
+        let u = ui.clone();
+        ui.bar.errors.connect_clicked(move |b| u.msgs.toggle(b));
         let u = ui.clone();
         ui.bar.settings.connect_clicked(move |_| {
             u.gallery.close();
@@ -769,6 +785,12 @@ fn handle(ui: &Ui, m: Msg) {
         Msg::State(Ok(w)) => {
             let s = Screen::from_state(&w);
             *ui.last_bar.borrow_mut() = Some(model::bar::Bar::from_state(&w));
+            {
+                let t = ui.texts.clone();
+                ui.errs.borrow_mut().sync(&w, dialogs::now(), &|k| t.t(k));
+                ui.bar.set_dot(ui.errs.borrow().tone());
+                ui.msgs.update(&w);
+            }
             ui.open.set(s.open);
             ui.idle_secs
                 .set(w["console"]["idle_lock_seconds"].as_u64().unwrap_or(300));
@@ -815,6 +837,7 @@ fn handle(ui: &Ui, m: Msg) {
                 *ui.gallery_url.borrow_mut() = url;
                 ui.pair.show_pending(&model::pairing::pending(&w));
                 show_settings(&ui.set, &ui.texts, &Settings::from_state(&w));
+                ui.reminders.show(&w);
                 ui.set.phones.update(&w);
                 ui.set.account.update(&w);
                 ui.set.disk.update(&w);
@@ -851,6 +874,7 @@ fn handle(ui: &Ui, m: Msg) {
                 ui.lock.badge.set_icon_name(Some(icon));
                 tone.apply(&ui.lock.badge);
                 ui.gallery.close();
+                ui.msgs.close();
                 ui.pair.locked();
                 if !matches!(
                     ui.stack.visible_child_name().as_deref(),
@@ -869,7 +893,10 @@ fn handle(ui: &Ui, m: Msg) {
         Msg::Pair(m) => ui.pair.handle(m),
         Msg::Setup(m) => ui.setup.handle(m),
         Msg::Start(m) => ui.start.handle(m),
-        Msg::ErrorsChanged => {}
+        Msg::ErrorsChanged => {
+            ui.bar.set_dot(ui.errs.borrow().tone());
+            ui.msgs.changed();
+        }
         Msg::Refresh => {
             let (c, tx) = (ui.client.clone(), ui.tx.clone());
             std::thread::spawn(move || {
@@ -1492,6 +1519,7 @@ impl HomeTiles {
 fn home_layout(
     home: &HomeUi,
     buttons: &[&gtk4::Button],
+    reminders: &gtk4::Box,
     tiles: &HomeTiles,
 ) -> gtk4::ScrolledWindow {
     let head = gtk4::Box::builder()
@@ -1524,6 +1552,7 @@ fn home_layout(
         .margin_end(48)
         .build();
     page.append(&head);
+    page.append(reminders);
     page.append(&tiles.grid);
     style::scroll(
         &adw::Clamp::builder()

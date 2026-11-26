@@ -29,6 +29,9 @@ pub struct TopBar {
     battery_text: gtk4::Label,
     clock: gtk4::Label,
     status: gtk4::Image,
+    /// The (i) button: opens the messages (wired in main.rs).
+    pub errors: gtk4::Button,
+    dot: gtk4::Box,
 }
 
 fn stat() -> gtk4::Box {
@@ -77,9 +80,23 @@ impl TopBar {
         battery.append(&battery_text);
         battery.set_visible(false);
         let clock = gtk4::Label::builder().css_classes(["stat"]).build();
+        // (i): the overall status; pressing it opens the messages. A small
+        // dot says something new happened (orange: needs you, red: broken).
         let status = style::icon("emblem-ok-symbolic", 20);
         status.add_css_class("stat");
-        status.set_accessible_role(gtk4::AccessibleRole::Img);
+        let dot = gtk4::Box::builder()
+            .css_classes(["errdot"])
+            .halign(gtk4::Align::End)
+            .valign(gtk4::Align::Start)
+            .visible(false)
+            .can_target(false)
+            .build();
+        let overlay = gtk4::Overlay::builder().child(&status).build();
+        overlay.add_overlay(&dot);
+        let errors = gtk4::Button::builder()
+            .css_classes(["flat"])
+            .child(&overlay)
+            .build();
         let settings = gtk4::Button::from_icon_name("emblem-system-symbolic");
         settings.add_css_class("flat");
         style::name(&settings, &texts.t("home.settings"));
@@ -94,7 +111,7 @@ impl TopBar {
             disk.upcast_ref(),
             battery.upcast_ref(),
             clock.upcast_ref(),
-            status.upcast_ref(),
+            errors.upcast_ref(),
             settings.upcast_ref(),
             power.upcast_ref(),
         ] {
@@ -121,7 +138,23 @@ impl TopBar {
             battery_text,
             clock,
             status,
+            errors,
+            dot,
         }
+    }
+
+    /// The dot on the (i): the worst message nobody has looked at yet.
+    pub fn set_dot(&self, tone: Option<alp_screen::set::Lv>) {
+        use alp_screen::set::Lv;
+        self.dot.remove_css_class("warn");
+        self.dot.remove_css_class("bad");
+        match tone {
+            Some(Lv::Bad) => self.dot.add_css_class("bad"),
+            Some(Lv::Warn) => self.dot.add_css_class("warn"),
+            _ => {}
+        }
+        self.dot
+            .set_visible(matches!(tone, Some(Lv::Bad | Lv::Warn)));
     }
 
     /// Shows the state. `open`: the console is signed in; `setup`: the
@@ -250,10 +283,14 @@ impl TopBar {
             Level::Critical => "critical",
         };
         style::name(
-            &self.status,
+            &self.errors,
             &format!("{}: {}", t.t("tray.errors"), t.t(&format!("lv.{level}"))),
         );
+        self.errors
+            .set_tooltip_text(Some(&t.t(&format!("lv.{level}"))));
 
+        // The messages lead into Settings: only when signed in.
+        self.errors.set_sensitive(open);
         self.settings
             .set_visible(signed_in && matches!(page, "home" | "gallery"));
         // Not while disks are being written (install, archive being made).

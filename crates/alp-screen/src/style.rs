@@ -304,6 +304,15 @@ window.alp {
 .danger-box.lose { background-color: #fff5f4; }
 .danger-box.keep { background-color: #f3faf5; }
 .msg-row.resolved label { color: #8a8d96; }
+.errdot { min-width: 9px; min-height: 9px; border-radius: 999px; border: 1.5px solid #ffffff; }
+.errdot.warn { background-color: #ff9f0a; }
+.errdot.bad { background-color: #ff453a; }
+.msg-dot { min-width: 10px; min-height: 10px; border-radius: 999px; background-color: #8a8d96; }
+.msg-dot.warn { background-color: #ff9f0a; }
+.msg-dot.bad { background-color: #d70015; }
+.msg-dot.info { background-color: #0a6cdc; }
+.need-row { border-radius: 14px; padding: 10px 12px; background-color: #fff7e8; border: 1px solid rgba(179,92,0,0.25); }
+.reminders { border-radius: 18px; padding: 6px 4px; background-color: rgba(255,255,255,0.94); }
 
 /* The photo frame */
 .saver { background-color: #000000; }
