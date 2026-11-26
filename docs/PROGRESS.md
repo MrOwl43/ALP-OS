@@ -109,6 +109,10 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   disk kinds (installer `kind`/`long_term`), short advice with a "?" bubble.
 - CI green 2026-11-26 (run 45723498838, 5749f66): base + installed; shell job only on the two old
   merge commits (squash-merge).
+- 2026-11-26: clock security item done (ADR 0024 addendum: no certificate on a clock before the
+  image's date; the CA is never replaced because the clock says it expires; host test
+  `tests/ci/check-live-tls.sh`). AI search licence check: `docs/research/ai-photo-search-licences.md`
+  (faces: InsightFace models need a paid licence, keep off; search: LAION OpenCLIP MIT, later).
 - Later (TASKS T69, T70): user-chosen server name; lock / screen-off timeouts (5 min default).
 - Next: PR with the owner's OK (squash); `/claude-security` scan before release; Immich admin
   password after a reopen (plan VERIFY).
