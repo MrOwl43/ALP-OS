@@ -35,10 +35,10 @@ to a later version with the owner's agreement · **dropped** on purpose.
 | Phone approve pop-up | pairing pages | ok |
 | Shut down / restart with steps | top bar power + alpd | ok (no step list: gap, small) |
 | Import from a USB disk | — | gap |
-| Files (USB disks) | — | gap |
-| Disks and format (danger + slide) | — | gap |
-| Terminal (advanced) | — | gap |
-| Reset everything (danger + slide) | — | gap |
+| Files (USB disks) | — | ok: read only; photos and text open; videos are not played yet |
+| Disks and format (danger + slide) | — | ok |
+| Terminal (advanced) | — | ok (locked viewer on the local terminal port) |
+| Reset everything (danger + slide) | — | ok (password, two warnings, slide, progress) |
 | Chain (8-word code, join, leave) | `chain.rs` | ok (2026-11-26) |
 | Screen saver | `saver.rs` (starts after the lock time, locks, any touch ends it; the choice is kept in a small file) | ok (2026-11-26) |
 
@@ -55,4 +55,4 @@ to a later version with the owner's agreement · **dropped** on purpose.
 | Time | date and time, sync now, time zone | sync + zone | ok (2026-11-26) |
 | Power | battery, shut down, restart | power | ok |
 | About | version, update | about | ok |
-| Advanced | disks, files, terminal, reset, install | install | gap: disks, files, terminal, reset |
+| Advanced | disks, files, terminal, reset, install | install | ok (10-minute password gate; install row kept) |

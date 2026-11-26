@@ -582,6 +582,56 @@ pub fn job(w: &Value, id: &str) -> Option<JobView> {
     })
 }
 
+/// One block of the partition bar: `role` is `backup`, `system`, `other` or
+/// `free`; `part` points into the disk's partitions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Segment {
+    pub role: &'static str,
+    pub weight: u64,
+    pub part: Option<usize>,
+}
+
+/// The blocks of the partition bar, by size (0.2.7 `partBar`).
+pub fn segments(d: &DiskItem) -> Vec<Segment> {
+    let used: u64 = d.parts.iter().map(|p| p.size_bytes).sum();
+    let size = d.size_bytes.max(used).max(1);
+    let role = match d.role.as_str() {
+        "backup" => "backup",
+        "system" => "system",
+        _ => "other",
+    };
+    let n = d.parts.len().max(1) as u64;
+    let mut v: Vec<Segment> = d
+        .parts
+        .iter()
+        .enumerate()
+        .map(|(i, p)| Segment {
+            role,
+            weight: if p.size_bytes > 0 {
+                p.size_bytes
+            } else {
+                size / n
+            },
+            part: Some(i),
+        })
+        .collect();
+    if used > 0 && size - used > size / 100 {
+        v.push(Segment {
+            role: "free",
+            weight: size - used,
+            part: None,
+        });
+    }
+    if v.is_empty() {
+        v.push(Segment {
+            role: "free",
+            weight: size,
+            part: None,
+        });
+    }
+    v
+}
+
 // ---------------------------------------------------------------- files
 
 /// A file or folder listed on another disk.
@@ -1144,6 +1194,22 @@ mod tests {
         assert_eq!(d[1].title(), "sdc");
         assert!(d[2].offline() && d[2].lock.as_deref() == Some("internal_live"));
         assert_eq!(d[0].part_ids(), ["p1"]);
+    }
+
+    #[test]
+    fn partition_bar_blocks() {
+        let d = disks(
+            &json!({"disks": [{"id": "u", "kind": "external", "role": "other",
+            "size_bytes": 1000, "parts": [{"size_bytes": 400}, {"size_bytes": 300}]}]}),
+        )
+        .remove(0);
+        let s = segments(&d);
+        assert_eq!(s.len(), 3);
+        assert_eq!((s[0].role, s[0].weight), ("other", 400));
+        assert_eq!((s[2].role, s[2].weight, s[2].part), ("free", 300, None));
+        let empty = disks(&json!({"disks": [{"id": "e", "size_bytes": 50}]})).remove(0);
+        assert_eq!(segments(&empty).len(), 1);
+        assert_eq!(segments(&empty)[0].role, "free");
     }
 
     #[test]

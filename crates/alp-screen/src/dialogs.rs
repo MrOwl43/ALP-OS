@@ -494,7 +494,6 @@ pub enum Confirm {
     /// The slide, with its words.
     Slide(String),
     /// A plain button (the first screens of "start over").
-    #[allow(dead_code)]
     Button(String),
 }
 
@@ -687,4 +686,52 @@ pub fn done_page(
     let page = style::scroll(&style::panel(&kids, 560));
     ctx.show_page("done", &page);
     go.grab_focus();
+}
+
+/// A page in a light window with a Back button and a title above `body`
+/// (Disks, Files, Terminal). `head_extra` goes at the far end of the title
+/// row.
+pub fn sub_window(
+    ctx: &Ctx,
+    title: &str,
+    sub: Option<&str>,
+    head_extra: Option<&gtk4::Widget>,
+    back: impl Fn() + 'static,
+    body: &impl IsA<gtk4::Widget>,
+) -> gtk4::Box {
+    let b = style::button("go-previous-symbolic", &ctx.t("common.back"), &["flat"]);
+    b.set_valign(gtk4::Align::Center);
+    b.connect_clicked(move |_| back());
+    let titles = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .hexpand(true)
+        .valign(gtk4::Align::Center)
+        .build();
+    titles.append(&style::text(title, &["title-2"], false));
+    if let Some(s) = sub {
+        titles.append(&style::text(s, &["dim-label"], false));
+    }
+    let head = gtk4::Box::builder()
+        .spacing(12)
+        .margin_top(20)
+        .margin_bottom(12)
+        .margin_start(20)
+        .margin_end(20)
+        .build();
+    head.append(&b);
+    head.append(&titles);
+    if let Some(x) = head_extra {
+        head.append(x);
+    }
+    let col = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .vexpand(true)
+        .build();
+    col.append(&head);
+    col.append(body);
+    let out = gtk4::Box::builder()
+        .orientation(gtk4::Orientation::Vertical)
+        .build();
+    out.append(&style::window(&col, 1000));
+    out
 }

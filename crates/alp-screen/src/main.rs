@@ -8,10 +8,13 @@
 
 mod account;
 mod activity;
+mod advanced;
 mod chain;
 mod dialogs;
 mod disk;
+mod disks;
 mod display;
+mod files;
 mod gallery;
 mod install;
 mod pairing;
@@ -180,14 +183,13 @@ struct SettingsUi {
     disk: Rc<disk::DiskUi>,
     display: Rc<display::DisplayUi>,
     chain: Rc<chain::ChainUi>,
+    adv: Rc<advanced::AdvancedUi>,
     /// This screen runs from the install stick (the install pages work).
     can_install: Cell<bool>,
     last: RefCell<Settings>,
     note: Rc<style::Note>,
     /// Advanced: install on this computer (only while running from a stick).
     advanced: adw::PreferencesGroup,
-    /// The Advanced category in the list (shown with [`SettingsUi::advanced`]).
-    advanced_row: gtk4::ListBoxRow,
     install_btn: gtk4::Button,
     /// Network: opens the Network page (welcome.rs).
     network_btn: gtk4::Button,
@@ -822,7 +824,7 @@ fn handle(ui: &Ui, m: Msg) {
                 let (can_install, job) = model::install::state(&w);
                 ui.set.can_install.set(can_install);
                 ui.set.advanced.set_visible(can_install);
-                ui.set.advanced_row.set_visible(can_install);
+                ui.set.adv.update(&w);
                 ui.inst.show_job(&job);
                 if matches!(
                     ui.stack.visible_child_name().as_deref(),
@@ -1046,7 +1048,8 @@ fn settings_page(ctx: &dialogs::Ctx, setup: &Rc<setup::SetupUi>) -> (gtk4::Box, 
     about_page.add(&about);
 
     // Advanced: install on this computer (only while running from a stick).
-    let advanced_page = page(());
+    let adv = advanced::AdvancedUi::new(ctx);
+    let advanced_page = adv.page.clone();
     let install_btn = style::button("go-next-symbolic", &texts.t("set.install.go"), &[]);
     install_btn.set_valign(gtk4::Align::Center);
     let install_row = icon_row(
@@ -1074,7 +1077,6 @@ fn settings_page(ctx: &dialogs::Ctx, setup: &Rc<setup::SetupUi>) -> (gtk4::Box, 
     heading.set_margin_start(32);
     heading.set_margin_top(24);
     heading.set_margin_bottom(4);
-    let mut advanced_row = None;
     let mut cat_rows: Vec<(String, gtk4::ListBoxRow)> = Vec::new();
     for (key, icon, tone, p) in [
         ("phones", "phone-symbolic", Tone::Violet, &phones_page),
@@ -1122,10 +1124,6 @@ fn settings_page(ctx: &dialogs::Ctx, setup: &Rc<setup::SetupUi>) -> (gtk4::Box, 
         row.update_property(&[gtk4::accessible::Property::Label(&name)]);
         list.append(&row);
         cat_rows.push((key.to_string(), row.clone()));
-        if key == "advanced" {
-            row.set_visible(false);
-            advanced_row = Some(row);
-        }
     }
     {
         let (pages, heading) = (pages.clone(), heading.clone());
@@ -1133,12 +1131,46 @@ fn settings_page(ctx: &dialogs::Ctx, setup: &Rc<setup::SetupUi>) -> (gtk4::Box, 
             .iter()
             .map(|(k, _)| (k.clone(), texts.t(&format!("cat.{k}"))))
             .collect();
-        list.connect_row_selected(move |_, row| {
+        // Advanced asks for the password (once per 10 minutes); until it
+        // is given, the list stays where it was.
+        let shown = Rc::new(RefCell::new(String::from("phones")));
+        let adv = adv.clone();
+        list.connect_row_selected(move |l, row| {
             let Some(row) = row else { return };
-            let key = row.widget_name();
+            let key = row.widget_name().to_string();
+            if key == "advanced" && !adv.is_open() {
+                let back = l.row_at_index(0);
+                let prev = shown.borrow().clone();
+                let prev_row = (0..)
+                    .map_while(|i| l.row_at_index(i))
+                    .find(|r| r.widget_name() == prev.as_str())
+                    .or(back);
+                l.select_row(prev_row.as_ref());
+                let (l2, row2) = (l.clone(), row.clone());
+                adv.ask(l, move || l2.select_row(Some(&row2)));
+                return;
+            }
+            if key == "advanced" {
+                adv.extend();
+            }
+            *shown.borrow_mut() = key.clone();
             pages.set_visible_child_name(&key);
-            if let Some((_, n)) = names.iter().find(|(k, _)| *k == key.as_str()) {
+            if let Some((_, n)) = names.iter().find(|(k, _)| *k == key) {
                 heading.set_label(n);
+            }
+        });
+    }
+    {
+        // Coming back to Settings after the password ran out: not on Advanced.
+        let (adv, list) = (adv.clone(), list.clone());
+        ctx.stack.connect_visible_child_notify(move |s| {
+            if s.visible_child_name().as_deref() == Some("settings")
+                && !adv.is_open()
+                && list
+                    .selected_row()
+                    .is_some_and(|r| r.widget_name() == "advanced")
+            {
+                list.select_row(list.row_at_index(0).as_ref());
             }
         });
     }
@@ -1179,7 +1211,6 @@ fn settings_page(ctx: &dialogs::Ctx, setup: &Rc<setup::SetupUi>) -> (gtk4::Box, 
         .orientation(gtk4::Orientation::Vertical)
         .build();
     b.append(&style::window(&both, 1000));
-    let advanced_row = advanced_row.expect("advanced category");
     let ui = SettingsUi {
         version,
         clock,
@@ -1194,7 +1225,7 @@ fn settings_page(ctx: &dialogs::Ctx, setup: &Rc<setup::SetupUi>) -> (gtk4::Box, 
         last: RefCell::new(Settings::default()),
         note,
         advanced,
-        advanced_row,
+        adv,
         install_btn,
         network_btn,
         network,
