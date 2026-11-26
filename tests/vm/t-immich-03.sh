@@ -79,7 +79,7 @@ hook() {
     }
     until code=$($c -o /dev/null -w '%{http_code}' "$base/api/server/ping"); [[ $code == 200 ]]; do
         (( ++tries < 450 )) || { echo "FAIL: Immich does not answer on 443 in 15 minutes (last answer: $code)" >&2
-            grep -a 'IMMDIAG' "$ALP_SERIAL_LOG" | tr -d '\r' | tail -n 40 >&2; return 1; }
+            grep -a 'IMMDIAG' "$ALP_SERIAL_LOG" | tr -d '\r' | tail -n 120 >&2; return 1; }
         sleep 2
     done
     echo "ok:   Immich answers through the proxy on 443 (round $ROUND)"
@@ -210,11 +210,16 @@ SH
 # In the guest: every minute, the photo service's state on the console
 # (printed by the hook when the gallery does not answer).
 read -r -d '' diag <<'DIAG' || true
-while sleep 60; do
+for t in 240 300; do
+    sleep "$t"
     {
-        echo "units $(systemctl is-active alp-immich.service alp-live-archive.service alpd.service | tr '\n' ' ')"
-        journalctl -b -u alp-immich.service -o cat --no-pager | tail -n 3
-        journalctl -b _UID=50000 -o cat --no-pager 2>/dev/null | tail -n 4
+        echo "units $(systemctl is-active alp-immich.service alp-live-archive.service alpd.service user@50000.service | tr '\n' ' ')"
+        for m in /var/lib/alp-pool/files /var/lib/alp-index/immich /run/alp/immich/originals; do
+            echo "mount $m: $(findmnt -n -o SOURCE,FSTYPE "$m" | tr '\n' ' ')"
+        done
+        journalctl -b -o short-monotonic --no-pager -u alp-immich.service -u alp-live-archive.service -u user@50000.service | tail -n 25
+        journalctl -b _UID=50000 -o short-monotonic --no-pager 2>/dev/null | grep -iE 'immich|condition|fail' | tail -n 12
+        journalctl -b -u alpd -o short-monotonic --no-pager | grep -iE 'immich|gallery|pool|archive' | tail -n 12
     } | sed 's/^/IMMDIAG /' >/dev/console
 done
 DIAG
