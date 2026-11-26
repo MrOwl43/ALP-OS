@@ -97,8 +97,21 @@ Short state for the next session. Details: ADRs, `docs/streams/*.md`, PRs.
   only on two merge commits from the design branch (default "Merge branch 'claude/…'" message):
   squash-merge the PR so main stays clean.
 - Owner (2026-11-25): no interim laptop build; he tests the finished product on old and new laptops.
-- Next: T-SCREEN-01 VM test of the native setup
-  screens; review items 4 and 5; PR with the owner's OK; `/claude-security` scan before release.
+- 2026-11-26: reopen an old archive with the 15 recovery words after losing the system disk (owner:
+  in 0.2.8; plan `docs/plans/0.2.8-reopen-archive.md`): installer `--reopen` (never erased), seed
+  `reopen = true`, `state.pool = "reopen"`, `POST archive/reopen-pool` (job `archive.reopen`,
+  ALP-STO-126, wrong words = `recovery.wrong`, nothing changed), slot 0 moved to the new pool key
+  only after the words open a recovery slot; screens from the design thread. One review round:
+  blocker (empty slot 0 after a cut) and 5 items fixed; follow-ups in the plan's Risks.
+  T-INST-02 part 5 passes. Black native screen fixed (cage socket in /run/alp-kiosk; `%U` in a
+  system unit is 0): T-SCREEN-01 passes with a real picture. Also merged: modern look, Settings in
+  categories, lock screen with status in the middle and live network/disk graphs, SSD/HDD/USB
+  disk kinds (installer `kind`/`long_term`), short advice with a "?" bubble.
+- CI green 2026-11-26 (run 45723498838, 5749f66): base + installed; shell job only on the two old
+  merge commits (squash-merge).
+- Later (TASKS T69, T70): user-chosen server name; lock / screen-off timeouts (5 min default).
+- Next: PR with the owner's OK (squash); `/claude-security` scan before release; Immich admin
+  password after a reopen (plan VERIFY).
 
 ## Alpha 0.2.7 (started 2026-11-15, same branch, on top of 0.2.61)
 
