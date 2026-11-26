@@ -304,6 +304,11 @@ window.alp {
 .danger-box.lose { background-color: #fff5f4; }
 .danger-box.keep { background-color: #f3faf5; }
 .msg-row.resolved label { color: #8a8d96; }
+
+/* The photo frame */
+.saver { background-color: #000000; }
+.saver-clock { color: #ffffff; font-size: 44pt; font-weight: 300; text-shadow: 0 2px 12px rgba(0,0,0,0.5); }
+.saver-note { color: rgba(255,255,255,0.85); font-size: 13pt; text-shadow: 0 1px 6px rgba(0,0,0,0.5); }
 "#;
 
 /// Loads the look for the whole screen (once, at start).

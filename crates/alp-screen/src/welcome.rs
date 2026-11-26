@@ -39,7 +39,7 @@ fn tz(zone: Option<&str>) -> glib::TimeZone {
     zone.map_or_else(glib::TimeZone::utc, |z| glib::TimeZone::new(Some(z)))
 }
 
-fn at(secs: i64, zone: Option<&str>) -> Option<glib::DateTime> {
+pub(crate) fn at(secs: i64, zone: Option<&str>) -> Option<glib::DateTime> {
     glib::DateTime::from_unix_utc(secs)
         .ok()?
         .to_timezone(&tz(zone))

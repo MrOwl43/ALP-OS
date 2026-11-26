@@ -40,7 +40,7 @@ to a later version with the owner's agreement · **dropped** on purpose.
 | Terminal (advanced) | — | gap |
 | Reset everything (danger + slide) | — | gap |
 | Chain (8-word code, join, leave) | — | gap (check if still in the 0.2.8 plan) |
-| Screen saver | — | gap |
+| Screen saver | `saver.rs` (starts after the lock time, locks, any touch ends it; the choice is kept in a small file) | ok (2026-11-26) |
 
 ## Settings (0.2.7 had ten categories)
 
@@ -51,7 +51,7 @@ to a later version with the owner's agreement · **dropped** on purpose.
 | Disk | archive place, space bar, encrypt later | `disk.rs` ("Set up" opens the install pages while running from a stick, else says what to plug in) | ok (2026-11-26) |
 | Chain | show / leave / set up | — | gap |
 | Network | status, change Wi-Fi | Network page (from settings) | ok (2026-11-26) |
-| Display | size, resolution, natural scrolling, background, lock after, lock screen shows, screen saver | — | gap |
+| Display | size, resolution, natural scrolling, background, lock after, lock screen shows, screen saver | `display.rs` (size applies as text size; natural scrolling and idle choice show only when alpd announces them) | ok (2026-11-26) |
 | Time | date and time, sync now, time zone | sync + zone | ok (2026-11-26) |
 | Power | battery, shut down, restart | power | ok |
 | About | version, update | about | ok |

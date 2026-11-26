@@ -39,6 +39,8 @@ pub struct Ctx {
     pub tx: mpsc::Sender<Msg>,
     /// Opens a Settings category by name (set by the settings page).
     pub open_settings: OpenSettings,
+    /// What this screen remembers by itself (the photo frame switch).
+    pub local: Rc<Cell<set::LocalPrefs>>,
     /// The line at the top of Settings for a failed action.
     pub note: Rc<style::Note>,
     /// The messages behind the (i): a failed action is kept there too.

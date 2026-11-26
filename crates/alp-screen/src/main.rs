@@ -10,10 +10,12 @@ mod account;
 mod activity;
 mod dialogs;
 mod disk;
+mod display;
 mod gallery;
 mod install;
 mod pairing;
 mod phones;
+mod saver;
 mod setup;
 mod style;
 mod topbar;
@@ -76,6 +78,14 @@ struct Ui {
     setup: Rc<setup::SetupUi>,
     start: Rc<welcome::StartUi>,
     set: SettingsUi,
+    saver: Rc<saver::SaverUi>,
+    local: Rc<Cell<alp_screen::set::LocalPrefs>>,
+    /// When the screen was last touched, and when alpd was last told.
+    last_touch: Cell<std::time::Instant>,
+    last_ping: Cell<std::time::Instant>,
+    /// Seconds without use until the screen locks (from the state).
+    idle_secs: Cell<u64>,
+    zone: RefCell<Option<String>>,
 }
 
 /// The sign-in page's changing parts.
@@ -167,6 +177,7 @@ struct SettingsUi {
     phones: Rc<phones::PhonesUi>,
     account: Rc<account::AccountUi>,
     disk: Rc<disk::DiskUi>,
+    display: Rc<display::DisplayUi>,
     /// This screen runs from the install stick (the install pages work).
     can_install: Cell<bool>,
     last: RefCell<Settings>,
@@ -403,6 +414,9 @@ fn build(app: &adw::Application) {
         stack: stack.clone(),
         tx: tx.clone(),
         open_settings: Rc::new(RefCell::new(None)),
+        local: Rc::new(Cell::new(alp_screen::set::LocalPrefs::load(
+            &alp_screen::set::prefs_path(),
+        ))),
         note: Rc::new(style::Note::new("bad", "")),
         errs: Rc::new(RefCell::new(alp_screen::set::ErrLog::default())),
     };
@@ -425,6 +439,8 @@ fn build(app: &adw::Application) {
     stack.add_named(&settings_page, Some("settings"));
     let gallery = gallery::GalleryUi::new();
     stack.add_named(&gallery.page, Some("gallery"));
+    let saver = saver::SaverUi::new(&texts);
+    stack.add_named(&saver.page, Some("saver"));
     // Start on the sign-in page: the install, setup and pairing pages were
     // added first, and a stack shows its first page.
     stack.set_visible_child_name("lock");
@@ -453,6 +469,12 @@ fn build(app: &adw::Application) {
         setup: setup_ui,
         start: start.clone(),
         set,
+        saver,
+        local: ctx.local.clone(),
+        last_touch: Cell::new(std::time::Instant::now()),
+        last_ping: Cell::new(std::time::Instant::now()),
+        idle_secs: Cell::new(300),
+        zone: RefCell::new(None),
     });
     // Install from the stick: chosen in the first setup; here only under
     // Settings > Advanced, for testing (owner, 2026-11-25).
@@ -611,6 +633,51 @@ fn build(app: &adw::Application) {
         });
     }
 
+    // Any touch, key or movement: the screen is in use (the photo frame
+    // ends, alpd is told now and then so its own idle lock waits).
+    {
+        let touch = {
+            let u = ui.clone();
+            move || touch(&u)
+        };
+        let touch = Rc::new(touch);
+        let key = gtk4::EventControllerKey::new();
+        key.set_propagation_phase(gtk4::PropagationPhase::Capture);
+        let t = touch.clone();
+        key.connect_key_pressed(move |_, _, _, _| {
+            t();
+            glib::Propagation::Proceed
+        });
+        let motion = gtk4::EventControllerMotion::new();
+        motion.set_propagation_phase(gtk4::PropagationPhase::Capture);
+        let t = touch.clone();
+        motion.connect_motion(move |_, _, _| t());
+        let click = gtk4::GestureClick::new();
+        click.set_propagation_phase(gtk4::PropagationPhase::Capture);
+        let t = touch.clone();
+        click.connect_pressed(move |g, _, _, _| {
+            g.set_state(gtk4::EventSequenceState::None);
+            t();
+        });
+        let scroll = gtk4::EventControllerScroll::new(gtk4::EventControllerScrollFlags::BOTH_AXES);
+        scroll.set_propagation_phase(gtk4::PropagationPhase::Capture);
+        let t = touch.clone();
+        scroll.connect_scroll(move |_, _, _| {
+            t();
+            glib::Propagation::Proceed
+        });
+        stack.add_controller(key);
+        stack.add_controller(motion);
+        stack.add_controller(click);
+        stack.add_controller(scroll);
+        // The photo frame starts when the screen was not used for the lock time.
+        let u = ui.clone();
+        glib::timeout_add_seconds_local(2, move || {
+            check_saver(&u);
+            glib::ControlFlow::Continue
+        });
+    }
+
     // The top bar above every page.
     let shell = gtk4::Box::builder()
         .orientation(gtk4::Orientation::Vertical)
@@ -628,10 +695,54 @@ fn build(app: &adw::Application) {
     win.present();
 }
 
+/// The screen is in use.
+fn touch(ui: &Rc<Ui>) {
+    let now = std::time::Instant::now();
+    ui.last_touch.set(now);
+    if ui.saver.running() {
+        // Ends the photo frame; the lock screen is underneath.
+        ui.saver.stop();
+        ui.stack
+            .set_visible_child_name(if ui.open.get() { "home" } else { "lock" });
+        ui.lock.password.grab_focus();
+        return;
+    }
+    if ui.open.get() && now.duration_since(ui.last_ping.get()) > Duration::from_secs(30) {
+        ui.last_ping.set(now);
+        let c = ui.client.clone();
+        std::thread::spawn(move || {
+            let _ = c.post("live/console/activity", &json!({}));
+        });
+    }
+}
+
+/// Starts the photo frame (and locks) when the switch is on and the screen
+/// was not used for the lock time. The gallery waits at least 30 minutes.
+fn check_saver(ui: &Rc<Ui>) {
+    if !ui.local.get().saver || !ui.open.get() || ui.in_setup.get() || ui.saver.running() {
+        return;
+    }
+    let page = ui.stack.visible_child_name().unwrap_or_default();
+    let idle = ui.last_touch.get().elapsed().as_secs();
+    if !alp_screen::set::idle_over(ui.idle_secs.get(), idle, page == "gallery") {
+        return;
+    }
+    ui.gallery.close();
+    let (c, tx) = (ui.client.clone(), ui.tx.clone());
+    std::thread::spawn(move || {
+        let _ = c.post("live/console/lock", &json!({}));
+        c.forget();
+        let _ = tx.send(Msg::State(c.get("live/state")));
+    });
+    ui.saver.start(ui.zone.borrow().clone());
+    ui.stack.set_visible_child_name("saver");
+}
+
 /// Draws the top bar for the page now showing.
 fn redraw_bar(ui: &Ui) {
     if let Some(b) = ui.last_bar.borrow().as_ref() {
         let page = ui.stack.visible_child_name().unwrap_or_default();
+        ui.bar.root.set_visible(page != "saver");
         ui.bar
             .show(&ui.texts, b, &page, ui.open.get(), ui.in_setup.get());
     }
@@ -655,6 +766,9 @@ fn handle(ui: &Ui, m: Msg) {
             let s = Screen::from_state(&w);
             *ui.last_bar.borrow_mut() = Some(model::bar::Bar::from_state(&w));
             ui.open.set(s.open);
+            ui.idle_secs
+                .set(w["console"]["idle_lock_seconds"].as_u64().unwrap_or(300));
+            *ui.zone.borrow_mut() = w["prefs"]["time_zone"].as_str().map(str::to_string);
             show_time(&ui.lock);
             ui.start.update(&w);
             // First start: Welcome and Network (0.2.6 order), then the
@@ -700,13 +814,18 @@ fn handle(ui: &Ui, m: Msg) {
                 ui.set.phones.update(&w);
                 ui.set.account.update(&w);
                 ui.set.disk.update(&w);
+                ui.set.display.update(&w, ui.local.get());
                 show_net_time(&ui.set, &ui.texts, &w);
                 let (can_install, job) = model::install::state(&w);
                 ui.set.can_install.set(can_install);
                 ui.set.advanced.set_visible(can_install);
                 ui.set.advanced_row.set_visible(can_install);
                 ui.inst.show_job(&job);
-                if ui.stack.visible_child_name().as_deref() == Some("lock") {
+                if matches!(
+                    ui.stack.visible_child_name().as_deref(),
+                    Some("lock" | "saver")
+                ) {
+                    ui.saver.stop();
                     ui.stack.set_visible_child_name("home");
                 }
             } else {
@@ -728,7 +847,10 @@ fn handle(ui: &Ui, m: Msg) {
                 tone.apply(&ui.lock.badge);
                 ui.gallery.close();
                 ui.pair.locked();
-                if ui.stack.visible_child_name().as_deref() != Some("lock") {
+                if !matches!(
+                    ui.stack.visible_child_name().as_deref(),
+                    Some("lock" | "saver")
+                ) {
                     ui.stack.set_visible_child_name("lock");
                     ui.lock.password.grab_focus();
                 }
@@ -823,6 +945,8 @@ fn settings_page(ctx: &dialogs::Ctx, setup: &Rc<setup::SetupUi>) -> (gtk4::Box, 
     let password_page = account.page.clone();
     let disk = disk::DiskUi::new(ctx, account.clone());
     let disk_page = disk.page.clone();
+    let display = display::DisplayUi::new(ctx);
+    let display_page = display.page.clone();
 
     // Time & Language.
     let time_page = page(());
@@ -963,6 +1087,12 @@ fn settings_page(ctx: &dialogs::Ctx, setup: &Rc<setup::SetupUi>) -> (gtk4::Box, 
             &network_page,
         ),
         (
+            "display",
+            "video-display-symbolic",
+            Tone::Violet,
+            &display_page,
+        ),
+        (
             "time",
             "preferences-system-time-symbolic",
             Tone::Teal,
@@ -1052,6 +1182,7 @@ fn settings_page(ctx: &dialogs::Ctx, setup: &Rc<setup::SetupUi>) -> (gtk4::Box, 
         phones,
         account,
         disk,
+        display,
         can_install: Cell::new(false),
         last: RefCell::new(Settings::default()),
         note,
