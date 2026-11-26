@@ -221,9 +221,9 @@ window.alp {
 .advice.tone-warn { color: #8a4300; }
 .advice.tone-ok { color: #17672e; }
 
-.alp popover.help-pop { margin: 0; padding: 0; box-shadow: none; background: transparent; }
-.alp popover.help-pop > contents { margin: 0; box-shadow: none; border-radius: 12px;
-  background-color: #1d2742; color: #ffffff; border: none; padding: 4px; }
+.alp popover.help-pop > contents { border-radius: 14px; background-color: #1d2742; color: #ffffff;
+  border: none; padding: 6px; box-shadow: 0 6px 20px rgba(0,0,0,0.28); }
+.alp popover.help-pop > arrow { background-color: #1d2742; border: none; }
 .alp popover.help-pop label { color: #ffffff; font-weight: 400; }
 
 /* Slide to confirm */
@@ -511,6 +511,25 @@ impl Note {
     }
 }
 
+/// Shows a bubble with a short fade (about 0.15 s).
+fn fade_in(p: &gtk4::Popover) {
+    if p.is_visible() {
+        return;
+    }
+    p.set_opacity(0.0);
+    p.popup();
+    let p = p.clone();
+    gtk4::glib::timeout_add_local(std::time::Duration::from_millis(16), move || {
+        let o = (p.opacity() + 0.11).min(1.0);
+        p.set_opacity(o);
+        if o >= 1.0 {
+            gtk4::glib::ControlFlow::Break
+        } else {
+            gtk4::glib::ControlFlow::Continue
+        }
+    });
+}
+
 /// A round "?" that opens a short explanation (owner, 2026-11-25: one
 /// sentence on screen, more only for those who ask). The bubble opens
 /// while the pointer rests on the "?" and closes when it leaves; a tap or
@@ -532,11 +551,11 @@ impl Help {
             .margin_start(8)
             .margin_end(8)
             .build();
-        // No arrow and no shadow: a plain rounded card, so no dark corners
-        // show where a screen cannot draw see-through edges.
+        // A speech bubble: rounded, a small pointer to the "?", a soft
+        // shadow, and a short fade in (owner, 2026-11-25).
         let pop = gtk4::Popover::builder()
             .child(&words)
-            .has_arrow(false)
+            .has_arrow(true)
             .autohide(false)
             .css_classes(["help-pop"])
             .build();
@@ -553,7 +572,7 @@ impl Help {
         let hover = gtk4::EventControllerMotion::new();
         {
             let p = pop.clone();
-            hover.connect_enter(move |_, _, _| p.popup());
+            hover.connect_enter(move |_, _, _| fade_in(&p));
             let p = pop.clone();
             hover.connect_leave(move |_| p.popdown());
         }
@@ -561,7 +580,7 @@ impl Help {
         {
             let p = pop.clone();
             button.connect_clicked(move |_| {
-                p.popup();
+                fade_in(&p);
                 let p = p.clone();
                 gtk4::glib::timeout_add_seconds_local_once(8, move || p.popdown());
             });
