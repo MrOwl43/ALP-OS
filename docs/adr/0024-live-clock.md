@@ -63,3 +63,25 @@ time on the screen and in the logs stayed wrong.
 - chrony instead of systemd-timesyncd: a new component for the same job.
 - Guessing the offset automatically: nothing on the computer says which
   reading is right without a network.
+
+## Addendum 2026-11-26 (0.2.8): certificates and a wrong clock
+
+Network time is not authenticated, and a hardware clock can be years off.
+The certificate maker (`alp-live-tls`, Live and installed) now:
+
+1. Makes or renews nothing while the clock is earlier than the image's own
+   date (`/usr/lib/os-release`, set by `SourceDateEpoch`) less a day; the
+   certificates already there are kept (phones judge them by their own
+   clock). With no certificate yet, pairing says to restart and try again.
+2. Never replaces the CA because the clock says it expires (before: within
+   a year). A time server pushing the clock ahead could otherwise force a
+   new CA and make every phone pair again. A CA that really expires (10
+   years) becomes a visible step later.
+3. Replaces a CA that is "not valid yet" (made while the clock was ahead)
+   only once systemd-timesyncd has set the clock.
+4. Leaves the server certificate alone while the CA is not valid on the
+   current clock. A server certificate renewed on a clock pushed ahead
+   starts in the future; once the clock is right, `openssl verify` refuses
+   it and it is made again, under the same CA.
+
+Checked on the host by `tests/ci/check-live-tls.sh` (CI shell job).

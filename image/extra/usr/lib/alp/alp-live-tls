@@ -31,10 +31,12 @@
 #                          /.well-known/alparchive/identity.
 #
 # Usage: alp-live-tls [IPv4 address...]
+# ALP_TLS_DIR, ALP_TLS_PUB, ALP_TLS_FLOOR and ALP_TLS_SYNCED move its files
+# for tests/ci/check-live-tls.sh (alpd never sets them).
 set -eu
 umask 077
-d=/var/lib/alp-index/alp/tls
-pub=/run/alp/tls
+d=${ALP_TLS_DIR:-/var/lib/alp-index/alp/tls}
+pub=${ALP_TLS_PUB:-/run/alp/tls}
 addrs=
 for a in "$@"; do
     case $a in
@@ -49,7 +51,7 @@ for a in "$@"; do
     esac
     case " $addrs " in *" $a "*) ;; *) addrs="$addrs $a" ;; esac
 done
-mountpoint -q /var/lib/alp-index || { echo "alp-live-tls: the index is not open" >&2; exit 1; }
+[ -n "${ALP_TLS_DIR:-}" ] || mountpoint -q /var/lib/alp-index || { echo "alp-live-tls: the index is not open" >&2; exit 1; }
 mkdir -p "$d"
 chmod 0700 "$d"
 cd "$d"
@@ -94,12 +96,43 @@ CNF
     return $rc
 }
 
+# The clock (0.2.8 security item): certificates are dated from it, and the
+# network time it is set from is not authenticated.
+#   - Too early (before this image was built, less a day): a dead clock
+#     battery or a wrong hardware clock. Nothing is made or renewed then; the
+#     certificates there are kept (phones judge them by their own clock).
+#   - Too late (a spoofed time server pushing the clock years ahead): the CA
+#     is never replaced because the clock says it expires (that would make
+#     every phone pair again); a CA that has really expired becomes a visible
+#     step later. A server certificate renewed on such a clock starts in the
+#     future, so once the clock is right again `openssl verify` refuses it and
+#     it is made again: phones keep trusting the CA throughout.
+#   - A CA "not valid yet" (made while the clock was ahead) is replaced only
+#     once the network has set the clock.
+now=$(date -u +%s)
+floor=$(stat -c %Y "${ALP_TLS_FLOOR:-/usr/lib/os-release}" 2>/dev/null || echo 0)
+clock_ok=
+[ "$now" -ge $((floor - 86400)) ] && clock_ok=1
+synced=
+[ -e "${ALP_TLS_SYNCED:-/run/systemd/timesync/synchronized}" ] && synced=1
+clock_wrong() {
+    echo "alp-live-tls: the clock is wrong ($(date -u +%Y-%m-%d)); no certificate is made until it is right" >&2
+    exit 1
+}
+starts_later() { # <crt>: its start lies in the future
+    nb=$(openssl x509 -in "$1" -noout -startdate 2>/dev/null | cut -d= -f2)
+    [ -n "$nb" ] && [ "$(date -u -d "$nb" +%s)" -gt "$now" ]
+}
 ca_ok() {
-    [ -s ca.key ] && [ -s ca.crt ] && same_key ca.crt ca.key &&
-        openssl x509 -in ca.crt -noout -checkend 31536000 >/dev/null
+    [ -s ca.key ] && [ -s ca.crt ] && same_key ca.crt ca.key
+}
+# The CA can sign a certificate that verifies now.
+ca_current() {
+    openssl x509 -in ca.crt -noout -checkend 0 >/dev/null && ! starts_later ca.crt
 }
 
-if ! ca_ok; then
+if ! ca_ok || { starts_later ca.crt && [ -n "$synced" ]; }; then
+    [ -n "$clock_ok" ] || clock_wrong
     cat >ca.cnf <<CNF
 [req]
 distinguished_name = dn
@@ -138,7 +171,16 @@ server_ok() {
         openssl x509 -in server.crt -noout -checkend 2592000 >/dev/null && names_addr
 }
 
-if ! server_ok; then
+if server_ok; then
+    :
+elif [ -z "$clock_ok" ]; then
+    [ -s server.crt ] || clock_wrong
+    echo "alp-live-tls: the clock is wrong; the server certificate is kept as it is" >&2
+elif ! ca_current; then
+    # Expired, or not valid yet on this clock: a new server certificate
+    # would not verify either (and would be made again on every call).
+    echo "alp-live-tls: the CA is not valid on this clock; the server certificate is kept as it is" >&2
+else
     san=DNS:alparchive.local
     for a in $addrs; do san="$san,IP:$a"; done
     cat >server.ext <<EXT
@@ -205,7 +247,7 @@ rm -f endorse.msg
 
 openssl x509 -in ca.crt -noout -fingerprint -sha256 | cut -d= -f2 >ca.sha256.tmp
 mv ca.sha256.tmp ca.sha256
-[ -d /run/alp ] || mkdir -m 0755 /run/alp
+[ -d "${pub%/*}" ] || mkdir -m 0755 "${pub%/*}"
 [ -d "$pub" ] || mkdir -m 0755 "$pub"
 install -m 0644 identity.json "$pub/identity.json.tmp"
 mv "$pub/identity.json.tmp" "$pub/identity.json"

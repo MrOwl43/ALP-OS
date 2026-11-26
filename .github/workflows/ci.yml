@@ -66,6 +66,7 @@ jobs:
           tool: shellcheck@0.11.0
       - run: shellcheck --version && shellcheck tests/vm/*.sh tests/ci/*.sh tests/contracts/*.sh tests/e2e/*.sh tests/lib/*.sh
       - run: tests/ci/check-snapshot-epoch.sh image/mkosi.conf
+      - run: tests/ci/check-live-tls.sh
       - run: python3 -I tools/split-spec.py --check
       - name: Error codes are append-only
         run: |
