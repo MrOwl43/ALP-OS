@@ -6,6 +6,7 @@
 //! GTK main loop through a channel polled with a timeout, so the screen never
 //! waits on alpd.
 
+mod account;
 mod activity;
 mod dialogs;
 mod gallery;
@@ -163,6 +164,7 @@ struct SettingsUi {
     update: adw::ActionRow,
     update_btn: gtk4::Button,
     phones: Rc<phones::PhonesUi>,
+    account: Rc<account::AccountUi>,
     last: RefCell<Settings>,
     note: Rc<style::Note>,
     /// Advanced: install on this computer (only while running from a stick).
@@ -400,14 +402,14 @@ fn build(app: &adw::Application) {
         note: Rc::new(style::Note::new("bad", "")),
         errs: Rc::new(RefCell::new(alp_screen::set::ErrLog::default())),
     };
-    let (settings_page, set) = settings_page(&ctx);
+    let setup_ui = setup::SetupUi::new(texts.clone(), client.clone(), tx.clone(), &stack);
+    let (settings_page, set) = settings_page(&ctx, &setup_ui);
     let inst = install::InstallUi::new(texts.clone(), client.clone(), tx.clone(), &stack);
     let pair = pairing::PairUi::new(texts.clone(), client.clone(), tx.clone(), &stack);
     {
         let p = pair.clone();
         set.phones.connect_phone.connect_clicked(move |_| p.open());
     }
-    let setup_ui = setup::SetupUi::new(texts.clone(), client.clone(), tx.clone(), &stack);
     let start = welcome::StartUi::new(texts.clone(), client.clone(), tx.clone(), &stack);
     {
         let p = pair.clone();
@@ -675,6 +677,7 @@ fn handle(ui: &Ui, m: Msg) {
                 ui.pair.show_pending(&model::pairing::pending(&w));
                 show_settings(&ui.set, &ui.texts, &Settings::from_state(&w));
                 ui.set.phones.update(&w);
+                ui.set.account.update(&w);
                 show_net_time(&ui.set, &ui.texts, &w);
                 let (can_install, job) = model::install::state(&w);
                 ui.set.advanced.set_visible(can_install);
@@ -769,7 +772,7 @@ fn icon_row(title: &str, icon: &str, tone: Tone) -> adw::ActionRow {
 
 /// The settings page: About, date and time, updates, phones, power. The
 /// way back is the top bar's Home button.
-fn settings_page(ctx: &dialogs::Ctx) -> (gtk4::Box, SettingsUi) {
+fn settings_page(ctx: &dialogs::Ctx, setup: &Rc<setup::SetupUi>) -> (gtk4::Box, SettingsUi) {
     let (texts, client, tx) = (&*ctx.texts, &ctx.client, &ctx.tx);
     // One alpd action on a worker thread; its answer comes back as Done.
     let act = |path: &'static str, body: Value| {
@@ -793,6 +796,8 @@ fn settings_page(ctx: &dialogs::Ctx) -> (gtk4::Box, SettingsUi) {
     // Phones.
     let phones = phones::PhonesUi::new(ctx);
     let phones_page = phones.page.clone();
+    let account = account::AccountUi::new(ctx, setup.clone());
+    let password_page = account.page.clone();
 
     // Time & Language.
     let time_page = page(());
@@ -920,6 +925,12 @@ fn settings_page(ctx: &dialogs::Ctx) -> (gtk4::Box, SettingsUi) {
     for (key, icon, tone, p) in [
         ("phones", "phone-symbolic", Tone::Violet, &phones_page),
         (
+            "password",
+            "dialog-password-symbolic",
+            Tone::Bad,
+            &password_page,
+        ),
+        (
             "network",
             "network-wireless-symbolic",
             Tone::Blue,
@@ -956,11 +967,12 @@ fn settings_page(ctx: &dialogs::Ctx) -> (gtk4::Box, SettingsUi) {
     }
     {
         let (pages, heading) = (pages.clone(), heading.clone());
-        let names: Vec<(String, String)> =
-            ["phones", "network", "time", "power", "about", "advanced"]
-                .iter()
-                .map(|k| (k.to_string(), texts.t(&format!("cat.{k}"))))
-                .collect();
+        let names: Vec<(String, String)> = [
+            "phones", "password", "network", "time", "power", "about", "advanced",
+        ]
+        .iter()
+        .map(|k| (k.to_string(), texts.t(&format!("cat.{k}"))))
+        .collect();
         list.connect_row_selected(move |_, row| {
             let Some(row) = row else { return };
             let key = row.widget_name();
@@ -1014,6 +1026,7 @@ fn settings_page(ctx: &dialogs::Ctx) -> (gtk4::Box, SettingsUi) {
         update,
         update_btn,
         phones,
+        account,
         last: RefCell::new(Settings::default()),
         note,
         advanced,

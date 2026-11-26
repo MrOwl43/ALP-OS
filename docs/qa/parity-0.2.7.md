@@ -47,7 +47,7 @@ to a later version with the owner's agreement · **dropped** on purpose.
 | Category | 0.2.7 rows | Native | Status |
 |---|---|---|---|
 | Phones | list, add phone, disconnect, only paired phones | `phones.rs`, `dialogs.rs` | ok (2026-11-26) |
-| Password | change password, recovery code check / make / replace, serious encryption | — | gap |
+| Password | change password, recovery code check / make / replace, serious encryption | `account.rs` (change password only when alpd announces `password_change`, which it does not yet; "serious" extra passphrase not ported, see notes) | ok (2026-11-26) |
 | Disk | archive place, space bar, encrypt later | — | gap |
 | Chain | show / leave / set up | — | gap |
 | Network | status, change Wi-Fi | Network page (from settings) | ok (2026-11-26) |

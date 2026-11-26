@@ -103,6 +103,11 @@ pub struct SetupUi {
     /// Opens the install pages (wired in main.rs): the place step.
     pub open_install: std::cell::RefCell<Option<Box<dyn Fn()>>>,
     phone_note: style::Note,
+    /// The recovery pages were opened from Settings (a code made or
+    /// replaced later), not by first-start setup.
+    standalone: Cell<bool>,
+    /// Where Settings goes after such a code is saved or left.
+    pub on_standalone_done: std::cell::RefCell<Option<Box<dyn Fn()>>>,
 }
 
 pub(crate) fn text(t: &Texts, key: &str, fallback: &str) -> String {
@@ -215,7 +220,7 @@ fn paper(t: &Texts) -> (gtk4::Box, Vec<gtk4::Label>) {
 /// The 15 entries for typing a recovery code, laid out like the sheet it
 /// was written on: three columns of five, read down each column, numbered.
 /// Pasting or typing the whole code into one entry spreads it out.
-fn word_sheet(t: &Texts) -> (gtk4::Box, Vec<gtk4::Entry>) {
+pub(crate) fn word_sheet(t: &Texts) -> (gtk4::Box, Vec<gtk4::Entry>) {
     let sheet = gtk4::Box::builder()
         .orientation(gtk4::Orientation::Vertical)
         .css_classes(["paper"])
@@ -635,6 +640,8 @@ impl SetupUi {
             phone_connect,
             phone_note,
             open_install: std::cell::RefCell::new(None),
+            standalone: Cell::new(false),
+            on_standalone_done: std::cell::RefCell::new(None),
         });
         {
             let u = ui.clone();
@@ -662,6 +669,10 @@ impl SetupUi {
             ui.rec_saved.connect_clicked(move |_| u.ask_words());
             let u = ui.clone();
             rec_later.connect_clicked(move |_| {
+                if u.standalone.get() {
+                    u.leave_standalone(true);
+                    return;
+                }
                 u.call(|c| {
                     SetupMsg::Saved(
                         c.post("live/setup/progress", &json!({"skipped": ["recovery"]})),
@@ -839,6 +850,34 @@ impl SetupUi {
         self.call(move |c| SetupMsg::Committed(c.post_slow("live/recovery/commit", &body)));
     }
 
+    /// Settings > Password: the recovery pages, outside first-start setup.
+    /// `answer` is a code just made by Replace (its words show at once).
+    pub fn open_recovery(&self, answer: Option<Value>) {
+        self.standalone.set(true);
+        self.wipe_words();
+        self.rec_note.set("");
+        self.stack.set_visible_child_name(PAGES[2]);
+        match answer {
+            Some(v) => self.handle(SetupMsg::RecoveryMade(Ok(v))),
+            None => {
+                self.rec_pw.grab_focus();
+            }
+        }
+    }
+
+    /// Leaves the recovery pages for Settings; a code not yet saved is
+    /// discarded (the old one keeps working).
+    fn leave_standalone(&self, discard: bool) {
+        self.standalone.set(false);
+        self.wipe_words();
+        if discard {
+            self.call(|c| SetupMsg::Saved(c.post("live/recovery/discard", &json!({}))));
+        }
+        if let Some(f) = self.on_standalone_done.borrow().as_ref() {
+            f();
+        }
+    }
+
     /// Forget the words shown (also from the screen).
     fn wipe_words(&self) {
         for w in &self.rec_words {
@@ -861,6 +900,12 @@ impl SetupUi {
         let on_setup = visible.as_deref().is_some_and(|v| PAGES.contains(&v));
         if !matches!(step, Some(Step::Words { .. })) {
             self.wipe_typed();
+        }
+        if self.standalone.get() {
+            if on_setup {
+                return true;
+            }
+            self.standalone.set(false);
         }
         let Some(step) = step else {
             if on_setup {
@@ -1034,6 +1079,7 @@ impl SetupUi {
                 self.confirm_go.set_sensitive(true);
                 match r {
                     // The state now says the code is set: the phone step.
+                    Ok(_) if self.standalone.get() => self.leave_standalone(false),
                     Ok(_) => {
                         self.wipe_words();
                         self.stack.set_visible_child_name(PAGES[4]);
