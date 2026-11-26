@@ -78,7 +78,8 @@ hook() {
         return 1
     }
     until code=$($c -o /dev/null -w '%{http_code}' "$base/api/server/ping"); [[ $code == 200 ]]; do
-        (( ++tries < 150 )) || { echo "FAIL: Immich does not answer on 443 (last answer: $code)" >&2; return 1; }
+        (( ++tries < 450 )) || { echo "FAIL: Immich does not answer on 443 in 15 minutes (last answer: $code)" >&2
+            grep -a 'IMMDIAG' "$ALP_SERIAL_LOG" | tr -d '\r' | tail -n 40 >&2; return 1; }
         sleep 2
     done
     echo "ok:   Immich answers through the proxy on 443 (round $ROUND)"
@@ -206,6 +207,19 @@ for i in $(seq 150); do mountpoint -q /var/lib/alp-pool/files && break; sleep 2;
 mountpoint -q /var/lib/alp-pool/files && echo REO-OPEN=yes >/dev/console || echo REO-OPEN=no >/dev/console
 SH
 
+# In the guest: every minute, the photo service's state on the console
+# (printed by the hook when the gallery does not answer).
+read -r -d '' diag <<'DIAG' || true
+while sleep 60; do
+    {
+        echo "units $(systemctl is-active alp-immich.service alp-live-archive.service alpd.service | tr '\n' ' ')"
+        journalctl -b -u alp-immich.service -o cat --no-pager | tail -n 3
+        journalctl -b _UID=50000 -o cat --no-pager 2>/dev/null | tail -n 4
+    } | sed 's/^/IMMDIAG /' >/dev/console
+done
+DIAG
+diag_b64=$(base64 -w0 <<<"$diag")
+
 # 1. Install.
 do_install "$target" ALPTARGET01 '--system $t --data $a' '$t,$a'
 
@@ -217,6 +231,7 @@ args="$dat -nic user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:$port-:443"
 probe="$(QA_HTTP_TIMEOUT=90 qa_http_probe SETUP POST /api/v1/live/password/setup "$origin" "{\"password\":\"$pw\"}")
 $(QA_HTTP_TIMEOUT=30 qa_http_probe POOL POST /api/v1/live/archive/create-pool "$origin" '')
 -/bin/bash -c \"echo $(base64 -w0 <<<"$rec_script") | base64 -d > /run/t-rec.sh; bash /run/t-rec.sh $pw\"
+-/usr/bin/systemd-run --unit=alp-immich-diag /bin/bash -c 'echo $diag_b64 | base64 -d | bash'
 -/usr/bin/systemd-run --unit=alp-restore-agent /bin/bash -c 'echo $agent_b64 | base64 -d | bash -s 1'
 /bin/bash -c 'sleep 60'"
 out=$(ROUND=1 PORT=$port PW=$pw ALP_RAM=${ALP_IMMICH_RAM:-4G} ALP_PROBE="$probe" ALP_PROBE_DELAY=20 ALP_QEMU_ARGS="$args" \
@@ -236,6 +251,7 @@ port=$(qa_free_port)
 args="$dat -nic user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:$port-:443"
 probe="$(QA_HTTP_TIMEOUT=90 qa_http_probe SETUP POST /api/v1/live/password/setup "$origin" "{\"password\":\"$pw\"}")
 -/bin/bash -c \"echo $(base64 -w0 <<<"$reo_script") | base64 -d > /run/t-reo.sh; bash /run/t-reo.sh '$words'\"
+-/usr/bin/systemd-run --unit=alp-immich-diag /bin/bash -c 'echo $diag_b64 | base64 -d | bash'
 -/usr/bin/systemd-run --unit=alp-restore-agent /bin/bash -c 'echo $agent_b64 | base64 -d | bash -s 2'
 /bin/bash -c 'sleep 60'"
 out=$(ROUND=2 PORT=$port PW=$pw ALP_RAM=${ALP_IMMICH_RAM:-4G} ALP_PROBE="$probe" ALP_PROBE_DELAY=20 ALP_QEMU_ARGS="$args" \
