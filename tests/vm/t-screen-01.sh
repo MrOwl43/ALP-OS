@@ -6,6 +6,11 @@
 #   - alpd says the first setup step is the place (setup.place "choose":
 #     install on a disk or keep running from the stick, owner 2026-11-25);
 #   - the lock screen facts are in the state (system.temperature_c key);
+#   - first start with no network set up and no password (owner rule
+#     2026-11-26, laptop report 0.2.81): the install disk list answers
+#     (not "type your password first"), keeping the stick without an
+#     archive disk is refused with a reason (not "locked"), the time zone
+#     can be chosen, and the hardware check is in the state;
 #   - the screen is not blank (QEMU screendump, saved as t-screen-01.png
 #     next to the image or in ALP_QA_OUT).
 # Driving the pages through the accessibility tree (AT-SPI) is part 2.
@@ -40,12 +45,24 @@ shoot() {
 }
 export -f shoot
 
+# First start, no password, no network (the VM has no network card).
+first=$(base64 -w0 <<'EOF'
+A=http://127.0.0.1:8411/api/v1/live
+H='Origin: http://127.0.0.1:8411'
+J='Content-Type: application/json'
+echo "INSTALL-DISKS=$(curl -s -o /dev/null -w '%{http_code}' -m 60 "$A/install/disks")"
+echo "KEEP-PLAN=$(curl -s -m 60 -H "$H" -H "$J" -d '{"system":null,"keep_running":true}' "$A/install/plan" | head -c 300)"
+echo "PREFS=$(curl -s -o /dev/null -w '%{http_code}' -m 20 -H "$H" -H "$J" -d '{"time_zone":"Europe/Paris"}' "$A/prefs")"
+curl -s -m 20 "$A/state" | grep -q '"checks":\[{' && echo HW-CHECKS=yes
+EOF
+)
 # The probe waits so the screen had time to start (and to crash, if it does).
 probe="/bin/sleep 30
 -/usr/bin/sh -c 'systemctl is-active alp-screen.service | sed s/^/SCREEN-ACTIVE=/'
 -/usr/bin/sh -c 'systemctl show -p NRestarts --value alp-screen.service | sed s/^/SCREEN-RESTARTS=/'
 -/usr/bin/sh -c 'curl -s -m 20 http://127.0.0.1:8411/api/v1/live/state | grep -o place.:.[a-z]* | sed s/^/PLACE=/'
 -/usr/bin/sh -c 'curl -s -m 20 http://127.0.0.1:8411/api/v1/live/state | grep -q temperature_c && echo TEMP-KEY=yes || echo TEMP-KEY=no'
+-/usr/bin/sh -c 'echo $first | base64 -d | /bin/sh'
 -/usr/bin/sh -c 'journalctl -b -u alp-screen.service -o cat --no-pager | tail -15 | sed s/^/SCREEN-LOG=/'
 -/usr/bin/sh -c 'journalctl -b _UID=988 -o cat --no-pager | tail -25 | sed s/^/SCREEN-USER-LOG=/'
 -/usr/bin/sh -c 'ps -eo pid,user,args | grep -E \"cage|alp-screen\" | grep -v grep | sed s/^/SCREEN-PS=/'
@@ -64,9 +81,14 @@ expect "the native screen runs" '^SCREEN-ACTIVE=active'
 expect "the native screen did not restart" '^SCREEN-RESTARTS=0'
 expect "the first setup step is the place" '^PLACE=place.:.choose'
 expect "the lock screen facts are in the state" '^TEMP-KEY=yes'
+expect "first start: the install disk list answers before a password" '^INSTALL-DISKS=200'
+expect "first start: keeping the stick without an archive disk says why" '^KEEP-PLAN=.*(data disk|archive disk|refus)'
+if grep -qE '^KEEP-PLAN=.*"locked"' <<<"$out"; then echo "FAIL: first start: install/plan asked for a password" >&2; fail=1; fi
+expect "first start: the time zone can be chosen before a password" '^PREFS=200'
+expect "first start: the hardware check is in the state" '^HW-CHECKS=yes'
 (( status == 0 )) || fail=1
 if (( fail )); then
-    grep -E '^(SCREEN-|PLACE=|TEMP-KEY=|TIMING:)' <<<"$out" | tr -d '\r' || true
+    grep -E '^(SCREEN-|PLACE=|TEMP-KEY=|INSTALL-DISKS=|KEEP-PLAN=|PREFS=|HW-CHECKS=|TIMING:)' <<<"$out" | tr -d '\r' || true
     echo "FAIL: T-SCREEN-01" >&2
     exit 1
 fi
