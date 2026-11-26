@@ -39,7 +39,7 @@ to a later version with the owner's agreement · **dropped** on purpose.
 | Disks and format (danger + slide) | — | gap |
 | Terminal (advanced) | — | gap |
 | Reset everything (danger + slide) | — | gap |
-| Chain (8-word code, join, leave) | — | gap (check if still in the 0.2.8 plan) |
+| Chain (8-word code, join, leave) | `chain.rs` | ok (2026-11-26) |
 | Screen saver | `saver.rs` (starts after the lock time, locks, any touch ends it; the choice is kept in a small file) | ok (2026-11-26) |
 
 ## Settings (0.2.7 had ten categories)
@@ -49,7 +49,7 @@ to a later version with the owner's agreement · **dropped** on purpose.
 | Phones | list, add phone, disconnect, only paired phones | `phones.rs`, `dialogs.rs` | ok (2026-11-26) |
 | Password | change password, recovery code check / make / replace, serious encryption | `account.rs` (change password only when alpd announces `password_change`, which it does not yet; "serious" extra passphrase not ported, see notes) | ok (2026-11-26) |
 | Disk | archive place, space bar, encrypt later | `disk.rs` ("Set up" opens the install pages while running from a stick, else says what to plug in) | ok (2026-11-26) |
-| Chain | show / leave / set up | — | gap |
+| Chain | show / leave / set up | `chain.rs` (alpd still has all chain routes) | ok (2026-11-26) |
 | Network | status, change Wi-Fi | Network page (from settings) | ok (2026-11-26) |
 | Display | size, resolution, natural scrolling, background, lock after, lock screen shows, screen saver | `display.rs` (size applies as text size; natural scrolling and idle choice show only when alpd announces them) | ok (2026-11-26) |
 | Time | date and time, sync now, time zone | sync + zone | ok (2026-11-26) |

@@ -21,11 +21,43 @@ use crate::Msg;
 use crate::style::{self, Tone};
 
 /// The QR modules shown (side, cells), none while there is no code.
-type Cells = Rc<RefCell<Option<(usize, Vec<bool>)>>>;
+pub(crate) type Cells = Rc<RefCell<Option<(usize, Vec<bool>)>>>;
 
 pub enum PairMsg {
     Opened(Result<Value, ApiError>),
     Answered(Result<Value, ApiError>),
+}
+
+/// A drawing area that paints the QR code held in `cells` (black on white,
+/// with the quiet zone around it).
+pub(crate) fn qr_area(cells: &Cells) -> gtk4::DrawingArea {
+    let qr = gtk4::DrawingArea::builder()
+        .content_width(260)
+        .content_height(260)
+        .halign(gtk4::Align::Center)
+        .build();
+    let cells = cells.clone();
+    qr.set_draw_func(move |_, cr, w, h| {
+        cr.set_source_rgb(1.0, 1.0, 1.0);
+        cr.paint().ok();
+        let Some((n, ref m)) = *cells.borrow() else {
+            return;
+        };
+        // Four modules of quiet zone around the code.
+        let side = f64::from(w.min(h));
+        let unit = (side / (n as f64 + 8.0)).floor().max(1.0);
+        let off_x = (f64::from(w) - unit * n as f64) / 2.0;
+        let off_y = (f64::from(h) - unit * n as f64) / 2.0;
+        cr.set_source_rgb(0.0, 0.0, 0.0);
+        for (i, dark) in m.iter().enumerate() {
+            if *dark {
+                let (x, y) = ((i % n) as f64, (i / n) as f64);
+                cr.rectangle(off_x + x * unit, off_y + y * unit, unit, unit);
+            }
+        }
+        cr.fill().ok();
+    });
+    qr
 }
 
 pub struct PairUi {
@@ -73,34 +105,7 @@ impl PairUi {
 
         // QR page.
         let cells: Cells = Rc::new(RefCell::new(None));
-        let qr = gtk4::DrawingArea::builder()
-            .content_width(260)
-            .content_height(260)
-            .halign(gtk4::Align::Center)
-            .build();
-        {
-            let cells = cells.clone();
-            qr.set_draw_func(move |_, cr, w, h| {
-                cr.set_source_rgb(1.0, 1.0, 1.0);
-                cr.paint().ok();
-                let Some((n, ref m)) = *cells.borrow() else {
-                    return;
-                };
-                // Four modules of quiet zone around the code.
-                let side = f64::from(w.min(h));
-                let unit = (side / (n as f64 + 8.0)).floor().max(1.0);
-                let off_x = (f64::from(w) - unit * n as f64) / 2.0;
-                let off_y = (f64::from(h) - unit * n as f64) / 2.0;
-                cr.set_source_rgb(0.0, 0.0, 0.0);
-                for (i, dark) in m.iter().enumerate() {
-                    if *dark {
-                        let (x, y) = ((i % n) as f64, (i / n) as f64);
-                        cr.rectangle(off_x + x * unit, off_y + y * unit, unit, unit);
-                    }
-                }
-                cr.fill().ok();
-            });
-        }
+        let qr = qr_area(&cells);
         let left = label("", &["dim-label"]);
         let again = gtk4::Button::builder()
             .label(t("phone.qr.new"))

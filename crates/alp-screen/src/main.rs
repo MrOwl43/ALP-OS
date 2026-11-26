@@ -8,6 +8,7 @@
 
 mod account;
 mod activity;
+mod chain;
 mod dialogs;
 mod disk;
 mod display;
@@ -178,6 +179,7 @@ struct SettingsUi {
     account: Rc<account::AccountUi>,
     disk: Rc<disk::DiskUi>,
     display: Rc<display::DisplayUi>,
+    chain: Rc<chain::ChainUi>,
     /// This screen runs from the install stick (the install pages work).
     can_install: Cell<bool>,
     last: RefCell<Settings>,
@@ -814,6 +816,7 @@ fn handle(ui: &Ui, m: Msg) {
                 ui.set.phones.update(&w);
                 ui.set.account.update(&w);
                 ui.set.disk.update(&w);
+                ui.set.chain.update(&w);
                 ui.set.display.update(&w, ui.local.get());
                 show_net_time(&ui.set, &ui.texts, &w);
                 let (can_install, job) = model::install::state(&w);
@@ -947,6 +950,8 @@ fn settings_page(ctx: &dialogs::Ctx, setup: &Rc<setup::SetupUi>) -> (gtk4::Box, 
     let disk_page = disk.page.clone();
     let display = display::DisplayUi::new(ctx);
     let display_page = display.page.clone();
+    let chain = chain::ChainUi::new(ctx);
+    let chain_page = chain.page.clone();
 
     // Time & Language.
     let time_page = page(());
@@ -1080,6 +1085,7 @@ fn settings_page(ctx: &dialogs::Ctx, setup: &Rc<setup::SetupUi>) -> (gtk4::Box, 
             &password_page,
         ),
         ("disk", "drive-harddisk-symbolic", Tone::Ok, &disk_page),
+        ("chain", "emblem-shared-symbolic", Tone::Warn, &chain_page),
         (
             "network",
             "network-wireless-symbolic",
@@ -1183,6 +1189,7 @@ fn settings_page(ctx: &dialogs::Ctx, setup: &Rc<setup::SetupUi>) -> (gtk4::Box, 
         account,
         disk,
         display,
+        chain,
         can_install: Cell::new(false),
         last: RefCell::new(Settings::default()),
         note,
