@@ -517,7 +517,12 @@ impl InstallUi {
         };
         match m {
             InstallMsg::Disks(Ok(w)) => self.show_disks(&install::disks(&w)),
-            InstallMsg::Disks(Err(e)) => self.choose_note.set_label(&err(e)),
+            // Still offer "Keep running from this USB stick" when the list
+            // cannot be read (laptop report 0.2.81: an empty page).
+            InstallMsg::Disks(Err(e)) => {
+                self.show_disks(&[]);
+                self.choose_note.set_label(&err(e));
+            }
             InstallMsg::Plan(Ok(w)) => self.show_plan(&install::plan(&w)),
             InstallMsg::Plan(Err(e)) => {
                 self.next.set_sensitive(true);
@@ -633,6 +638,16 @@ impl InstallUi {
         });
         self.system_group.add(&keep);
         rows.push(keep);
+        // No disk at all: say so, and that a missing driver may be why
+        // (owner, 2026-11-26: tell the person when the computer is not
+        // supported, instead of an empty list).
+        if disks.is_empty() {
+            self.choose_note.set_label(&text(
+                t,
+                "install.no_disks",
+                "No disks were found in this computer. You can keep running from this USB stick. If the computer has a disk, ALP-OS may not support it yet.",
+            ));
+        }
 
         // Old archives: open again with the recovery words, or leave alone.
         let old: Vec<&Disk> = disks.iter().filter(|d| d.reopenable).collect();

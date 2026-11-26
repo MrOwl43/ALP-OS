@@ -1522,6 +1522,19 @@ impl Live {
         }
     }
 
+    /// Installing from the start stick: signed in, or first start before
+    /// any password exists. The place step ("install or keep running from
+    /// the stick") comes before the password, so the disk list must answer
+    /// then (laptop report 0.2.81: an empty list asking for a password).
+    /// Same rule as `console_open`: in "setup" there is nothing to sign in
+    /// with yet; the installer checks the disks again before writing.
+    fn need_install(&self) -> Result<(), Fail> {
+        if self.require_index && index::lock_state() == "setup" {
+            return Ok(());
+        }
+        self.need_open()
+    }
+
     fn password_setup(&self, req: &Request) -> Result<Response, Fail> {
         let b = body(req)?;
         // One setup at a time, and never while a reset is still erasing the
@@ -1762,19 +1775,20 @@ impl Live {
                 self.need_open().and_then(|()| self.disks_format_estimate(req))
             }
             "disks/format" if post => self.need_open().and_then(|()| self.disks_format(req)),
-            // Installing from the start stick (0.2.8): signed in only; the
+            // Installing from the start stick (0.2.8): signed in, or first start
+            // before a password (`need_install`); the
             // installer program checks the disks again before writing.
             "install/disks" if get => self
-                .need_open()
+                .need_install()
                 .and_then(|()| live_install::disks())
                 .map(|v| Response::json(200, &v)),
             "install/plan" if post => self
-                .need_open()
+                .need_install()
                 .and_then(|()| body(req))
                 .and_then(|b| live_install::plan(&b))
                 .map(|v| Response::json(200, &v)),
             "install/start" if post => self
-                .need_open()
+                .need_install()
                 .and_then(|()| body(req))
                 .and_then(|b| live_install::start(&b))
                 .map(|v| Response::json(202, &json!({"install": v}))),
