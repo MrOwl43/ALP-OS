@@ -1,0 +1,58 @@
+# Native screen vs the 0.2.7 web screen: parity list
+
+Rule (owner, 2026-11-26): before every test build, every page, setup step
+and setting that 0.2.7 had must exist on the native screen (`alp-screen`)
+or be marked here as consciously dropped or moved, with the reason. The
+first-start VM test (T-SCREEN-01 part "first start") must pass too.
+
+Status: **ok** ported · **gap** missing (must be ported) · **later** moved
+to a later version with the owner's agreement · **dropped** on purpose.
+
+## First setup (0.2.7 order, with the 0.2.8 install step)
+
+| 0.2.7 step | What it does | Native | Status |
+|---|---|---|---|
+| Welcome | hardware check list, date, time and time zone (zone picker, "which time is right" question), network line with "Connect to Wi-Fi" | `start.rs` welcome page | ok (2026-11-26) |
+| Too small | under 4 GB memory: power off | — | gap |
+| Network | cable status, Wi-Fi list, password, WPA3→WPA2 note, Check again, skip with a note | `start.rs` network page | ok (2026-11-26) |
+| (0.2.8) Place | install on a disk, or keep running from the stick | install pages | ok |
+| Protect / Password | protection level and password | setup password page (password only) | gap: protection choice (level "none"/"console") |
+| Where / Progress | archive disks and making the archive | install page data disks + setup pool page | ok |
+| Recovery | 15 words, type three back, skip with a reminder | setup recovery pages | ok |
+| Phone | connect a phone (pairing), skip | setup phone page + pairing pages | ok |
+| Done | "All set" | home | ok |
+| Reminders | skipped steps shown on home with "Do it now" | — | gap |
+
+## Everyday pages
+
+| 0.2.7 page | Native | Status |
+|---|---|---|
+| Lock / unlock (sign in) | lock page | ok |
+| Home (tiles, gallery button) | home page | ok |
+| Gallery (locked embedded view) | gallery page | ok |
+| Status tray (network, disk, battery, clock) | top bar | ok, check items |
+| Errors list behind (i) with codes | — | gap |
+| Phone approve pop-up | pairing pages | ok |
+| Shut down / restart with steps | top bar power + alpd | ok (no step list: gap, small) |
+| Import from a USB disk | — | gap |
+| Files (USB disks) | — | gap |
+| Disks and format (danger + slide) | — | gap |
+| Terminal (advanced) | — | gap |
+| Reset everything (danger + slide) | — | gap |
+| Chain (8-word code, join, leave) | — | gap (check if still in the 0.2.8 plan) |
+| Screen saver | — | gap |
+
+## Settings (0.2.7 had ten categories)
+
+| Category | 0.2.7 rows | Native | Status |
+|---|---|---|---|
+| Phones | list, add phone, disconnect, only paired phones | add phone | gap: list, disconnect, strict |
+| Password | change password, recovery code check / make / replace, serious encryption | — | gap |
+| Disk | archive place, space bar, encrypt later | — | gap |
+| Chain | show / leave / set up | — | gap |
+| Network | status, change Wi-Fi | Network page (from settings) | ok (2026-11-26) |
+| Display | size, resolution, natural scrolling, background, lock after, lock screen shows, screen saver | — | gap |
+| Time | date and time, sync now, time zone | sync + zone | ok (2026-11-26) |
+| Power | battery, shut down, restart | power | ok |
+| About | version, update | about | ok |
+| Advanced | disks, files, terminal, reset, install | install | gap: disks, files, terminal, reset |

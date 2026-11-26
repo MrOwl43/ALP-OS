@@ -23,9 +23,12 @@ use zeroize::Zeroizing;
 use crate::Msg;
 use crate::style::{self, Tone};
 
-/// The number of first-start steps shown ("Step 2 of 4"): password,
-/// archive, recovery code, phone.
-const STEPS: usize = 4;
+/// The number of first-start steps shown ("Step 4 of 7"): welcome,
+/// network, place (install or keep the stick), password, archive, recovery
+/// code, phone (0.2.6 order, owner 2026-11-26).
+const STEPS: usize = 7;
+/// The steps before this module's pages (welcome.rs and the install page).
+const BEFORE: usize = 3;
 /// The words of the recovery code (ADR 0013).
 const WORDS: usize = 15;
 
@@ -102,7 +105,7 @@ pub struct SetupUi {
     phone_note: style::Note,
 }
 
-fn text(t: &Texts, key: &str, fallback: &str) -> String {
+pub(crate) fn text(t: &Texts, key: &str, fallback: &str) -> String {
     let s = t.t(key);
     if s == key { fallback.to_string() } else { s }
 }
@@ -110,6 +113,19 @@ fn text(t: &Texts, key: &str, fallback: &str) -> String {
 /// One first-start page: the step, a big icon, the title and the lead
 /// line centred; the rest left-aligned for easy reading, in a card.
 fn page(
+    t: &Texts,
+    step: usize,
+    head: (&str, Tone),
+    title: &str,
+    lead: &str,
+    rest: &[&gtk4::Widget],
+    width: i32,
+) -> gtk4::ScrolledWindow {
+    page_at(t, step + BEFORE, head, title, lead, rest, width)
+}
+
+/// [`page`] with the step number as shown (1 to [`STEPS`]).
+pub(crate) fn page_at(
     t: &Texts,
     step: usize,
     (icon, tone): (&str, Tone),

@@ -13,6 +13,7 @@ mod pairing;
 mod setup;
 mod style;
 mod topbar;
+mod welcome;
 
 use alp_screen::api::{ApiError, Client};
 use alp_screen::i18n::{self, Texts};
@@ -43,10 +44,15 @@ enum Msg {
     Install(install::InstallMsg),
     Pair(pairing::PairMsg),
     Setup(setup::SetupMsg),
+    Start(welcome::StartMsg),
+    /// Read the state now (a setup step was left).
+    Refresh,
 }
 
 struct Ui {
     texts: Rc<Texts>,
+    client: Arc<Client>,
+    tx: mpsc::Sender<Msg>,
     stack: gtk4::Stack,
     bar: topbar::TopBar,
     /// The last state for the top bar, and whether the console is open and
@@ -62,6 +68,7 @@ struct Ui {
     inst: Rc<install::InstallUi>,
     pair: Rc<pairing::PairUi>,
     setup: Rc<setup::SetupUi>,
+    start: Rc<welcome::StartUi>,
     set: SettingsUi,
 }
 
@@ -161,6 +168,12 @@ struct SettingsUi {
     /// The Advanced category in the list (shown with [`SettingsUi::advanced`]).
     advanced_row: gtk4::ListBoxRow,
     install_btn: gtk4::Button,
+    /// Network: opens the Network page (welcome.rs).
+    network_btn: gtk4::Button,
+    network: adw::ActionRow,
+    /// Time: opens the time-zone page (welcome.rs).
+    zone_btn: gtk4::Button,
+    zone: adw::ActionRow,
 }
 
 fn main() -> glib::ExitCode {
@@ -384,6 +397,7 @@ fn build(app: &adw::Application) {
         set.connect_phone.connect_clicked(move |_| p.open());
     }
     let setup_ui = setup::SetupUi::new(texts.clone(), client.clone(), tx.clone(), &stack);
+    let start = welcome::StartUi::new(texts.clone(), client.clone(), tx.clone(), &stack);
     {
         let p = pair.clone();
         setup_ui.phone_connect.connect_clicked(move |_| p.open());
@@ -405,6 +419,8 @@ fn build(app: &adw::Application) {
     let bar = topbar::TopBar::new(&texts);
     let ui = Rc::new(Ui {
         texts,
+        client: client.clone(),
+        tx: tx.clone(),
         stack: stack.clone(),
         bar,
         last_bar: RefCell::new(None),
@@ -418,13 +434,23 @@ fn build(app: &adw::Application) {
         inst: inst.clone(),
         pair,
         setup: setup_ui,
+        start: start.clone(),
         set,
     });
     // Install from the stick: chosen in the first setup; here only under
     // Settings > Advanced, for testing (owner, 2026-11-25).
     {
         let i = inst.clone();
-        *ui.setup.open_install.borrow_mut() = Some(Box::new(move || i.open()));
+        *ui.setup.open_install.borrow_mut() = Some(Box::new(move || i.open_setup()));
+        // Back from the install choice in the setup: the Network step.
+        let st = start.clone();
+        *ui.inst.back.borrow_mut() = Some(Box::new(move || st.back_to_network()));
+        let st = start.clone();
+        ui.set
+            .network_btn
+            .connect_clicked(move |_| st.open_network(true));
+        let st = start.clone();
+        ui.set.zone_btn.connect_clicked(move |_| st.open_zone(true));
     }
     ui.set.install_btn.connect_clicked(move |_| inst.open());
     {
@@ -596,8 +622,15 @@ fn handle(ui: &Ui, m: Msg) {
             *ui.last_bar.borrow_mut() = Some(model::bar::Bar::from_state(&w));
             ui.open.set(s.open);
             show_time(&ui.lock);
-            // First start of the installed system: its pages come first.
-            let in_setup = ui.setup.show(model::setup::step(&w).as_ref());
+            ui.start.update(&w);
+            // First start: Welcome and Network (0.2.6 order), then the
+            // install choice and the other setup pages.
+            let step = model::setup::step(&w);
+            let early = matches!(
+                step,
+                Some(model::setup::Step::Place | model::setup::Step::Password)
+            );
+            let in_setup = (early && ui.start.show()) || ui.setup.show(step.as_ref());
             ui.in_setup.set(in_setup);
             if in_setup {
                 // The place step uses the install pages: keep their progress.
@@ -630,6 +663,7 @@ fn handle(ui: &Ui, m: Msg) {
                 *ui.gallery_url.borrow_mut() = url;
                 ui.pair.show_pending(&model::pairing::pending(&w));
                 show_settings(&ui.set, &ui.texts, &Settings::from_state(&w));
+                show_net_time(&ui.set, &ui.texts, &w);
                 let (can_install, job) = model::install::state(&w);
                 ui.set.advanced.set_visible(can_install);
                 ui.set.advanced_row.set_visible(can_install);
@@ -669,6 +703,13 @@ fn handle(ui: &Ui, m: Msg) {
         Msg::Install(m) => ui.inst.handle(m),
         Msg::Pair(m) => ui.pair.handle(m),
         Msg::Setup(m) => ui.setup.handle(m),
+        Msg::Start(m) => ui.start.handle(m),
+        Msg::Refresh => {
+            let (c, tx) = (ui.client.clone(), ui.tx.clone());
+            std::thread::spawn(move || {
+                let _ = tx.send(Msg::State(c.get("live/state")));
+            });
+        }
         Msg::Done(r) => {
             ui.set.note.set(&match r {
                 Ok(_) => String::new(),
@@ -766,6 +807,25 @@ fn settings_page(
     sync.connect_clicked(move |_| f());
     clock.add_suffix(&sync);
     time.add(&clock);
+    let zone = icon_row(&texts.t("set.zone"), "mark-location-symbolic", Tone::Teal);
+    let zone_btn = style::button("go-next-symbolic", &texts.t("set.zone.change"), &[]);
+    zone_btn.set_valign(gtk4::Align::Center);
+    zone.add_suffix(&zone_btn);
+    time.add(&zone);
+
+    // Network: how the computer is connected, and Wi-Fi.
+    let network_page = page(());
+    let net_group = adw::PreferencesGroup::new();
+    let network = icon_row(
+        &texts.t("status.network"),
+        "network-wireless-symbolic",
+        Tone::Blue,
+    );
+    let network_btn = style::button("go-next-symbolic", &texts.t("set.change"), &[]);
+    network_btn.set_valign(gtk4::Align::Center);
+    network.add_suffix(&network_btn);
+    net_group.add(&network);
+    network_page.add(&net_group);
     time_page.add(&time);
 
     // Power.
@@ -858,6 +918,12 @@ fn settings_page(
     for (key, icon, tone, p) in [
         ("phones", "phone-symbolic", Tone::Violet, &phones_page),
         (
+            "network",
+            "network-wireless-symbolic",
+            Tone::Blue,
+            &network_page,
+        ),
+        (
             "time",
             "preferences-system-time-symbolic",
             Tone::Teal,
@@ -887,10 +953,11 @@ fn settings_page(
     }
     {
         let (pages, heading) = (pages.clone(), heading.clone());
-        let names: Vec<(String, String)> = ["phones", "time", "power", "about", "advanced"]
-            .iter()
-            .map(|k| (k.to_string(), texts.t(&format!("cat.{k}"))))
-            .collect();
+        let names: Vec<(String, String)> =
+            ["phones", "network", "time", "power", "about", "advanced"]
+                .iter()
+                .map(|k| (k.to_string(), texts.t(&format!("cat.{k}"))))
+                .collect();
         list.connect_row_selected(move |_, row| {
             let Some(row) = row else { return };
             let key = row.widget_name();
@@ -941,8 +1008,31 @@ fn settings_page(
         advanced,
         advanced_row,
         install_btn,
+        network_btn,
+        network,
+        zone_btn,
+        zone,
     };
     (b, ui)
+}
+
+/// Settings > Network and Time: the connection and the time zone.
+fn show_net_time(ui: &SettingsUi, t: &Texts, w: &Value) {
+    use alp_screen::start::{self, Net};
+    let line = match start::net(w) {
+        Net::Cable => t.t("net.connected.cable"),
+        Net::Wifi(name) => t.fill("net.connected", &[("name", &name)]),
+        Net::Waiting => t.t("net.waiting_address"),
+        Net::None { .. } => t.t("hw.net.none"),
+    };
+    ui.network.set_subtitle(&glib::markup_escape_text(&line));
+    if let Some(c) = start::clock(w) {
+        ui.zone.set_subtitle(&glib::markup_escape_text(&format!(
+            "{} · {}",
+            start::zone_name(c.zone.as_deref()),
+            welcome::wall(c.now as i64, c.zone.as_deref())
+        )));
+    }
 }
 
 /// Asks before switching off or restarting; [yes] runs only after "yes".

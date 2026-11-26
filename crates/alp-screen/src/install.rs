@@ -60,6 +60,11 @@ impl Choice {
 }
 
 pub struct InstallUi {
+    /// Back from the choose page during the first setup (wired in
+    /// main.rs: the Network step); from Settings it goes home.
+    pub back: RefCell<Option<Box<dyn Fn()>>>,
+    from_setup: std::cell::Cell<bool>,
+    cancel: gtk4::Button,
     texts: Rc<Texts>,
     client: Arc<Client>,
     tx: mpsc::Sender<Msg>,
@@ -409,6 +414,9 @@ impl InstallUi {
         stack.add_named(&progress, Some("install-progress"));
 
         let ui = Rc::new(InstallUi {
+            back: RefCell::new(None),
+            from_setup: std::cell::Cell::new(false),
+            cancel: cancel.clone(),
             texts,
             client,
             tx,
@@ -443,8 +451,16 @@ impl InstallUi {
         });
 
         {
-            let st = stack.clone();
-            cancel.connect_clicked(move |_| st.set_visible_child_name("home"));
+            let u = ui.clone();
+            cancel.connect_clicked(move |_| {
+                if u.from_setup.get()
+                    && let Some(f) = u.back.borrow().as_ref()
+                {
+                    f();
+                } else {
+                    u.stack.set_visible_child_name("home");
+                }
+            });
             let st = stack.clone();
             back.connect_clicked(move |_| st.set_visible_child_name("install"));
         }
@@ -499,8 +515,23 @@ impl InstallUi {
         });
     }
 
-    /// Opens the disk list (fresh from alpd).
+    /// Opens the disk list from Settings > Advanced.
     pub fn open(self: &Rc<Self>) {
+        self.from_setup.set(false);
+        style::set_button_text(&self.cancel, &text(&self.texts, "common.cancel", "Cancel"));
+        self.load();
+    }
+
+    /// Opens the disk list as the setup's place step (Back: the Network step).
+    pub fn open_setup(self: &Rc<Self>) {
+        self.from_setup.set(true);
+        self.cancel
+            .set_label(&text(&self.texts, "common.back", "Back"));
+        self.load();
+    }
+
+    /// The disk list, fresh from alpd.
+    fn load(self: &Rc<Self>) {
         self.choose_note.set_label("");
         self.next.set_sensitive(false);
         self.stack.set_visible_child_name("install");
@@ -645,7 +676,7 @@ impl InstallUi {
             self.choose_note.set_label(&text(
                 t,
                 "install.no_disks",
-                "No disks were found in this computer. You can keep running from this USB stick. If the computer has a disk, ALP-OS may not support it yet.",
+                "No disks were found in this computer, and ALP-OS needs one for your photos. Plug in a USB disk, then press Back and Continue to look again. If this computer has a disk inside, ALP-OS may not support it yet.",
             ));
         }
 
@@ -736,8 +767,8 @@ impl InstallUi {
         }
         self.keep_running.set(system.is_none());
         self.choice.borrow_mut().system = system;
-        self.sync_rows();
         self.next.set_sensitive(true);
+        self.sync_rows();
     }
 
     /// Which rows can be ticked now: an old archive opened again and new
@@ -765,6 +796,32 @@ impl InstallUi {
             Some(k) if !new_data && !reopening => kind_advice(&self.texts, k),
             _ => None,
         };
+        // Keeping the stick needs a disk for the archive (the installer
+        // refuses without one): say so before Next, not after.
+        if self.keep_running.get() && !new_data {
+            self.next.set_sensitive(false);
+            let none = self.data_checks.borrow().is_empty();
+            self.on_system.say(
+                "",
+                &if none {
+                    text(
+                        &self.texts,
+                        "install.keep.no_disk",
+                        "To keep running from this USB stick, ALP-OS needs a second disk for your photos. Plug in a USB disk, then press Back and Continue to look again.",
+                    )
+                } else {
+                    text(
+                        &self.texts,
+                        "install.keep.pick",
+                        "Tick a disk below for your photos.",
+                    )
+                },
+            );
+            return;
+        }
+        if self.keep_running.get() {
+            self.next.set_sensitive(true);
+        }
         match why {
             Some(why) => {
                 let short = text(
