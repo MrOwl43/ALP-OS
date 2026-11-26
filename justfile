@@ -134,6 +134,7 @@ test-vm-installed:
     tests/vm/t-screen-01.sh {{image}}
     tests/vm/t-inst-01.sh {{image}}
     tests/vm/t-inst-02.sh {{image}}
+    tests/vm/t-immich-03.sh {{image}}
 
 # T-LIVE-04 (reset, cancel, real wipe), T-LIVE-05 (T49 quick and secure
 # format) and T-LIVE-06 (read-only Files): external disks, in their own CI job.
