@@ -25,14 +25,11 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/bin/alpctl live immich prepare
 ExecStart=/usr/bin/loginctl enable-linger immich
-# restart, not start: on the installed system /var is a disk, so the linger
-# file of an earlier run can make logind start the manager at boot, before
-# the index and the archive are open; its Quadlet units then skip (their
-# ConditionPathIsMountPoint= is false) and a plain start would keep that
-# manager without the photo service (T-IMMICH-03, 2026-11-26). This unit
-# runs once per opening (oneshot, RemainAfterExit), so a restart here never
-# interrupts a running gallery.
-ExecStart=/usr/bin/systemctl restart user@50000.service
+# A manager started by logind at boot from a linger file left on the
+# installed system's /var is skipped until the index and the archive are
+# open (user@50000.service.d/50-alp-live.conf), so this start brings up
+# the photo service (T-IMMICH-03, 2026-11-26).
+ExecStart=/usr/bin/systemctl start user@50000.service
 ExecStop=-/usr/bin/loginctl disable-linger immich
 ExecStop=/usr/bin/systemctl stop user@50000.service
 ExecStopPost=/usr/bin/alpctl live immich cleanup
