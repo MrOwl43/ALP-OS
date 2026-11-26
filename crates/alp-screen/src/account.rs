@@ -516,7 +516,12 @@ impl AccountUi {
 
     // ------------------------------------------------ encrypt later
 
-    /// 1. What happens.
+    /// "Encrypt later": three screens (what happens, the password, a slide).
+    pub fn start_encrypt(self: &Rc<Self>) {
+        self.encrypt_step1();
+    }
+
+    /// Step 1: what happens.
     fn encrypt_step1(self: &Rc<Self>) {
         let ctx = &self.ctx;
         let room = alp_screen::model::home::size(self.disk.borrow().used());

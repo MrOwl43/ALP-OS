@@ -48,7 +48,7 @@ to a later version with the owner's agreement · **dropped** on purpose.
 |---|---|---|---|
 | Phones | list, add phone, disconnect, only paired phones | `phones.rs`, `dialogs.rs` | ok (2026-11-26) |
 | Password | change password, recovery code check / make / replace, serious encryption | `account.rs` (change password only when alpd announces `password_change`, which it does not yet; "serious" extra passphrase not ported, see notes) | ok (2026-11-26) |
-| Disk | archive place, space bar, encrypt later | — | gap |
+| Disk | archive place, space bar, encrypt later | `disk.rs` ("Set up" opens the install pages while running from a stick, else says what to plug in) | ok (2026-11-26) |
 | Chain | show / leave / set up | — | gap |
 | Network | status, change Wi-Fi | Network page (from settings) | ok (2026-11-26) |
 | Display | size, resolution, natural scrolling, background, lock after, lock screen shows, screen saver | — | gap |

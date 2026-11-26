@@ -9,6 +9,7 @@
 mod account;
 mod activity;
 mod dialogs;
+mod disk;
 mod gallery;
 mod install;
 mod pairing;
@@ -165,6 +166,9 @@ struct SettingsUi {
     update_btn: gtk4::Button,
     phones: Rc<phones::PhonesUi>,
     account: Rc<account::AccountUi>,
+    disk: Rc<disk::DiskUi>,
+    /// This screen runs from the install stick (the install pages work).
+    can_install: Cell<bool>,
     last: RefCell<Settings>,
     note: Rc<style::Note>,
     /// Advanced: install on this computer (only while running from a stick).
@@ -465,6 +469,23 @@ fn build(app: &adw::Application) {
         let st = start.clone();
         ui.set.zone_btn.connect_clicked(move |_| st.open_zone(true));
     }
+    {
+        let (i, u) = (inst.clone(), ui.clone());
+        ui.set.disk.resume.connect_clicked(move |_| {
+            if u.set.can_install.get() {
+                i.open();
+            } else {
+                u.set.note.say(
+                    "warn",
+                    &setup::text(
+                        &u.texts,
+                        "rem.where.d",
+                        "Plug in an external disk or USB stick.",
+                    ),
+                );
+            }
+        });
+    }
     ui.set.install_btn.connect_clicked(move |_| inst.open());
     {
         let u = ui.clone();
@@ -678,8 +699,10 @@ fn handle(ui: &Ui, m: Msg) {
                 show_settings(&ui.set, &ui.texts, &Settings::from_state(&w));
                 ui.set.phones.update(&w);
                 ui.set.account.update(&w);
+                ui.set.disk.update(&w);
                 show_net_time(&ui.set, &ui.texts, &w);
                 let (can_install, job) = model::install::state(&w);
+                ui.set.can_install.set(can_install);
                 ui.set.advanced.set_visible(can_install);
                 ui.set.advanced_row.set_visible(can_install);
                 ui.inst.show_job(&job);
@@ -798,6 +821,8 @@ fn settings_page(ctx: &dialogs::Ctx, setup: &Rc<setup::SetupUi>) -> (gtk4::Box, 
     let phones_page = phones.page.clone();
     let account = account::AccountUi::new(ctx, setup.clone());
     let password_page = account.page.clone();
+    let disk = disk::DiskUi::new(ctx, account.clone());
+    let disk_page = disk.page.clone();
 
     // Time & Language.
     let time_page = page(());
@@ -930,6 +955,7 @@ fn settings_page(ctx: &dialogs::Ctx, setup: &Rc<setup::SetupUi>) -> (gtk4::Box, 
             Tone::Bad,
             &password_page,
         ),
+        ("disk", "drive-harddisk-symbolic", Tone::Ok, &disk_page),
         (
             "network",
             "network-wireless-symbolic",
@@ -967,12 +993,10 @@ fn settings_page(ctx: &dialogs::Ctx, setup: &Rc<setup::SetupUi>) -> (gtk4::Box, 
     }
     {
         let (pages, heading) = (pages.clone(), heading.clone());
-        let names: Vec<(String, String)> = [
-            "phones", "password", "network", "time", "power", "about", "advanced",
-        ]
-        .iter()
-        .map(|k| (k.to_string(), texts.t(&format!("cat.{k}"))))
-        .collect();
+        let names: Vec<(String, String)> = cat_rows
+            .iter()
+            .map(|(k, _)| (k.clone(), texts.t(&format!("cat.{k}"))))
+            .collect();
         list.connect_row_selected(move |_, row| {
             let Some(row) = row else { return };
             let key = row.widget_name();
@@ -1027,6 +1051,8 @@ fn settings_page(ctx: &dialogs::Ctx, setup: &Rc<setup::SetupUi>) -> (gtk4::Box, 
         update_btn,
         phones,
         account,
+        disk,
+        can_install: Cell::new(false),
         last: RefCell::new(Settings::default()),
         note,
         advanced,
