@@ -84,6 +84,75 @@ impl Client {
         self.call_within("POST", path, Some(body), SLOW_TIMEOUT)
     }
 
+    /// The first `max` bytes of a file alpd serves (`live/media/file`):
+    /// its content type and the bytes. Only for the read-only Files view.
+    pub fn get_file(
+        &self,
+        media: &str,
+        path: &[String],
+        max: usize,
+    ) -> Result<(String, Vec<u8>), ApiError> {
+        let q = format!(
+            "live/media/file?media={}&path={}",
+            percent_encode(media),
+            percent_encode(&serde_json::to_string(path).unwrap_or_default())
+        );
+        let cookie = self
+            .session
+            .lock()
+            .ok()
+            .and_then(|s| s.as_ref().map(|c| c.to_string()));
+        let mut req = request("GET", &q, None, cookie.as_deref());
+        req.truncate(req.len() - 2);
+        req += &format!("Range: bytes=0-{}\r\n\r\n", max.saturating_sub(1));
+        let mut s =
+            TcpStream::connect_timeout(&self.addr, TIMEOUT).map_err(|_| ApiError::unreachable())?;
+        let _ = s.set_read_timeout(Some(SLOW_TIMEOUT));
+        let _ = s.set_write_timeout(Some(TIMEOUT));
+        s.write_all(req.as_bytes())
+            .map_err(|_| ApiError::unreachable())?;
+        let mut raw = Vec::new();
+        s.take(max as u64 + 16 * 1024)
+            .read_to_end(&mut raw)
+            .map_err(|_| ApiError::unreachable())?;
+        let split = raw
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .ok_or_else(ApiError::unreachable)?;
+        let head = std::str::from_utf8(&raw[..split]).map_err(|_| ApiError::unreachable())?;
+        let status: u16 = head
+            .lines()
+            .next()
+            .and_then(|l| l.split(' ').nth(1))
+            .and_then(|c| c.parse().ok())
+            .ok_or_else(ApiError::unreachable)?;
+        let kind = head
+            .lines()
+            .filter_map(|l| l.split_once(':'))
+            .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+            .map(|(_, v)| v.trim().to_string())
+            .unwrap_or_default();
+        let mut body = raw[split + 4..].to_vec();
+        body.truncate(max);
+        if (200..300).contains(&status) {
+            return Ok((kind, body));
+        }
+        let e: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+        Err(ApiError {
+            key: e["error"]["key"]
+                .as_str()
+                .unwrap_or("media.unreadable")
+                .to_string(),
+            message: e["error"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            status,
+            retry_after: 0,
+            index: None,
+        })
+    }
+
     /// The session cookie's value, for the gallery view (alpd's gallery
     /// gate checks the same cookie; nginx never passes it to the photo
     /// service).
@@ -152,6 +221,19 @@ impl Client {
     }
 }
 
+/// Escapes everything except letters, digits and `-._~` (a query value).
+pub fn percent_encode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(b as char);
+        } else {
+            out += &format!("%{b:02X}");
+        }
+    }
+    out
+}
+
 /// The request text. `path` is below `/api/v1/` and comes from this crate's
 /// own code, never from typed input.
 fn request(method: &str, path: &str, body: Option<&Value>, cookie: Option<&str>) -> String {
@@ -218,6 +300,13 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::net::TcpListener;
+
+    #[test]
+    fn escapes_a_query_value() {
+        assert_eq!(percent_encode("a b"), "a%20b");
+        assert_eq!(percent_encode("[\"x\"]"), "%5B%22x%22%5D");
+        assert_eq!(percent_encode("AZ-az_09.~"), "AZ-az_09.~");
+    }
 
     #[test]
     fn post_carries_origin_json_and_cookie() {

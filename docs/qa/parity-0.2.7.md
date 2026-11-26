@@ -46,7 +46,7 @@ to a later version with the owner's agreement · **dropped** on purpose.
 
 | Category | 0.2.7 rows | Native | Status |
 |---|---|---|---|
-| Phones | list, add phone, disconnect, only paired phones | add phone | gap: list, disconnect, strict |
+| Phones | list, add phone, disconnect, only paired phones | `phones.rs`, `dialogs.rs` | ok (2026-11-26) |
 | Password | change password, recovery code check / make / replace, serious encryption | — | gap |
 | Disk | archive place, space bar, encrypt later | — | gap |
 | Chain | show / leave / set up | — | gap |

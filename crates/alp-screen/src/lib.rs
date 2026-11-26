@@ -8,4 +8,5 @@ pub mod i18n;
 pub mod meter;
 pub mod model;
 pub mod paging;
+pub mod set;
 pub mod start;

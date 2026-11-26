@@ -289,6 +289,21 @@ window.alp {
 .footer-bar { background-color: #ffffff; padding: 14px 22px; border-top: 1px solid rgba(0,0,0,0.06);
   border-radius: 0 0 22px 22px; }
 .window-title { padding: 20px 24px 6px 24px; }
+
+/* Slide to confirm (warning pages) */
+.slide-track { border-radius: 99px; background-color: #fde6e4; border: 2px solid #d70015; min-width: 320px; }
+.slide-fill { border-radius: 99px; background-color: rgba(215,0,21,0.20); min-height: 52px; }
+.slide-text { color: #8a000f; font-weight: 700; }
+.slide-knob { min-width: 48px; min-height: 48px; border-radius: 99px; background-color: #d70015;
+  color: #ffffff; padding: 13px; box-shadow: 0 1px 4px rgba(0,0,0,0.30); }
+.slide-knob image { color: #ffffff; }
+.slide-knob:focus-visible { outline: 3px solid alpha(@ACCENT@, 0.75); outline-offset: 2px; }
+.slide-track.done { background-color: #d70015; }
+.slide-track.done .slide-text { color: #ffffff; }
+.danger-box { border-radius: 16px; padding: 14px 16px; border: 1px solid rgba(0,0,0,0.08); background-color: #ffffff; }
+.danger-box.lose { background-color: #fff5f4; }
+.danger-box.keep { background-color: #f3faf5; }
+.msg-row.resolved label { color: #8a8d96; }
 "#;
 
 /// Loads the look for the whole screen (once, at start).

@@ -7,9 +7,11 @@
 //! waits on alpd.
 
 mod activity;
+mod dialogs;
 mod gallery;
 mod install;
 mod pairing;
+mod phones;
 mod setup;
 mod style;
 mod topbar;
@@ -47,6 +49,8 @@ enum Msg {
     Start(welcome::StartMsg),
     /// Read the state now (a setup step was left).
     Refresh,
+    /// The list of messages behind the (i) changed.
+    ErrorsChanged,
 }
 
 struct Ui {
@@ -158,11 +162,9 @@ struct SettingsUi {
     clock: adw::ActionRow,
     update: adw::ActionRow,
     update_btn: gtk4::Button,
-    phones: adw::PreferencesGroup,
-    connect_phone: gtk4::Button,
-    phone_rows: RefCell<Vec<adw::ActionRow>>,
+    phones: Rc<phones::PhonesUi>,
     last: RefCell<Settings>,
-    note: style::Note,
+    note: Rc<style::Note>,
     /// Advanced: install on this computer (only while running from a stick).
     advanced: adw::PreferencesGroup,
     /// The Advanced category in the list (shown with [`SettingsUi::advanced`]).
@@ -389,12 +391,21 @@ fn build(app: &adw::Application) {
         .transition_duration(150)
         .vexpand(true)
         .build();
-    let (settings_page, set) = settings_page(&texts, &client, &tx);
+    let ctx = dialogs::Ctx {
+        texts: texts.clone(),
+        client: client.clone(),
+        stack: stack.clone(),
+        tx: tx.clone(),
+        open_settings: Rc::new(RefCell::new(None)),
+        note: Rc::new(style::Note::new("bad", "")),
+        errs: Rc::new(RefCell::new(alp_screen::set::ErrLog::default())),
+    };
+    let (settings_page, set) = settings_page(&ctx);
     let inst = install::InstallUi::new(texts.clone(), client.clone(), tx.clone(), &stack);
     let pair = pairing::PairUi::new(texts.clone(), client.clone(), tx.clone(), &stack);
     {
         let p = pair.clone();
-        set.connect_phone.connect_clicked(move |_| p.open());
+        set.phones.connect_phone.connect_clicked(move |_| p.open());
     }
     let setup_ui = setup::SetupUi::new(texts.clone(), client.clone(), tx.clone(), &stack);
     let start = welcome::StartUi::new(texts.clone(), client.clone(), tx.clone(), &stack);
@@ -663,6 +674,7 @@ fn handle(ui: &Ui, m: Msg) {
                 *ui.gallery_url.borrow_mut() = url;
                 ui.pair.show_pending(&model::pairing::pending(&w));
                 show_settings(&ui.set, &ui.texts, &Settings::from_state(&w));
+                ui.set.phones.update(&w);
                 show_net_time(&ui.set, &ui.texts, &w);
                 let (can_install, job) = model::install::state(&w);
                 ui.set.advanced.set_visible(can_install);
@@ -704,6 +716,7 @@ fn handle(ui: &Ui, m: Msg) {
         Msg::Pair(m) => ui.pair.handle(m),
         Msg::Setup(m) => ui.setup.handle(m),
         Msg::Start(m) => ui.start.handle(m),
+        Msg::ErrorsChanged => {}
         Msg::Refresh => {
             let (c, tx) = (ui.client.clone(), ui.tx.clone());
             std::thread::spawn(move || {
@@ -756,11 +769,8 @@ fn icon_row(title: &str, icon: &str, tone: Tone) -> adw::ActionRow {
 
 /// The settings page: About, date and time, updates, phones, power. The
 /// way back is the top bar's Home button.
-fn settings_page(
-    texts: &Texts,
-    client: &Arc<Client>,
-    tx: &mpsc::Sender<Msg>,
-) -> (gtk4::Box, SettingsUi) {
+fn settings_page(ctx: &dialogs::Ctx) -> (gtk4::Box, SettingsUi) {
+    let (texts, client, tx) = (&*ctx.texts, &ctx.client, &ctx.tx);
     // One alpd action on a worker thread; its answer comes back as Done.
     let act = |path: &'static str, body: Value| {
         let (client, tx) = (client.clone(), tx.clone());
@@ -781,17 +791,8 @@ fn settings_page(
     };
 
     // Phones.
-    let phones_page = page(());
-    let connect_phone = style::button(
-        "list-add-symbolic",
-        &texts.t("phone.title"),
-        &["suggested-action"],
-    );
-    connect_phone.set_valign(gtk4::Align::Center);
-    let phones = adw::PreferencesGroup::builder()
-        .header_suffix(&connect_phone)
-        .build();
-    phones_page.add(&phones);
+    let phones = phones::PhonesUi::new(ctx);
+    let phones_page = phones.page.clone();
 
     // Time & Language.
     let time_page = page(());
@@ -915,6 +916,7 @@ fn settings_page(
     heading.set_margin_top(24);
     heading.set_margin_bottom(4);
     let mut advanced_row = None;
+    let mut cat_rows: Vec<(String, gtk4::ListBoxRow)> = Vec::new();
     for (key, icon, tone, p) in [
         ("phones", "phone-symbolic", Tone::Violet, &phones_page),
         (
@@ -946,6 +948,7 @@ fn settings_page(
         let row = gtk4::ListBoxRow::builder().child(&line).name(key).build();
         row.update_property(&[gtk4::accessible::Property::Label(&name)]);
         list.append(&row);
+        cat_rows.push((key.to_string(), row.clone()));
         if key == "advanced" {
             row.set_visible(false);
             advanced_row = Some(row);
@@ -968,6 +971,16 @@ fn settings_page(
         });
     }
     list.select_row(list.row_at_index(0).as_ref());
+    {
+        let list = list.clone();
+        *ctx.open_settings.borrow_mut() = Some(Box::new(move |cat| {
+            if let Some((_, r)) = cat_rows.iter().find(|(k, _)| k == cat)
+                && r.is_visible()
+            {
+                list.select_row(Some(r));
+            }
+        }));
+    }
     let side = gtk4::ScrolledWindow::builder()
         .hscrollbar_policy(gtk4::PolicyType::Never)
         .child(&list)
@@ -975,7 +988,7 @@ fn settings_page(
         .width_request(250)
         .build();
 
-    let note = style::Note::new("bad", "");
+    let note = ctx.note.clone();
     note.root.set_margin_start(32);
     note.root.set_margin_end(32);
     note.root.set_margin_top(12);
@@ -1001,8 +1014,6 @@ fn settings_page(
         update,
         update_btn,
         phones,
-        connect_phone,
-        phone_rows: RefCell::new(Vec::new()),
         last: RefCell::new(Settings::default()),
         note,
         advanced,
@@ -1079,20 +1090,6 @@ fn show_settings(ui: &SettingsUi, texts: &Texts, s: &Settings) {
         None => texts.t("upd.check"),
     };
     style::set_button_text(&ui.update_btn, &label);
-    if ui.last.borrow().devices != s.devices {
-        for r in ui.phone_rows.borrow_mut().drain(..) {
-            ui.phones.remove(&r);
-        }
-        for (_, name, model) in &s.devices {
-            let r = adw::ActionRow::builder()
-                .title(name.as_str())
-                .subtitle(model.as_str())
-                .build();
-            r.add_prefix(&style::chip("phone-symbolic", Tone::Violet, 20));
-            ui.phones.add(&r);
-            ui.phone_rows.borrow_mut().push(r);
-        }
-    }
     *ui.last.borrow_mut() = s.clone();
 }
 
