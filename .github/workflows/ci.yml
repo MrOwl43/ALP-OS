@@ -15,6 +15,13 @@ on:
         description: 'VM test groups as a JSON list'
         required: false
         default: '["base", "ui", "immich"]'
+      test_build:
+        # A test image of the installed version for the owner (e.g. 0.2.81 =
+        # 0.2.8 test 1): kept as a workflow artifact for 14 days, never a
+        # release, no update files, no signing key. The VM tests still run.
+        description: 'Keep the installed image as a test build named <version>'
+        required: false
+        default: ''
       release_version:
         # Instead of the VM tests: build the image and publish it as a
         # pre-release (e.g. 0.2.4) for the owner to write to a stick.
@@ -145,12 +152,38 @@ jobs:
         with:
           path: out/raw-samples
           key: raw-samples-${{ hashFiles('tests/vm/formats/raw-samples.lock') }}
+      - name: Test build name in the image
+        if: inputs.test_build != '' && matrix.group == 'installed'
+        env:
+          VERSION: ${{ inputs.test_build }}
+        run: |
+          [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::test_build must look like 0.2.81"; exit 1; }
+          tools/update-version.sh "$VERSION" >/dev/null
+          echo "ALP-OS alpha $VERSION" > image/extra/usr/lib/alp/release
       - run: just build-image
         env:
           # The "installed" group builds the 0.2.8 installed version (native
           # screen and installer); every other group the Live image.
           ALP_PROFILE: ${{ matrix.group == 'installed' && 'installed' || 'live' }}
       - run: cat out/SHA256SUMS
+      - name: Compress the test build
+        if: inputs.test_build != '' && matrix.group == 'installed'
+        env:
+          VERSION: ${{ inputs.test_build }}
+        run: |
+          name="ALP-OS-alpha-${VERSION}-test.img"
+          cp --sparse=always out/alp-os.raw "out/$name"
+          xz -T0 -6 "out/$name"
+          (cd out && sha256sum "$name.xz" > "$name.xz.sha256" && cat "$name.xz.sha256" && ls -l "$name.xz")
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: inputs.test_build != '' && matrix.group == 'installed'
+        with:
+          name: ALP-OS-alpha-${{ inputs.test_build }}-test
+          path: |
+            out/ALP-OS-alpha-*-test.img.xz
+            out/ALP-OS-alpha-*-test.img.xz.sha256
+          retention-days: 14
+          compression-level: 0
       - run: just test-vm-${{ matrix.group }}
         env:
           # Immich runs only on hosted runners, never on the dev VM (owner).
