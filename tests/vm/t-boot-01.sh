@@ -44,6 +44,7 @@ trap 'rm -f "$uki_copy"' EXIT
 mcopy -o -n -i "$image@@$esp_offset" "$uki_name" "$uki_copy"
 # The profile's own command line (the kernel also contains "nomodeset").
 python3 -I "$here/check-uki.py" profile "$uki_copy" safe-graphics nomodeset || exit 1
+python3 -I "$here/check-uki.py" profile "$uki_copy" errors-only loglevel=3 || exit 1
 # The initrd finds the root on common disks (image/mkosi.conf
 # KernelInitrdModules=; the start file must stay small for old firmware).
 python3 -I "$here/check-uki.py" modules "$uki_copy" sd_mod usb_storage uas xhci_pci nvme ahci \
