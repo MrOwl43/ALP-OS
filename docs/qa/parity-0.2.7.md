@@ -16,7 +16,7 @@ to a later version with the owner's agreement · **dropped** on purpose.
 | Too small | under 4 GB memory: power off | — | ok |
 | Network | cable status, Wi-Fi list, password, WPA3→WPA2 note, Check again, skip with a note | `start.rs` network page | ok (2026-11-26) |
 | (0.2.8) Place | install on a disk, or keep running from the stick | install pages | ok |
-| Protect / Password | protection level and password | setup password page (password only) | later: owner decision (0.2.8 archives are always encrypted) |
+| Protect / Password | protection level and password | setup protect page (yes / no with UNPROTECTED warning and slide) + password page ("console" password or "No password") | ok (owner chose to keep it, 2026-11-26). Installed version: the backup disks are still LUKS-locked, with the key in the unencrypted index on the system disk |
 | Where / Progress | archive disks and making the archive | install page data disks + setup pool page | ok |
 | Recovery | 15 words, type three back, skip with a reminder | setup recovery pages | ok |
 | Phone | connect a phone (pairing), skip | setup phone page + pairing pages | ok |

@@ -17,6 +17,8 @@ use alp_screen::api::{ApiError, Client};
 use alp_screen::i18n::Texts;
 use alp_screen::model::setup::{self, Step};
 use gtk4::prelude::*;
+use libadwaita as adw;
+use libadwaita::prelude::*;
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
@@ -44,7 +46,7 @@ pub enum SetupMsg {
 }
 
 /// The pages this module adds to the stack.
-const PAGES: [&str; 7] = [
+const PAGES: [&str; 8] = [
     "setup-password",
     "setup-pool",
     "setup-recovery",
@@ -52,6 +54,7 @@ const PAGES: [&str; 7] = [
     "setup-phone",
     "setup-installed",
     "setup-words",
+    "setup-protect",
 ];
 
 pub struct SetupUi {
@@ -64,6 +67,16 @@ pub struct SetupUi {
     pw2: gtk4::PasswordEntry,
     pw_go: gtk4::Button,
     pw_note: style::Note,
+    /// Encrypt the archive (0.2.7 "protect" step, owner 2026-11-26):
+    /// `None` until chosen this start; `Some(false)`: files stay open and
+    /// the password only guards this screen ("console", ADR 0016).
+    encrypt: Cell<Option<bool>>,
+    pw_plain: style::Note,
+    pw_none: gtk4::Button,
+    protect_yes: gtk4::CheckButton,
+    protect_warn: gtk4::Box,
+    protect_form: gtk4::Box,
+    protect_slide: gtk4::Scale,
     // Archive being made.
     bar: gtk4::ProgressBar,
     pool_line: style::Note,
@@ -323,6 +336,13 @@ impl SetupUi {
         let pw_note = style::Note::new("", &t.t("pw.hint.rules"));
         let pw_foot = style::Note::new("", &t.t("pw.foot"));
         pw_foot.kind("pencil");
+        let pw_plain = style::Note::new(
+            "warn",
+            &format!("{} {}", t.t("pw.plain.sub"), t.t("pw.plain.warning")),
+        );
+        pw_plain.root.set_visible(false);
+        let pw_none = quiet_button(&t.t("pw.plain.none"));
+        pw_none.set_visible(false);
         stack.add_named(
             &page(
                 t,
@@ -331,15 +351,98 @@ impl SetupUi {
                 &t.t("pw.title"),
                 &t.t("pw.sub"),
                 &[
+                    pw_plain.root.upcast_ref(),
                     style::field(&t.t("pw.label"), &pw1).upcast_ref(),
                     style::field(&t.t("pw.again"), &pw2).upcast_ref(),
                     pw_note.root.upcast_ref(),
                     pw_go.upcast_ref(),
+                    pw_none.upcast_ref(),
                     pw_foot.root.upcast_ref(),
                 ],
                 560,
             ),
             Some(PAGES[0]),
+        );
+
+        // 1a. Encrypt the archive? (0.2.7 order: before the password.)
+        let protect_yes = gtk4::CheckButton::new();
+        let protect_no = gtk4::CheckButton::new();
+        protect_no.set_group(Some(&protect_yes));
+        protect_yes.set_active(true);
+        let choice = |c: &gtk4::CheckButton, title: &str, sub: &str, tag: Option<&str>| {
+            let r = adw::ActionRow::builder()
+                .title(match tag {
+                    Some(tag) => format!("{title} · {tag}"),
+                    None => title.to_string(),
+                })
+                .subtitle(sub)
+                .activatable(true)
+                .build();
+            r.add_prefix(c);
+            r.set_activatable_widget(Some(c));
+            r
+        };
+        let choices = gtk4::ListBox::builder()
+            .selection_mode(gtk4::SelectionMode::None)
+            .css_classes(["boxed-list"])
+            .build();
+        choices.append(&choice(
+            &protect_yes,
+            &t.t("protect.yes"),
+            &t.t("protect.yes.sub"),
+            Some(&t.t("protect.recommended")),
+        ));
+        choices.append(&choice(
+            &protect_no,
+            &t.t("protect.no"),
+            &t.t("protect.no.sub"),
+            None,
+        ));
+        let protect_go = main_button("go-next-symbolic", &t.t("common.continue"));
+        protect_go.set_halign(gtk4::Align::End);
+        let protect_form = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Vertical)
+            .spacing(14)
+            .build();
+        protect_form.append(&choices);
+        protect_form.append(&protect_go);
+        // The warning: UNPROTECTED, three lines, a slide to the end.
+        let protect_warn = gtk4::Box::builder()
+            .orientation(gtk4::Orientation::Vertical)
+            .spacing(10)
+            .visible(false)
+            .build();
+        let warn_title = style::text(&t.t("protect.warn.title"), &["title-2", "error"], true);
+        protect_warn.append(&warn_title);
+        protect_warn.append(&style::text(&t.t("protect.warn.sub"), &["lead"], true));
+        for k in ["protect.warn.1", "protect.warn.2", "protect.warn.3"] {
+            let n = style::Note::new("warn", &t.t(k));
+            protect_warn.append(&n.root);
+        }
+        let protect_slide = gtk4::Scale::with_range(gtk4::Orientation::Horizontal, 0.0, 100.0, 1.0);
+        protect_slide.set_draw_value(false);
+        protect_slide.update_property(&[gtk4::accessible::Property::Label(
+            &t.t("protect.warn.slide"),
+        )]);
+        protect_warn.append(&style::text(
+            &t.t("protect.warn.slide"),
+            &["heading"],
+            false,
+        ));
+        protect_warn.append(&protect_slide);
+        let warn_back = quiet_button(&t.t("protect.warn.back"));
+        protect_warn.append(&warn_back);
+        stack.add_named(
+            &page(
+                t,
+                1,
+                ("system-lock-screen-symbolic", Tone::Blue),
+                &t.t("protect.title"),
+                &t.t("protect.sub"),
+                &[protect_form.upcast_ref(), protect_warn.upcast_ref()],
+                560,
+            ),
+            Some(PAGES[7]),
         );
 
         // 2. Archive being made.
@@ -602,6 +705,13 @@ impl SetupUi {
         }
 
         let ui = Rc::new(SetupUi {
+            encrypt: Cell::new(None),
+            pw_plain,
+            pw_none: pw_none.clone(),
+            protect_yes: protect_yes.clone(),
+            protect_warn: protect_warn.clone(),
+            protect_form: protect_form.clone(),
+            protect_slide: protect_slide.clone(),
             texts: texts.clone(),
             client,
             tx,
@@ -646,6 +756,39 @@ impl SetupUi {
         {
             let u = ui.clone();
             ui.pw_go.connect_clicked(move |_| u.set_password());
+            let u = ui.clone();
+            protect_go.connect_clicked(move |_| {
+                if u.protect_yes.is_active() {
+                    u.choose_encrypt(true);
+                } else {
+                    u.protect_form.set_visible(false);
+                    u.protect_slide.set_value(0.0);
+                    u.protect_warn.set_visible(true);
+                }
+            });
+            let u = ui.clone();
+            warn_back.connect_clicked(move |_| {
+                u.protect_yes.set_active(true);
+                u.protect_warn.set_visible(false);
+                u.protect_form.set_visible(true);
+            });
+            let u = ui.clone();
+            protect_slide.connect_value_changed(move |sl| {
+                if sl.value() >= 100.0 && u.protect_warn.is_visible() {
+                    u.choose_encrypt(false);
+                }
+            });
+            let u = ui.clone();
+            pw_none.connect_clicked(move |b| {
+                b.set_sensitive(false);
+                u.pw_note.say("", &u.texts.t("pw.plain.working"));
+                u.call(|c| {
+                    SetupMsg::Password(c.post_slow(
+                        "live/password/setup",
+                        &json!({"password": "", "protection": "none"}),
+                    ))
+                });
+            });
             let u = ui.clone();
             ui.pw2.connect_activate(move |_| u.set_password());
             let u = ui.clone();
@@ -715,9 +858,24 @@ impl SetupUi {
         self.pw2.set_text("");
         self.pw_go.set_sensitive(false);
         self.pw_note.say("", &self.texts.t("pw.working"));
-        self.call(move |c| {
-            SetupMsg::Password(c.post_slow("live/password/setup", &json!({"password": a.as_str()})))
-        });
+        let body = if self.encrypt.get() == Some(false) {
+            json!({"password": a.as_str(), "protection": "console"})
+        } else {
+            json!({"password": a.as_str()})
+        };
+        self.call(move |c| SetupMsg::Password(c.post_slow("live/password/setup", &body)));
+    }
+
+    /// The protect step's answer: on to the password page.
+    fn choose_encrypt(&self, yes: bool) {
+        self.encrypt.set(Some(yes));
+        self.pw_plain.root.set_visible(!yes);
+        self.pw_none.set_visible(!yes);
+        self.pw_none.set_sensitive(true);
+        self.protect_warn.set_visible(false);
+        self.protect_form.set_visible(true);
+        self.stack.set_visible_child_name(PAGES[0]);
+        self.pw1.grab_focus();
     }
 
     fn start_pool(&self) {
@@ -931,6 +1089,7 @@ impl SetupUi {
                 return true;
             }
             Step::Installed => PAGES[5],
+            Step::Password if self.encrypt.get().is_none() => PAGES[7],
             Step::Password => PAGES[0],
             Step::Pool {
                 start,
