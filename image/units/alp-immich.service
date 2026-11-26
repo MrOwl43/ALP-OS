@@ -30,6 +30,12 @@ ExecStart=/usr/bin/loginctl enable-linger immich
 # open (user@50000.service.d/50-alp-live.conf), so this start brings up
 # the photo service (T-IMMICH-03, 2026-11-26).
 ExecStart=/usr/bin/systemctl start user@50000.service
+# The manager may have come up before the binds above (T-IMMICH-03 on the
+# installed system, 2026-11-26: its Quadlet units were skipped on
+# ConditionPathIsMountPoint=/run/alp/immich/originals although the bind
+# was there later). Asking for the units again checks their conditions
+# now; --no-block: the images load in the background.
+ExecStart=/usr/sbin/runuser -u immich -- /usr/bin/env XDG_RUNTIME_DIR=/run/user/50000 /usr/bin/systemctl --user --no-block start immich-pod.service immich-postgres.service immich-valkey.service immich-server.service
 ExecStop=-/usr/bin/loginctl disable-linger immich
 ExecStop=/usr/bin/systemctl stop user@50000.service
 ExecStopPost=/usr/bin/alpctl live immich cleanup

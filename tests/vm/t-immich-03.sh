@@ -217,7 +217,9 @@ for t in 240 300; do
         for m in /var/lib/alp-pool/files /var/lib/alp-index/immich /run/alp/immich/originals; do
             echo "mount $m: $(findmnt -n -o SOURCE,FSTYPE "$m" | tr '\n' ' ')"
         done
-        journalctl -b -o short-monotonic --no-pager -u alp-immich.service -u alp-live-archive.service -u user@50000.service | tail -n 25
+        journalctl -b -o short-monotonic --no-pager -u alp-immich.service -u alp-live-archive.service -u user@50000.service | grep -v podman | head -n 30
+        echo "times immich=$(systemctl show -p ActiveEnterTimestampMonotonic --value alp-immich.service) manager=$(systemctl show -p ActiveEnterTimestampMonotonic --value user@50000.service)"
+        m=$(pgrep -u 50000 -x systemd | head -1); [ -n "$m" ] && echo "manager-sees $(grep -c alp/immich/originals /proc/$m/mountinfo) $(readlink /proc/$m/ns/mnt) host $(readlink /proc/1/ns/mnt)"
         journalctl -b _UID=50000 -o short-monotonic --no-pager 2>/dev/null | grep -iE 'immich|condition|fail' | tail -n 12
         journalctl -b -u alpd -o short-monotonic --no-pager | grep -iE 'immich|gallery|pool|archive' | tail -n 12
     } | sed 's/^/IMMDIAG /' >/dev/console
