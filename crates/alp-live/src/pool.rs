@@ -269,6 +269,9 @@ fn is_mounted(at: &str) -> bool {
 
 /// `@archive` at [`FILES_MNT`] (owned by the archive user, as on Live).
 fn show_archive(chown: bool) -> Result<(), String> {
+    // The pool's top level is root's alone: /run/alp is passable for the
+    // immich user (its originals bind lives below it).
+    fs::set_permissions(TOP_MNT, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
     if is_mounted(FILES_MNT) {
         return Ok(());
     }

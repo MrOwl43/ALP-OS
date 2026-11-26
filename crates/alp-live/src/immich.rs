@@ -1062,6 +1062,16 @@ pub fn prepare() -> Result<(), String> {
         fs::create_dir("/run/alp").map_err(|e| format!("/run/alp: {e}"))?;
         let _ = fs::set_permissions("/run/alp", fs::Permissions::from_mode(0o755));
     }
+    // The immich user must pass through /run/alp to reach the bind. On the
+    // installed system the pool code made /run/alp first, root-only, and
+    // the user's units saw no mount point there (T-IMMICH-03, 2026-11-26).
+    // Passing through is enough: nothing in it is listed or read.
+    let m = fs::metadata("/run/alp")
+        .map_err(|e| format!("/run/alp: {e}"))?
+        .mode();
+    if m & 0o011 != 0o011 {
+        let _ = fs::set_permissions("/run/alp", fs::Permissions::from_mode((m & 0o7777) | 0o011));
+    }
     ensure_dir(Path::new(RUN), 0o750, 0, UID, true)?;
     ensure_dir(Path::new(ORIGINALS_BIND), 0o700, UID, UID, false)?;
     // The image loader (immich user) may write its progress here (T21);
